@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampPercent, gaugeAngle, statusLeds } from "./instrument.ts";
+import { clampPercent, gaugeAngle, generatorModes, statusLeds } from "./instrument.ts";
+
+test("generatorModes reads RF-source and leveling from the status bits", () => {
+  assert.deepEqual(generatorModes(0), { rfSource: "internal", leveling: "forward" });
+  assert.equal(generatorModes(16).rfSource, "external"); // EXTERNAL_RFSOURCE
+  assert.equal(generatorModes(32).leveling, "load"); // LOAD_POWER_LEVELING
+  assert.deepEqual(generatorModes(16 | 32), { rfSource: "external", leveling: "load" });
+});
 
 test("gaugeAngle maps value across the arc and clamps out-of-range", () => {
   assert.equal(gaugeAngle(0, 0, 600, -120, 120), -120); // min -> start

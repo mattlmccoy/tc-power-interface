@@ -7,7 +7,7 @@ import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
-import { clampPercent } from "./lib/instrument.ts";
+import { clampPercent, generatorModes } from "./lib/instrument.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
 import type { Point, SafetyLimitsStatus, Status, ThermalPlanStatus } from "./lib/telemetry.ts";
@@ -442,6 +442,35 @@ export function App() {
             </section>
 
             <section className="panel">
+              <h2>Generator</h2>
+              <div className="cards">
+                <div className="readout">
+                  <div className="label">DC bus</div>
+                  <div className="value">
+                    {t?.dc_voltage != null ? `${t.dc_voltage.toFixed(0)} V` : "—"}
+                  </div>
+                </div>
+                <div className="readout">
+                  <div className="label">Preset</div>
+                  <div className="value">{t?.preset_slot ? `#${t.preset_slot}` : "—"}</div>
+                </div>
+                <div className="readout">
+                  <div className="label">RF source</div>
+                  <div className="value">{t ? generatorModes(t.status).rfSource : "—"}</div>
+                </div>
+                <div className="readout">
+                  <div className="label">Leveling</div>
+                  <div className="value">{t ? generatorModes(t.status).leveling : "—"}</div>
+                </div>
+              </div>
+              <div className="hint">
+                Frequency {device?.frequency_hz ? (device.frequency_hz / 1e6).toFixed(2) : "—"} MHz ·
+                mode {t?.operation_mode ?? "—"}. Read-only — preset / RF-source / leveling writes need
+                the verified CXN command set (deferred; the real unit's CXN support is unconfirmed).
+              </div>
+            </section>
+
+            <section className="panel">
               <h2>History</h2>
               <TimePlot
                 forward={plot.fwd}
@@ -507,6 +536,9 @@ export function App() {
                   +
                 </button>
                 <span className="cap-name">%</span>
+                <span className="cap-readback">
+                  act {t?.tune_cap_percent != null ? Math.round(t.tune_cap_percent) : "—"}%
+                </span>
               </div>
               <input
                 type="range"
@@ -545,6 +577,9 @@ export function App() {
                   +
                 </button>
                 <span className="cap-name">%</span>
+                <span className="cap-readback">
+                  act {t?.load_cap_percent != null ? Math.round(t.load_cap_percent) : "—"}%
+                </span>
               </div>
               <input
                 type="range"

@@ -209,6 +209,11 @@ class Controller:
                 "operation_mode": t.operation_mode,
                 "tuner": t.tuner,
                 "status": int(t.status),
+                "manual_mode": t.manual_mode,
+                "tune_cap_percent": t.tune_cap_percent,
+                "load_cap_percent": t.load_cap_percent,
+                "dc_voltage": t.dc_voltage,
+                "preset_slot": t.preset_slot,
             },
             "warnings": [] if d is None else list(d.warnings),
             "limits": {

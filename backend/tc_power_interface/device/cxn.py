@@ -62,6 +62,7 @@ class CxnDevice:
         fwd, rev, load = codec.parse_power(self._query(codec.cmd_power()))
         gs = self._query(codec.cmd_status())
         status = codec.parse_status(gs)
+        gt = codec.parse_gt(self._query(codec.cmd_gt()))  # matching-network / generator readback
         return Telemetry(
             host_timestamp_ns=time.time_ns(),
             forward_w=fwd,
@@ -73,6 +74,11 @@ class CxnDevice:
             temperature_c=codec.parse_temperature(gs),
             operation_mode=codec.parse_operation_mode(gs),
             tuner=codec.parse_tuner(gs),
+            manual_mode=gt.manual_mode,
+            tune_cap_percent=gt.tune_capacity,
+            load_cap_percent=gt.load_capacity,
+            dc_voltage=gt.dc_voltage,
+            preset_slot=gt.preset_slot,
         )
 
     def read_match(self) -> codec.GtBlock:

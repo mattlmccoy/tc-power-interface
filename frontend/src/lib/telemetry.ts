@@ -11,6 +11,12 @@ export interface Telemetry {
   operation_mode: string;
   tuner: string;
   status: number;
+  // Matching-network / generator readback (optional: older operators may omit these).
+  manual_mode?: boolean;
+  tune_cap_percent?: number;
+  load_cap_percent?: number;
+  dc_voltage?: number;
+  preset_slot?: number;
 }
 
 export interface Limits {

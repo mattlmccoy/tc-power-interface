@@ -42,3 +42,14 @@ export function statusLeds(status: number): Led[] {
     return { label, on, tone: on ? tone : "off" };
   });
 }
+
+/** RF-source (internal/external) + leveling (forward/load) read from the CXN status bits. */
+export function generatorModes(status: number): {
+  rfSource: "internal" | "external";
+  leveling: "forward" | "load";
+} {
+  return {
+    rfSource: (status & 16) !== 0 ? "external" : "internal", // EXTERNAL_RFSOURCE
+    leveling: (status & 32) !== 0 ? "load" : "forward", // LOAD_POWER_LEVELING
+  };
+}
