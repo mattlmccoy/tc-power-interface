@@ -21,7 +21,7 @@ from typing import Any, TextIO
 
 from tc_power_interface import __version__
 
-_CSV_FIELDS = [
+_TELEMETRY_FIELDS = [
     "host_timestamp_ns",
     "forward_w",
     "reverse_w",
@@ -32,8 +32,19 @@ _CSV_FIELDS = [
     "operation_mode",
     "tuner",
     "status",
-    "controller_state",
 ]
+#: Thermal closed-loop columns (blank when the loop is not running / no thermal block in the snap).
+#: CSV column name -> key in the snapshot's ``thermal`` sub-dict.
+_THERMAL_FIELDS = {
+    "thermal_phase": "phase",
+    "thermal_mode": "mode",
+    "thermal_armed": "armed",
+    "thermal_control_temp_c": "control_temp_c",
+    "thermal_target_c": "target_c",
+    "thermal_recommended_w": "recommended_w",
+    "thermal_applied_w": "applied_w",
+}
+_CSV_FIELDS = [*_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS]
 
 
 class RecorderState(enum.Enum):
@@ -109,8 +120,11 @@ class TelemetryRecorder:
         telemetry = snapshot.get("telemetry")
         if telemetry is None:
             return
-        row = {k: telemetry.get(k) for k in _CSV_FIELDS if k != "controller_state"}
+        row: dict[str, Any] = {k: telemetry.get(k) for k in _TELEMETRY_FIELDS}
         row["controller_state"] = snapshot.get("state")
+        thermal = snapshot.get("thermal") or {}
+        for col, key in _THERMAL_FIELDS.items():
+            row[col] = thermal.get(key)
         self._csv_writer.writerow(row)
         if self._csv_file is not None:
             self._csv_file.flush()
