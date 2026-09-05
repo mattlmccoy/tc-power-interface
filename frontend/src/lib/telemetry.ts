@@ -46,10 +46,38 @@ export interface DeviceInfo {
   power_limit_w?: number;
 }
 
+/** Live state of the in-situ thermal closed loop (top-level `thermal` block of the snapshot). */
+export interface ThermalStatus {
+  running: boolean;
+  phase: "ramp" | "approach" | "soak" | "cool" | "done";
+  mode: string;
+  armed: boolean;
+  source: string;
+  control_temp_c: number;
+  target_c: number;
+  recommended_w: number;
+  applied_w: number | null;
+}
+
+/** Editable thermal plan (bounds-clamped server-side). */
+export interface ThermalPlanForm {
+  target_c: number;
+  soak_s: number;
+  approach_band_c: number;
+  loop_ceiling_w: number;
+  max_step_w: number;
+  done_below_c: number;
+}
+
+export interface ThermalPlanStatus extends ThermalPlanForm {
+  bounds: Record<string, [number, number]>;
+}
+
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
   recording: { active: boolean; run: string | null };
+  thermal: ThermalStatus;
 }
 
 export interface Point {

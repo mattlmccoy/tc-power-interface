@@ -26,6 +26,9 @@ from tc_power_interface import __version__
 from tc_power_interface.control.controller import Controller
 from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
+from tc_power_interface.control.temperature import SimulatedThermalSource
+from tc_power_interface.control.thermal_loop import THERMAL_BOUNDS, ThermalController, ThermalPlan
+from tc_power_interface.control.thermal_store import load_plan, save_plan
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
 from tc_power_interface.integration.flir_link import FlirLink
@@ -109,6 +112,24 @@ class SafetyLimitsBody(BaseModel):
     temperature_c_trip: float
 
 
+class ThermalPlanBody(BaseModel):
+    target_c: float
+    soak_s: float
+    approach_band_c: float
+    loop_ceiling_w: float
+    max_step_w: float
+    done_below_c: float
+
+
+class ThermalStartBody(BaseModel):
+    mode: str = "advisory"
+
+
+class ThermalSourceBody(BaseModel):
+    type: str
+    url: str | None = None
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -135,6 +156,15 @@ def create_app(
         controller.add_listener(recorder.record)
         flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
         controller.add_listener(RfLinkNotifier(flir_link).on_snapshot)
+        controller.backend = backend
+        thermal = ThermalController(
+            controller, SimulatedThermalSource(),
+            plan=load_plan(experiments_root, max_forward_w=active_limits.max_forward_w),
+            mode="advisory",
+        )
+        controller.add_listener(lambda _snap: thermal.tick(poll_interval_s))
+        app.state.thermal = thermal
+        app.state.thermal_source = "simulated"
         controller.start()
         try:
             device_info = controller.identify()
@@ -166,6 +196,9 @@ def create_app(
     def _flir_link() -> FlirLink:
         return cast(FlirLink, app.state.flir_link)
 
+    def _thermal() -> ThermalController:
+        return cast(ThermalController, app.state.thermal)
+
     # --- REST ------------------------------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -185,6 +218,7 @@ def create_app(
                 "active": rec.state is RecorderState.RECORDING,
                 "run": app.state.current_run,
             },
+            "thermal": {**_thermal().snapshot(), "source": app.state.thermal_source},
         }
 
     @app.get("/api/status")
@@ -219,6 +253,76 @@ def create_app(
         _controller().set_limits(new)
         save_limits(experiments_root, new)
         return _limits_payload()
+
+    # --- thermal closed loop ---------------------------------------------------------------
+    def _thermal_plan_payload() -> dict[str, Any]:
+        p = _thermal().plan
+        return {
+            "target_c": p.target_c,
+            "soak_s": p.soak_s,
+            "approach_band_c": p.approach_band_c,
+            "loop_ceiling_w": p.loop_ceiling_w,
+            "max_step_w": p.max_step_w,
+            "done_below_c": p.done_below_c,
+            "bounds": {k: [v[0], v[1]] for k, v in THERMAL_BOUNDS.items()},
+        }
+
+    @app.get("/api/thermal/plan")
+    def get_thermal_plan() -> dict[str, Any]:
+        return _thermal_plan_payload()
+
+    @app.put("/api/thermal/plan")
+    def put_thermal_plan(body: ThermalPlanBody) -> dict[str, Any]:
+        new = ThermalPlan.bounded(
+            target_c=body.target_c,
+            soak_s=body.soak_s,
+            approach_band_c=body.approach_band_c,
+            loop_ceiling_w=body.loop_ceiling_w,
+            max_step_w=body.max_step_w,
+            done_below_c=body.done_below_c,
+            max_forward_w=_controller().limits.max_forward_w,
+        )
+        _thermal().plan = new
+        save_plan(experiments_root, new)
+        return _thermal_plan_payload()
+
+    @app.post("/api/thermal/start")
+    def thermal_start(body: ThermalStartBody) -> dict[str, Any]:
+        th = _thermal()
+        th.mode = body.mode
+        th.start()
+        return th.snapshot()
+
+    @app.post("/api/thermal/stop")
+    def thermal_stop() -> dict[str, Any]:
+        th = _thermal()
+        th.stop()
+        return th.snapshot()
+
+    @app.post("/api/thermal/arm")
+    def thermal_arm() -> dict[str, Any]:
+        th = _thermal()
+        th.arm()
+        return th.snapshot()
+
+    @app.post("/api/thermal/disarm")
+    def thermal_disarm() -> dict[str, Any]:
+        th = _thermal()
+        th.disarm()
+        return th.snapshot()
+
+    @app.post("/api/thermal/source")
+    def thermal_source(body: ThermalSourceBody) -> dict[str, Any]:
+        th = _thermal()
+        if body.type == "flir":
+            from tc_power_interface.integration.flir_temperature import FlirTemperatureSource
+
+            th.source = FlirTemperatureSource(body.url or "")
+            app.state.thermal_source = "flir"
+        else:
+            th.source = SimulatedThermalSource()
+            app.state.thermal_source = "simulated"
+        return {"source": app.state.thermal_source}
 
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:
