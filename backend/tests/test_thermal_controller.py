@@ -1,8 +1,15 @@
 """Tests for ThermalController: the arming gate + safety invariants (never enables RF)."""
 
 from tc_power_interface.control.safety import SafetyLimits
-from tc_power_interface.control.temperature import SimulatedThermalSource
+from tc_power_interface.control.temperature import SimulatedThermalSource, TemperatureSample
 from tc_power_interface.control.thermal_loop import ThermalController, ThermalPhase, ThermalPlan
+
+
+class InvalidSource:
+    """A source whose reading is never valid (models FLIR before a frame / after a stream drop)."""
+
+    def read(self) -> TemperatureSample:
+        return TemperatureSample(celsius=0.0, valid=False, ts=0.0)
 
 
 class FakeController:
@@ -104,6 +111,18 @@ def test_rf_off_disarms():
     fake._rf_on = False
     tc.tick(0.1)
     assert tc.armed is False
+
+
+def test_invalid_temperature_does_not_drive():
+    # An absent/stale reading (celsius=0, valid=False) must NOT be treated as 0 C and ramped from;
+    # the loop backs off to 0 W and never drives the setpoint.
+    fake = FakeController(backend="simulated", rf_on=True)
+    tc = ThermalController(fake, InvalidSource(), plan=ThermalPlan(), mode="auto")
+    tc.start()
+    tc.tick(0.1)
+    assert fake.last_setpoint is None
+    assert tc.recommended_w == 0.0
+    assert "invalid" in tc.reason.lower()
 
 
 def test_converges_toward_target_in_sim():

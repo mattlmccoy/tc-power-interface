@@ -166,7 +166,16 @@ class ThermalController:
             self.armed = False  # lose RF or fault -> disarm
         if hasattr(self.source, "step"):
             self.source.step(load_w=float(tel.get("load_w", 0.0)), dt_s=dt_s)
-        self.control_temp_c = self.source.read().celsius
+        sample = self.source.read()
+        self.control_temp_c = sample.celsius
+        if not sample.valid:
+            # Absent/stale temperature (e.g. FLIR before a frame) must never be treated as 0 C and
+            # ramped from. Back off to 0 W and do not drive until a real reading returns.
+            self._integral = 0.0
+            self.recommended_w = 0.0
+            self.applied_w = None
+            self.reason = "temperature reading invalid; holding at 0 W"
+            return
 
         current = float(tel.get("forward_w", 0.0))
         cmd = plan_step(temp_c=self.control_temp_c, phase=self.phase,
