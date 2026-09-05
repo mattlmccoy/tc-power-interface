@@ -3,8 +3,16 @@
 // operator's cross-origin guard passes. State-changing calls return the raw Response so the caller
 // can surface the server's error detail (e.g. a 409 when RF-enable is refused while faulted).
 
+import type { FlirLinkResult } from "./format.ts";
 import { apiUrl, loadOperatorBase, saveOperatorBase } from "./operator.ts";
 import type { Status } from "./telemetry.ts";
+
+/** Shape of GET/POST /api/flir-link — the operator's link to the separate FLIR tool. */
+export interface FlirLink {
+  url: string;
+  enabled: boolean;
+  last_result: FlirLinkResult;
+}
 
 /** Site mode: the UI is served from GitHub Pages and talks to a local operator. */
 export const SITE_MODE = import.meta.env.VITE_SITE_MODE === "1";
@@ -56,4 +64,6 @@ export const api = {
   startRecording: (name: string, notes: string) =>
     post("/api/recording/start", { name, notes }),
   stopRecording: () => post("/api/recording/stop"),
+  flirLink: async (): Promise<FlirLink> => (await fetch(apiUrl(BASE, "/api/flir-link"))).json(),
+  setFlirLink: (url: string, enabled: boolean) => post("/api/flir-link", { url, enabled }),
 };

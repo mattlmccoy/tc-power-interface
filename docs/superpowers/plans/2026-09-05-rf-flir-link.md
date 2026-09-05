@@ -768,10 +768,10 @@ git commit -m "feat(flir-link): wire notifier + /api/flir-link + --flir-url"
 
 Not unit-testable (DOM); **verification gate:** `npm run build`; then the end-to-end run in Task C1.
 
-- [ ] **Step 1:** Add the two api.ts methods.
-- [ ] **Step 2:** Add the Instruments panel wired to them.
-- [ ] **Step 3:** `cd frontend && npm run build` — Expected: builds clean; `npm test` still green.
-- [ ] **Step 4: Commit**
+- [x] **Step 1:** Add the two api.ts methods.
+- [x] **Step 2:** Add the Instruments panel wired to them.
+- [x] **Step 3:** `cd frontend && npm run build` — Expected: builds clean; `npm test` still green.
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/src/

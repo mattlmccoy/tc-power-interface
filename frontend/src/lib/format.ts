@@ -37,3 +37,15 @@ export function reflectedZone(fraction: number, warn: number, trip: number): Zon
 export function statusFlagNames(status: number): string[] {
   return STATUS_FLAGS.filter(([bit]) => (status & bit) !== 0).map(([, name]) => name);
 }
+
+export interface FlirLinkResult {
+  ok: boolean | null;
+  message: string;
+  ts: number;
+}
+
+/** Render the FLIR link's last_result as a one-line status: "idle" / "linked · ok" / "error: …". */
+export function flirStatusLabel(last: FlirLinkResult | null): string {
+  if (!last || last.ok === null) return "idle";
+  return last.ok ? "linked · ok" : `error: ${last.message || "unknown"}`;
+}
