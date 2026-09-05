@@ -1,0 +1,69 @@
+// Telemetry types (mirror of the backend snapshot JSON) + a small ring buffer for plots.
+
+export interface Telemetry {
+  host_timestamp_ns: number;
+  forward_w: number;
+  reverse_w: number;
+  load_w: number;
+  reflected_fraction: number;
+  rf_on: boolean;
+  temperature_c: number;
+  operation_mode: string;
+  tuner: string;
+  status: number;
+}
+
+export interface Limits {
+  reflected_fraction_trip: number;
+  reflected_fraction_warn: number;
+  temperature_c_trip: number;
+  max_setpoint_w: number;
+}
+
+export interface Snapshot {
+  state: "disconnected" | "connected" | "fault" | "closed";
+  fault_reasons: string[];
+  warnings: string[];
+  telemetry: Telemetry | null;
+  limits: Limits;
+}
+
+export interface DeviceInfo {
+  id?: string;
+  serial?: string;
+  firmware?: { ui: string; rf: string };
+  frequency_hz?: number;
+  power_limit_w?: number;
+}
+
+export interface Status {
+  device: DeviceInfo;
+  controller: Snapshot;
+  recording: { active: boolean; run: string | null };
+}
+
+export interface Point {
+  t: number;
+  v: number;
+}
+
+/** Fixed-capacity ring buffer keeping the most recent N points in insertion order. */
+export class TraceBuffer {
+  private readonly capacity: number;
+  private points: Point[] = [];
+
+  constructor(capacity: number) {
+    this.capacity = capacity;
+  }
+
+  push(t: number, v: number): void {
+    this.points.push({ t, v });
+    if (this.points.length > this.capacity) {
+      this.points.shift();
+    }
+  }
+
+  toArray(): Point[] {
+    return [...this.points];
+  }
+}

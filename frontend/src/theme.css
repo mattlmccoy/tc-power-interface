@@ -1,0 +1,44 @@
+/* T&C Power Interface — design tokens. Reused verbatim from the FLIR Research Interface so the
+   two tools read as one family. The ONLY place colours are defined. Fonts fall back to the system
+   stack here (the FLIR self-hosted IBM Plex / Space Mono woff2 can be dropped into public/fonts). */
+
+:root {
+  color-scheme: dark;
+  --bg: #101418;
+  --bg-deep: #0b0e12;
+  --panel: #141920;
+  --line: #232a33;
+  --line-strong: #2f3843;
+  --line-control: #4a5561;
+  --fg: #d7dde5;
+  --fg-strong: #f5f7fa;
+  --muted: #8b97a5;
+  --accent: #ffb454;
+  --accent-ink: var(--bg);
+  --focus: var(--accent);
+  --live: #5cff8a;
+  --live-glow: 0 0 8px rgba(92, 255, 138, 0.7);
+  --live-glow-dim: 0 0 3px rgba(92, 255, 138, 0.4);
+  --live-bg: rgba(92, 255, 138, 0.12);
+  --warn: var(--accent);
+  --warn-bg: rgba(255, 180, 84, 0.10);
+  --err: #ff5f56;
+  --err-bg: rgba(255, 95, 86, 0.12);
+  --rec: var(--err);
+  --trace-fwd: #ffb454;
+  --trace-refl: #6ec3ff;
+  --image-bg: #000;
+  --scrim: rgba(11, 14, 18, 0.85);
+  --danger-ink: #ffffff;
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "Space Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs: 13px;
+  --space: 4px;
+  --radius: 3px;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  --topbar-h: 44px;
+  --statusbar-h: 28px;
+}
+
+@keyframes tcp-glow { 0%, 100% { box-shadow: var(--live-glow); } 50% { box-shadow: var(--live-glow-dim); } }
+@keyframes tcp-blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0.25; } }
