@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import {
+  boundHint,
   flirStatusLabel,
   fmtTemp,
   fmtWatts,
@@ -324,8 +326,11 @@ export function App() {
         </div>
       ) : null}
 
-      {view === "dashboard" ? (
-        <div className="main">
+      <ErrorBoundary key={view}>
+        {() => (
+          <>
+            {view === "dashboard" ? (
+          <div className="main">
           <div className="col">
             <section className="panel">
               <h2>Telemetry</h2>
@@ -610,8 +615,7 @@ export function App() {
                     bounds shown and take effect on the next telemetry poll.
                   </div>
                   <label className="field-label">
-                    Max forward power (W) — {limitsStatus.bounds.max_forward_w[0]}–
-                    {limitsStatus.bounds.max_forward_w[1]}
+                    Max forward power (W){boundHint(limitsStatus.bounds, "max_forward_w")}
                   </label>
                   <input
                     type="number"
@@ -619,8 +623,7 @@ export function App() {
                     onChange={(e) => setLimForm({ ...limForm, max_forward_w: e.target.value })}
                   />
                   <label className="field-label" style={{ marginTop: "10px" }}>
-                    Max reflected power / trip (W) — {limitsStatus.bounds.max_reflected_w[0]}–
-                    {limitsStatus.bounds.max_reflected_w[1]}
+                    Max reflected power / trip (W){boundHint(limitsStatus.bounds, "max_reflected_w")}
                   </label>
                   <input
                     type="number"
@@ -628,8 +631,7 @@ export function App() {
                     onChange={(e) => setLimForm({ ...limForm, max_reflected_w: e.target.value })}
                   />
                   <label className="field-label" style={{ marginTop: "10px" }}>
-                    Over-temperature shutoff (°C) — {limitsStatus.bounds.temperature_c_trip[0]}–
-                    {limitsStatus.bounds.temperature_c_trip[1]}
+                    Over-temperature shutoff (°C){boundHint(limitsStatus.bounds, "temperature_c_trip")}
                   </label>
                   <input
                     type="number"
@@ -660,8 +662,7 @@ export function App() {
                     bounds shown.
                   </div>
                   <label className="field-label">
-                    Target temperature (°C) — {thermalPlanStatus.bounds.target_c[0]}–
-                    {thermalPlanStatus.bounds.target_c[1]}
+                    Target temperature (°C){boundHint(thermalPlanStatus.bounds, "target_c")}
                   </label>
                   <input
                     type="number"
@@ -669,8 +670,7 @@ export function App() {
                     onChange={(e) => setThermalForm({ ...thermalForm, target_c: e.target.value })}
                   />
                   <label className="field-label" style={{ marginTop: "10px" }}>
-                    Soak time (s) — {thermalPlanStatus.bounds.soak_s[0]}–
-                    {thermalPlanStatus.bounds.soak_s[1]}
+                    Soak time (s){boundHint(thermalPlanStatus.bounds, "soak_s")}
                   </label>
                   <input
                     type="number"
@@ -678,8 +678,7 @@ export function App() {
                     onChange={(e) => setThermalForm({ ...thermalForm, soak_s: e.target.value })}
                   />
                   <label className="field-label" style={{ marginTop: "10px" }}>
-                    Loop ceiling (W) — {thermalPlanStatus.bounds.loop_ceiling_w[0]}–
-                    {thermalPlanStatus.bounds.loop_ceiling_w[1]}
+                    Loop ceiling (W){boundHint(thermalPlanStatus.bounds, "loop_ceiling_w")}
                   </label>
                   <input
                     type="number"
@@ -689,8 +688,7 @@ export function App() {
                     }
                   />
                   <label className="field-label" style={{ marginTop: "10px" }}>
-                    Approach band (°C) — {thermalPlanStatus.bounds.approach_band_c[0]}–
-                    {thermalPlanStatus.bounds.approach_band_c[1]}
+                    Approach band (°C){boundHint(thermalPlanStatus.bounds, "approach_band_c")}
                   </label>
                   <input
                     type="number"
@@ -700,8 +698,7 @@ export function App() {
                     }
                   />
                   <label className="field-label" style={{ marginTop: "10px" }}>
-                    Max step (W per tick) — {thermalPlanStatus.bounds.max_step_w[0]}–
-                    {thermalPlanStatus.bounds.max_step_w[1]}
+                    Max step (W per tick){boundHint(thermalPlanStatus.bounds, "max_step_w")}
                   </label>
                   <input
                     type="number"
@@ -709,8 +706,7 @@ export function App() {
                     onChange={(e) => setThermalForm({ ...thermalForm, max_step_w: e.target.value })}
                   />
                   <label className="field-label" style={{ marginTop: "10px" }}>
-                    Done-below temperature (°C) — {thermalPlanStatus.bounds.done_below_c[0]}–
-                    {thermalPlanStatus.bounds.done_below_c[1]}
+                    Done-below temperature (°C){boundHint(thermalPlanStatus.bounds, "done_below_c")}
                   </label>
                   <input
                     type="number"
@@ -784,7 +780,10 @@ export function App() {
             ) : null}
           </div>
         </div>
-      )}
+            )}
+          </>
+        )}
+      </ErrorBoundary>
 
       {toast ? <div className="toast">{toast}</div> : null}
     </div>

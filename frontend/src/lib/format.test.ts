@@ -1,7 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fmtPct, fmtTemp, fmtWatts, flirStatusLabel, reflectedZone, statusFlagNames } from "./format.ts";
+import {
+  boundHint,
+  fmtPct,
+  fmtTemp,
+  fmtWatts,
+  flirStatusLabel,
+  formatError,
+  reflectedZone,
+  statusFlagNames,
+} from "./format.ts";
+
+test("boundHint: renders a range when the bound exists", () => {
+  assert.equal(boundHint({ target_c: [30, 300] }, "target_c"), " — 30–300");
+});
+
+test("boundHint: empty string when bounds missing or key absent (no crash)", () => {
+  assert.equal(boundHint(undefined, "target_c"), "");
+  assert.equal(boundHint({}, "target_c"), "");
+  // a malformed bound (not a 2-tuple) must not throw
+  assert.equal(boundHint({ target_c: [] as unknown as [number, number] }, "target_c"), "");
+});
+
+test("formatError: extracts a readable message from any thrown value", () => {
+  assert.equal(formatError(new Error("boom")), "boom");
+  assert.equal(formatError("plain string"), "plain string");
+  assert.match(formatError({ weird: 1 }), /weird/);
+  assert.equal(formatError(undefined), "Unknown error");
+});
 
 test("fmtWatts: one decimal with unit", () => {
   assert.equal(fmtWatts(150), "150.0 W");

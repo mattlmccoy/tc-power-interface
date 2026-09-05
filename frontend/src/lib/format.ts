@@ -17,6 +17,29 @@ export function fmtWatts(w: number): string {
   return `${w.toFixed(1)} W`;
 }
 
+/** " — lo–hi" hint for an editable field's hard bound, or "" if the bound is absent/malformed.
+ *  Guards the Settings forms so a config payload without `bounds` can never crash the render. */
+export function boundHint(
+  bounds: Record<string, [number, number]> | undefined,
+  key: string,
+): string {
+  const b = bounds?.[key];
+  if (!Array.isArray(b) || b.length < 2) return "";
+  return ` — ${b[0]}–${b[1]}`;
+}
+
+/** Best-effort readable message from any thrown value (Error, string, object, or nullish). */
+export function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err == null) return "Unknown error";
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 export function fmtPct(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`;
 }
