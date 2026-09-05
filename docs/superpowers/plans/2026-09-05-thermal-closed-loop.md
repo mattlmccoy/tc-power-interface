@@ -1,6 +1,6 @@
 # In-situ Thermal Closed Loop — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or executing-plans. Steps use `- [ ]`.
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or executing-plans. Steps use `- [x]`.
 
 **Goal:** A thermal control loop that reads a control-ROI temperature, follows a ramp→approach→soak→cool trajectory, and drives the RF **setpoint** (auto in sim; arm-gated for real) — never enabling RF, always bounded, protection-dominant.
 
@@ -25,7 +25,7 @@
 
 **Files:** Create `control/temperature.py`; Test `tests/test_temperature.py`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 from tc_power_interface.control.temperature import SimulatedThermalSource
@@ -55,9 +55,9 @@ def test_cools_toward_ambient_with_no_power():
     assert src.read().celsius < 40.0
 ```
 
-- [ ] **Step 2: Run — RED** (`cd backend && uv run pytest tests/test_temperature.py -q`).
+- [x] **Step 2: Run — RED** (`cd backend && uv run pytest tests/test_temperature.py -q`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # backend/tc_power_interface/control/temperature.py
@@ -102,13 +102,13 @@ class SimulatedThermalSource:
         return TemperatureSample(celsius=self._t, valid=True, ts=time.time())
 ```
 
-- [ ] **Step 4: Run — GREEN.** **Step 5: Commit** (`feat(thermal): temperature source protocol + toy sim thermal model`).
+- [x] **Step 4: Run — GREEN.** **Step 5: Commit** (`feat(thermal): temperature source protocol + toy sim thermal model`).
 
 ## Task 2: Pure control law `plan_step` + `ThermalPlan`/`ThermalPhase`
 
 **Files:** Create `control/thermal_loop.py` (this task adds the plan + pure step); Test `tests/test_thermal_loop.py`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 from tc_power_interface.control.thermal_loop import (
@@ -169,9 +169,9 @@ def test_cool_to_done_below_threshold():
     assert cmd.target_power_w == 0
 ```
 
-- [ ] **Step 2: Run — RED.**
+- [x] **Step 2: Run — RED.**
 
-- [ ] **Step 3: Implement** in `control/thermal_loop.py`
+- [x] **Step 3: Implement** in `control/thermal_loop.py`
 
 ```python
 from __future__ import annotations
@@ -260,7 +260,7 @@ def plan_step(*, temp_c: float, phase: ThermalPhase, elapsed_soak_s: float,
     return ThermalCommand(ThermalPhase.RAMP, target, "ramping to target")
 ```
 
-- [ ] **Step 4: Run — GREEN.** **Step 5: Commit** (`feat(thermal): pure ramp/approach/soak/cool control law`).
+- [x] **Step 4: Run — GREEN.** **Step 5: Commit** (`feat(thermal): pure ramp/approach/soak/cool control law`).
 
 ## Task 3: `ThermalController` (arming gate, drives setpoint) — safety core
 
@@ -273,7 +273,7 @@ call `controller.set_setpoint(target)`. Otherwise store a recommendation.
 **Arming gate `_may_drive()`** returns True iff: `mode=="auto"` AND controller not FAULT AND
 `(backend=="simulated")` OR `(rf_on AND armed)`. It NEVER calls `enable_rf`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```python
 from tc_power_interface.control.thermal_loop import ThermalController, ThermalPlan, ThermalPhase
@@ -368,9 +368,9 @@ def test_converges_to_target_in_sim():
                                                           ThermalPhase.DONE)
 ```
 
-- [ ] **Step 2: Run — RED.**
+- [x] **Step 2: Run — RED.**
 
-- [ ] **Step 3: Implement** `ThermalController` in `control/thermal_loop.py`
+- [x] **Step 3: Implement** `ThermalController` in `control/thermal_loop.py`
 
 ```python
 import time as _time
@@ -448,24 +448,24 @@ class ThermalController:
             self.applied_w = None
 ```
 
-- [ ] **Step 4: Run — GREEN.** **Step 5: Commit** (`feat(thermal): ThermalController with arming gate (never enables RF)`).
+- [x] **Step 4: Run — GREEN.** **Step 5: Commit** (`feat(thermal): ThermalController with arming gate (never enables RF)`).
 
 ## Task 4: persistence + API + snapshot + wire loop
 
 **Files:** Create `control/thermal_store.py`; Modify `api/app.py`; Test `tests/test_thermal_store.py`, `tests/test_api_thermal.py`.
 
-- [ ] `thermal_store.py`: `load_plan(root, max_forward_w)` / `save_plan(root, plan)` for `.thermal_plan.json` (mirror `safety_store.py`, clamp via `ThermalPlan.bounded`). TDD (roundtrip + clamp).
-- [ ] In `create_app` lifespan: build `ThermalController(controller, SimulatedThermalSource(), plan=load_plan(experiments_root, active_limits.max_forward_w), mode="advisory")`; set `controller.backend = backend` (so the gate can read it — add a `backend` attribute on `Controller`, defaulting "simulated", set in `create_app`); register a listener or a background tick (drive `thermal.tick(poll_interval_s)` from the controller poll via `controller.add_listener` — the listener gets the snapshot each poll; call `thermal.tick(poll_interval_s)` there). Store `app.state.thermal`.
-- [ ] Routes: `GET/PUT /api/thermal/plan` (bounded, persisted, `thermal.plan = new`); `POST /api/thermal/start` `{mode}`; `POST /api/thermal/stop`; `POST /api/thermal/arm`; `POST /api/thermal/disarm`; `POST /api/thermal/source` `{type,url?}` (sim -> `SimulatedThermalSource`, flir -> `FlirTemperatureSource(url)`).
-- [ ] Snapshot: add `thermal` block `{running, phase, mode, armed, source, control_temp_c, target_c, recommended_w, applied_w}` (from `app.state.thermal`), merged into `_status_payload()`.
-- [ ] `test_api_thermal.py` (TestClient, simulated): GET plan defaults + bounds; PUT clamps loop_ceiling_w to max_forward_w; start(auto) + several status polls show `phase` advancing and `applied_w` set (sim auto-drives); arm/disarm; source switch to sim ok.
-- [ ] TDD RED→GREEN, full gate (`uv run pytest -q && ruff && mypy`). Commit (`feat(api): thermal plan + start/stop/arm/source + snapshot`).
+- [x] `thermal_store.py`: `load_plan(root, max_forward_w)` / `save_plan(root, plan)` for `.thermal_plan.json` (mirror `safety_store.py`, clamp via `ThermalPlan.bounded`). TDD (roundtrip + clamp).
+- [x] In `create_app` lifespan: build `ThermalController(controller, SimulatedThermalSource(), plan=load_plan(experiments_root, active_limits.max_forward_w), mode="advisory")`; set `controller.backend = backend` (so the gate can read it — add a `backend` attribute on `Controller`, defaulting "simulated", set in `create_app`); register a listener or a background tick (drive `thermal.tick(poll_interval_s)` from the controller poll via `controller.add_listener` — the listener gets the snapshot each poll; call `thermal.tick(poll_interval_s)` there). Store `app.state.thermal`.
+- [x] Routes: `GET/PUT /api/thermal/plan` (bounded, persisted, `thermal.plan = new`); `POST /api/thermal/start` `{mode}`; `POST /api/thermal/stop`; `POST /api/thermal/arm`; `POST /api/thermal/disarm`; `POST /api/thermal/source` `{type,url?}` (sim -> `SimulatedThermalSource`, flir -> `FlirTemperatureSource(url)`).
+- [x] Snapshot: add `thermal` block `{running, phase, mode, armed, source, control_temp_c, target_c, recommended_w, applied_w}` (from `app.state.thermal`), merged into `_status_payload()`.
+- [x] `test_api_thermal.py` (TestClient, simulated): GET plan defaults + bounds; PUT clamps loop_ceiling_w to max_forward_w; start(auto) + several status polls show `phase` advancing and `applied_w` set (sim auto-drives); arm/disarm; source switch to sim ok.
+- [x] TDD RED→GREEN, full gate (`uv run pytest -q && ruff && mypy`). Commit (`feat(api): thermal plan + start/stop/arm/source + snapshot`).
 
 ## Task 5: `FlirTemperatureSource`
 
 **Files:** Create `integration/flir_temperature.py`; Test `tests/test_flir_temperature.py`.
 
-- [ ] A source that holds the latest temperature updated from a FLIR `/ws/frames` stream via
+- [x] A source that holds the latest temperature updated from a FLIR `/ws/frames` stream via
   `integration/flir_client` (`parse_flir_header`/`control_temperature`), exposing `read()`.
   Unit-test the "apply a frame -> read() returns that stat" path with a synthetic frame (reuse the
   helper from `tests/test_flir_integration.py`); the live socket is integration-only. Commit
@@ -473,26 +473,26 @@ class ThermalController:
 
 ## Task 6: Frontend types + API client
 
-- [ ] `telemetry.ts`: add `ThermalStatus` (`running, phase, mode, armed, source, control_temp_c,
+- [x] `telemetry.ts`: add `ThermalStatus` (`running, phase, mode, armed, source, control_temp_c,
   target_c, recommended_w, applied_w`) and extend `Status.controller` (or the snapshot type) with an
   optional `thermal`; add `ThermalPlanForm`/`ThermalPlanStatus` (with `bounds`).
-- [ ] `api.ts`: `thermalPlan()`, `saveThermalPlan(v)`, `thermalStart(mode)`, `thermalStop()`,
+- [x] `api.ts`: `thermalPlan()`, `saveThermalPlan(v)`, `thermalStart(mode)`, `thermalStop()`,
   `thermalArm()`, `thermalDisarm()`, `thermalSource(type,url?)`.
-- [ ] `npm test` green; commit (`feat(ui): thermal API types + client`).
+- [x] `npm test` green; commit (`feat(ui): thermal API types + client`).
 
 ## Task 7: Thermal-control UI (browser-verified)
 
-- [ ] Dashboard: a **Thermal control** panel — source selector (sim / FLIR URL), Start/Stop, mode
+- [x] Dashboard: a **Thermal control** panel — source selector (sim / FLIR URL), Start/Stop, mode
   (advisory/auto), an **Arm** button (enabled only when `rf_on`, shown when backend real / always
   usable), and a live readout: phase, control temp vs `target_c`, recommended vs applied W. Optional
   small temp-vs-target trace reusing `TimePlot`.
-- [ ] Settings: a **Thermal plan** form (target °C, soak s, loop ceiling W, approach band, max step)
+- [x] Settings: a **Thermal plan** form (target °C, soak s, loop ceiling W, approach band, max step)
   with hard-bound hints + Save (same pattern as safety limits).
-- [ ] `npm run build` + `npm test` green; commit (`feat(ui): thermal-control panel + plan settings`).
+- [x] `npm run build` + `npm test` green; commit (`feat(ui): thermal-control panel + plan settings`).
 
 ## Task 8: End-to-end (sim convergence)
 
-- [ ] `npm run build`; `uv run tcp-serve` (:8010). `curl -X POST /api/rf/enable` (operator enables
+- [x] `npm run build`; `uv run tcp-serve` (:8010). `curl -X POST /api/rf/enable` (operator enables
   RF). `curl -X POST /api/thermal/start -d '{"mode":"auto"}'`. Poll `/api/status` and watch
   `controller.thermal.phase` go RAMP→APPROACH→SOAK→COOL→DONE and `control_temp_c` approach
   `target_c`; confirm `applied_w` never exceeds the loop ceiling. Then trip protection (tight
