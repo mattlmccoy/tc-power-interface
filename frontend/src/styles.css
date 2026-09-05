@@ -134,14 +134,15 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .hint { color: var(--muted); font-size: 11px; margin-top: var(--space); line-height: 1.4; }
 .mono { font-family: var(--font-mono); }
 
-/* --- CXN-style analog gauges --- */
-.gauge-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* --- CXN-style analog gauges (compact: a single row of small gauges) --- */
+.gauge-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .gauge-card { background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 8px 6px 10px; text-align: center; }
-.gauge-label { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-.gauge-svg { width: 100%; height: auto; display: block; margin: 2px 0; }
-.gauge-readout { font-family: var(--font-mono); font-size: 20px; color: var(--fg-strong); font-weight: 600; }
-.gauge-unit { font-size: 11px; color: var(--muted); font-weight: 400; }
+  padding: 4px 2px 5px; text-align: center; }
+.gauge-label { font-size: 8px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.gauge-svg { width: 100%; height: auto; display: block; margin: 1px 0 0; }
+.gauge-readout { font-family: var(--font-mono); font-size: 13px; color: var(--fg-strong); font-weight: 600;
+  line-height: 1.1; }
+.gauge-unit { font-size: 9px; color: var(--muted); font-weight: 400; }
 
 /* --- status LED strip --- */
 .led-strip { display: flex; flex-wrap: wrap; gap: 6px 14px; }
