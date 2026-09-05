@@ -17,7 +17,7 @@ from tc_power_interface.api.app import create_app
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the T&C Power interface")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8010)  # 8000 is FLIR's; avoid the collision
     parser.add_argument("--backend", default="simulated", choices=["simulated", "serial"])
     parser.add_argument("--serial", default=None, help="serial port; implies --backend serial")
     parser.add_argument("--poll-interval", type=float, default=0.5)

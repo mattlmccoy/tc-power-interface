@@ -24,7 +24,8 @@ from pydantic import BaseModel
 
 from tc_power_interface import __version__
 from tc_power_interface.control.controller import Controller
-from tc_power_interface.control.safety import SafetyLimits
+from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
+from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
 from tc_power_interface.integration.flir_link import FlirLink
@@ -102,6 +103,12 @@ class FlirLinkBody(BaseModel):
     enabled: bool
 
 
+class SafetyLimitsBody(BaseModel):
+    max_forward_w: float
+    max_reflected_w: float
+    temperature_c_trip: float
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -115,13 +122,14 @@ def create_app(
 ) -> FastAPI:
     """Build the FastAPI app. The controller/device start in the lifespan."""
     experiments_root = Path(experiments_root or (Path.cwd() / "experiments"))
-    limits = limits or SafetyLimits()
+    # Explicit `limits` (tests) win; otherwise load the persisted, hard-bounded limits.
+    active_limits = limits if limits is not None else load_limits(experiments_root)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         transport = create_transport(backend, **(transport_kwargs or {}))
         controller = Controller(
-            CxnDevice(transport), limits=limits, poll_interval_s=poll_interval_s
+            CxnDevice(transport), limits=active_limits, poll_interval_s=poll_interval_s
         )
         recorder = TelemetryRecorder(experiments_root)
         controller.add_listener(recorder.record)
@@ -187,6 +195,30 @@ def create_app(
     def set_setpoint(req: SetpointRequest) -> dict[str, Any]:
         applied = _controller().set_setpoint(req.watts)
         return {"requested_w": req.watts, "applied_w": applied}
+
+    def _limits_payload() -> dict[str, Any]:
+        lim = _controller().limits
+        return {
+            "max_forward_w": lim.max_forward_w,
+            "max_reflected_w": lim.max_reflected_w,
+            "temperature_c_trip": lim.temperature_c_trip,
+            "bounds": {k: [v[0], v[1]] for k, v in HARD_BOUNDS.items()},
+        }
+
+    @app.get("/api/safety-limits")
+    def get_safety_limits() -> dict[str, Any]:
+        return _limits_payload()
+
+    @app.put("/api/safety-limits")
+    def put_safety_limits(body: SafetyLimitsBody) -> dict[str, Any]:
+        new = SafetyLimits.bounded(
+            max_forward_w=body.max_forward_w,
+            max_reflected_w=body.max_reflected_w,
+            temperature_c_trip=body.temperature_c_trip,
+        )
+        _controller().set_limits(new)
+        save_limits(experiments_root, new)
+        return _limits_payload()
 
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:

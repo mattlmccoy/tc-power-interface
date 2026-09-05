@@ -9,7 +9,9 @@ def test_load_missing_returns_defaults(tmp_path):
 
 
 def test_roundtrip_clamped(tmp_path):
-    save_limits(tmp_path, SafetyLimits(max_forward_w=300, max_reflected_w=40, temperature_c_trip=65))
+    save_limits(
+        tmp_path, SafetyLimits(max_forward_w=300, max_reflected_w=40, temperature_c_trip=65)
+    )
     loaded = load_limits(tmp_path)
     assert (loaded.max_forward_w, loaded.max_reflected_w, loaded.temperature_c_trip) == (
         300,
