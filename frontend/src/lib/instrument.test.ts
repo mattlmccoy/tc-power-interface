@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { clampPercent, gaugeAngle, statusLeds } from "./instrument.ts";
+
+test("gaugeAngle maps value across the arc and clamps out-of-range", () => {
+  assert.equal(gaugeAngle(0, 0, 600, -120, 120), -120); // min -> start
+  assert.equal(gaugeAngle(600, 0, 600, -120, 120), 120); // max -> end
+  assert.equal(gaugeAngle(300, 0, 600, -120, 120), 0); // midpoint
+  assert.equal(gaugeAngle(-50, 0, 600, -120, 120), -120); // below range clamps
+  assert.equal(gaugeAngle(9999, 0, 600, -120, 120), 120); // above range clamps
+});
+
+test("gaugeAngle handles a degenerate range without dividing by zero", () => {
+  assert.equal(gaugeAngle(5, 10, 10, -120, 120), -120);
+});
+
+test("clampPercent clamps to 0..100 and rounds; NaN -> 0", () => {
+  assert.equal(clampPercent(50.4), 50);
+  assert.equal(clampPercent(-3), 0);
+  assert.equal(clampPercent(140), 100);
+  assert.equal(clampPercent(Number.NaN), 0);
+});
+
+test("statusLeds derives LED states from the CXN status bits", () => {
+  const off = statusLeds(0);
+  assert.equal(off.length, 5);
+  assert.deepEqual(
+    off.map((l) => l.label),
+    ["RF on", "Forward limit", "Reverse limit", "Overheat", "Interlock"],
+  );
+  assert.ok(off.every((l) => l.on === false && l.tone === "off"));
+
+  const rfOn = statusLeds(1); // RF_ENABLED
+  assert.equal(rfOn[0].on, true);
+  assert.equal(rfOn[0].tone, "ok");
+
+  const revLimit = statusLeds(512); // REVERSE_POWER_LIMIT
+  const rev = revLimit.find((l) => l.label === "Reverse limit");
+  assert.equal(rev?.on, true);
+  assert.equal(rev?.tone, "warn");
+});

@@ -1,4 +1,5 @@
 // Pure formatting + classification helpers (unit-tested with node --test).
+// (instrument.ts holds the gauge/LED/stepper helpers.)
 
 /** CXN status bits (mirror of the backend Status IntFlag). */
 export const STATUS_FLAGS: ReadonlyArray<readonly [number, string]> = [

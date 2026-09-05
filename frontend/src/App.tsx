@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
+import { Gauge } from "./components/Gauge.tsx";
+import { StatusLeds } from "./components/StatusLeds.tsx";
 import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
-import {
-  boundHint,
-  flirStatusLabel,
-  fmtTemp,
-  fmtWatts,
-  reflectedZone,
-  statusFlagNames,
-} from "./lib/format.ts";
+import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
+import { clampPercent } from "./lib/instrument.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
 import type { Point, SafetyLimitsStatus, Status, ThermalPlanStatus } from "./lib/telemetry.ts";
@@ -23,7 +19,22 @@ export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [connected, setConnected] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [view, setView] = useState<"dashboard" | "settings">("dashboard");
+  const [view, setView] = useState<"dashboard" | "settings" | "experimental">("dashboard");
+  const [showGauges, setShowGauges] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("tcp.gauges") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleGauges = (on: boolean) => {
+    setShowGauges(on);
+    try {
+      localStorage.setItem("tcp.gauges", on ? "1" : "0");
+    } catch {
+      /* storage unavailable — keep in-memory only */
+    }
+  };
   const [setpointInput, setSetpointInput] = useState("100");
   const [tune, setTune] = useState(50);
   const [load, setLoad] = useState(50);
@@ -212,6 +223,21 @@ export function App() {
     setLoad(v);
     await api.load(v);
   }
+  // Fine-adjust steppers: click bumps by 1%, hold auto-repeats.
+  const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopRepeat = () => {
+    if (repeatRef.current) {
+      clearInterval(repeatRef.current);
+      repeatRef.current = null;
+    }
+  };
+  const holdStep = (fn: () => void) => {
+    fn();
+    stopRepeat();
+    repeatRef.current = setInterval(fn, 140);
+  };
+  const bumpTune = (d: number) => sendTune(clampPercent(tune + d));
+  const bumpLoad = (d: number) => sendLoad(clampPercent(load + d));
   async function applyFlirLink(url: string, enabled: boolean) {
     try {
       const res = await api.setFlirLink(url.trim(), enabled);
@@ -318,6 +344,12 @@ export function App() {
           <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
             Settings
           </button>
+          <button
+            className={view === "experimental" ? "active" : ""}
+            onClick={() => setView("experimental")}
+          >
+            Experimental
+          </button>
         </span>
         <span className={`pill ${pillState}`}>
           <span className="dot" />
@@ -342,33 +374,58 @@ export function App() {
           <div className="main">
           <div className="col">
             <section className="panel">
-              <h2>Telemetry</h2>
-              <div className="cards">
-                <div className="readout">
-                  <div className="label">Forward power</div>
-                  <div className={`value ${t?.rf_on ? "rf-on" : ""}`}>
-                    {t ? fmtWatts(t.forward_w) : "—"}
+              <div
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+              >
+                <h2 style={{ margin: 0 }}>Telemetry</h2>
+                <label className="toggle" style={{ margin: 0, fontSize: "12px" }}>
+                  <input
+                    type="checkbox"
+                    checked={showGauges}
+                    onChange={(e) => toggleGauges(e.target.checked)}
+                  />
+                  Analog gauges
+                </label>
+              </div>
+              {showGauges ? (
+                <div className="gauge-grid" style={{ marginTop: "10px" }}>
+                  <Gauge
+                    label="Requested"
+                    value={Number.isNaN(Number(setpointInput)) ? null : Number(setpointInput)}
+                    max={powerCeil}
+                  />
+                  <Gauge label="Forward" value={t ? t.forward_w : null} max={powerCeil} />
+                  <Gauge label="Reverse" value={t ? t.reverse_w : null} max={powerCeil} />
+                  <Gauge label="Load" value={t ? t.load_w : null} max={powerCeil} />
+                </div>
+              ) : (
+                <div className="cards" style={{ marginTop: "10px" }}>
+                  <div className="readout">
+                    <div className="label">Forward power</div>
+                    <div className={`value ${t?.rf_on ? "rf-on" : ""}`}>
+                      {t ? fmtWatts(t.forward_w) : "—"}
+                    </div>
+                  </div>
+                  <div className={`readout zone-${zone}`}>
+                    <div className="label">Reflected power</div>
+                    <div className="value">{t ? fmtWatts(t.reverse_w) : "—"}</div>
+                  </div>
+                  <div className="readout">
+                    <div className="label">Load power</div>
+                    <div className="value">{t ? fmtWatts(t.load_w) : "—"}</div>
+                  </div>
+                  <div className="readout">
+                    <div className="label">Heat-sink temp</div>
+                    <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
                   </div>
                 </div>
-                <div className={`readout zone-${zone}`}>
-                  <div className="label">Reflected power</div>
-                  <div className="value">{t ? fmtWatts(t.reverse_w) : "—"}</div>
-                </div>
-                <div className="readout">
-                  <div className="label">Load power</div>
-                  <div className="value">{t ? fmtWatts(t.load_w) : "—"}</div>
-                </div>
-                <div className="readout">
-                  <div className="label">Heat-sink temp</div>
-                  <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
-                </div>
+              )}
+              <div style={{ marginTop: "10px" }}>
+                <StatusLeds status={t ? t.status : null} />
               </div>
               <div className="hint mono">
                 RF {t?.rf_on ? "ON" : "off"} · mode {t?.operation_mode ?? "—"} · tuner{" "}
                 {t?.tuner ?? "—"}
-                {t && statusFlagNames(t.status).length > 0
-                  ? ` · ${statusFlagNames(t.status).join(", ")}`
-                  : ""}
               </div>
             </section>
 
@@ -407,6 +464,99 @@ export function App() {
 
           <div className="col">
             <section className="panel">
+              <h2>Matching network</h2>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={manual}
+                  onChange={(e) => toggleManual(e.target.checked)}
+                  disabled={!connected}
+                />
+                Manual tune mode
+              </label>
+              <div className="hint" style={{ marginTop: "6px" }}>
+                Tune / load cap positions — writable only in manual mode. Type a value, or use −/+
+                (hold to repeat) for fine adjustment.
+              </div>
+              <div className="cap-row" style={{ marginTop: "10px" }}>
+                <span className="cap-name">Tune cap</span>
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpTune(-1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={tune}
+                  disabled={!manual}
+                  onChange={(e) => sendTune(clampPercent(Number(e.target.value)))}
+                />
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpTune(1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  +
+                </button>
+                <span className="cap-name">%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={tune}
+                disabled={!manual}
+                onChange={(e) => sendTune(Number(e.target.value))}
+              />
+              <div className="cap-row" style={{ marginTop: "10px" }}>
+                <span className="cap-name">Load cap</span>
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpLoad(-1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={load}
+                  disabled={!manual}
+                  onChange={(e) => sendLoad(clampPercent(Number(e.target.value)))}
+                />
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpLoad(1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  +
+                </button>
+                <span className="cap-name">%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={load}
+                disabled={!manual}
+                onChange={(e) => sendLoad(Number(e.target.value))}
+              />
+            </section>
+
+            <section className="panel">
               <h2>Power setpoint</h2>
               <label className="field-label" htmlFor="sp">
                 Forward power (W)
@@ -443,143 +593,6 @@ export function App() {
                   ? "RF-enable is blocked while faulted (protection latched)."
                   : "RF-enable prompts for confirmation. Protection commands RF off on any trip."}
               </div>
-            </section>
-
-            <section className="panel">
-              <h2>Thermal control (closed loop)</h2>
-              <div className="cards">
-                <div className="readout">
-                  <div className="label">Phase</div>
-                  <div className={`value ${thermal?.running ? "rf-on" : ""}`}>
-                    {thermal?.running ? thermal.phase : "idle"}
-                  </div>
-                </div>
-                <div className="readout">
-                  <div className="label">Control temp → target</div>
-                  <div className="value">
-                    {thermal ? `${fmtTemp(thermal.control_temp_c)} → ${fmtTemp(thermal.target_c)}` : "—"}
-                  </div>
-                </div>
-                <div className="readout">
-                  <div className="label">Recommended → applied</div>
-                  <div className="value">
-                    {thermal
-                      ? `${fmtWatts(thermal.recommended_w)} → ${
-                          thermal.applied_w === null ? "advisory" : fmtWatts(thermal.applied_w)
-                        }`
-                      : "—"}
-                  </div>
-                </div>
-              </div>
-              <div className="gauge" style={{ marginTop: "10px" }}>
-                <div
-                  className="fill ok"
-                  style={{
-                    width: `${
-                      thermal && thermal.target_c > 0
-                        ? Math.min(100, Math.max(0, (thermal.control_temp_c / thermal.target_c) * 100))
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-              <label className="field-label" style={{ marginTop: "12px" }}>
-                Temperature source
-              </label>
-              <div className="row">
-                <select
-                  value={thermal?.source ?? "simulated"}
-                  onChange={(e) => applyThermalSource(e.target.value as "simulated" | "flir")}
-                  disabled={!connected}
-                >
-                  <option value="simulated">simulated model</option>
-                  <option value="flir">FLIR stream</option>
-                </select>
-              </div>
-              {(thermal?.source ?? "simulated") === "flir" ? (
-                <input
-                  className="mono"
-                  style={textInputStyle}
-                  placeholder="ws://localhost:8000/ws/frames"
-                  value={thermalFlirUrl}
-                  onChange={(e) => setThermalFlirUrl(e.target.value)}
-                  onBlur={() => applyThermalSource("flir")}
-                />
-              ) : null}
-              <div className="row" style={{ marginTop: "10px" }}>
-                <select
-                  value={thermalMode}
-                  onChange={(e) => setThermalMode(e.target.value as "advisory" | "auto")}
-                  disabled={thermal?.running}
-                >
-                  <option value="advisory">advisory (recommend only)</option>
-                  <option value="auto">auto (drive setpoint)</option>
-                </select>
-                {thermal?.running ? (
-                  <button className="btn full" onClick={stopThermal}>
-                    Stop loop
-                  </button>
-                ) : (
-                  <button className="btn accent full" onClick={startThermal} disabled={!connected}>
-                    Start loop
-                  </button>
-                )}
-              </div>
-              <div className="row" style={{ marginTop: "8px" }}>
-                <button
-                  className="btn full"
-                  onClick={armThermal}
-                  disabled={!connected || !t?.rf_on || thermal?.armed}
-                >
-                  {thermal?.armed ? "Armed" : "Arm"}
-                </button>
-                <button
-                  className="btn full"
-                  onClick={disarmThermal}
-                  disabled={!connected || !thermal?.armed}
-                >
-                  Disarm
-                </button>
-              </div>
-              <div className="hint">
-                Auto mode drives the RF <em>setpoint</em> within the plan ceiling — it never enables
-                RF. On real hardware it drives only while armed and RF is on; a fault or RF-off
-                disarms. Set the trajectory in Settings → Thermal plan.
-              </div>
-            </section>
-
-            <section className="panel">
-              <h2>Matching network</h2>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={manual}
-                  onChange={(e) => toggleManual(e.target.checked)}
-                  disabled={!connected}
-                />
-                Manual tune mode
-              </label>
-              <div style={{ marginTop: "12px" }}>
-                <label className="field-label">Tune {tune}%</label>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={tune}
-                  disabled={!manual}
-                  onChange={(e) => sendTune(Number(e.target.value))}
-                />
-                <label className="field-label">Load {load}%</label>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={load}
-                  disabled={!manual}
-                  onChange={(e) => sendLoad(Number(e.target.value))}
-                />
-              </div>
-              <div className="hint">Capacities are writable only in manual mode.</div>
             </section>
 
             <section className="panel">
@@ -629,7 +642,7 @@ export function App() {
             </section>
           </div>
         </div>
-      ) : (
+      ) : view === "settings" ? (
         <div className="main">
           <div className="col">
             <section className="panel">
@@ -826,6 +839,127 @@ export function App() {
             ) : null}
           </div>
         </div>
+            ) : (
+              <div className="main">
+                <div className="col">
+                  <section className="panel">
+                    <h2>Thermal control (closed loop)</h2>
+                    <div className="banner warn" style={{ margin: "0 0 12px" }}>
+                      <strong>Experimental — untested.</strong> Not validated on hardware. It only
+                      adjusts the RF setpoint (it never enables RF) and disarms on any fault — one of
+                      the later things to test.
+                    </div>
+                    <div className="cards">
+                      <div className="readout">
+                        <div className="label">Phase</div>
+                        <div className={`value ${thermal?.running ? "rf-on" : ""}`}>
+                          {thermal?.running ? thermal.phase : "idle"}
+                        </div>
+                      </div>
+                      <div className="readout">
+                        <div className="label">Control temp → target</div>
+                        <div className="value">
+                          {thermal
+                            ? `${fmtTemp(thermal.control_temp_c)} → ${fmtTemp(thermal.target_c)}`
+                            : "—"}
+                        </div>
+                      </div>
+                      <div className="readout">
+                        <div className="label">Recommended → applied</div>
+                        <div className="value">
+                          {thermal
+                            ? `${fmtWatts(thermal.recommended_w)} → ${
+                                thermal.applied_w === null ? "advisory" : fmtWatts(thermal.applied_w)
+                              }`
+                            : "—"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="gauge" style={{ marginTop: "10px" }}>
+                      <div
+                        className="fill ok"
+                        style={{
+                          width: `${
+                            thermal && thermal.target_c > 0
+                              ? Math.min(
+                                  100,
+                                  Math.max(0, (thermal.control_temp_c / thermal.target_c) * 100),
+                                )
+                              : 0
+                          }%`,
+                        }}
+                      />
+                    </div>
+                    <label className="field-label" style={{ marginTop: "12px" }}>
+                      Temperature source
+                    </label>
+                    <div className="row">
+                      <select
+                        value={thermal?.source ?? "simulated"}
+                        onChange={(e) => applyThermalSource(e.target.value as "simulated" | "flir")}
+                        disabled={!connected}
+                      >
+                        <option value="simulated">simulated model</option>
+                        <option value="flir">FLIR stream</option>
+                      </select>
+                    </div>
+                    {(thermal?.source ?? "simulated") === "flir" ? (
+                      <input
+                        className="mono"
+                        style={textInputStyle}
+                        placeholder="ws://localhost:8000/ws/frames"
+                        value={thermalFlirUrl}
+                        onChange={(e) => setThermalFlirUrl(e.target.value)}
+                        onBlur={() => applyThermalSource("flir")}
+                      />
+                    ) : null}
+                    <div className="row" style={{ marginTop: "10px" }}>
+                      <select
+                        value={thermalMode}
+                        onChange={(e) => setThermalMode(e.target.value as "advisory" | "auto")}
+                        disabled={thermal?.running}
+                      >
+                        <option value="advisory">advisory (recommend only)</option>
+                        <option value="auto">auto (drive setpoint)</option>
+                      </select>
+                      {thermal?.running ? (
+                        <button className="btn full" onClick={stopThermal}>
+                          Stop loop
+                        </button>
+                      ) : (
+                        <button
+                          className="btn accent full"
+                          onClick={startThermal}
+                          disabled={!connected}
+                        >
+                          Start loop
+                        </button>
+                      )}
+                    </div>
+                    <div className="row" style={{ marginTop: "8px" }}>
+                      <button
+                        className="btn full"
+                        onClick={armThermal}
+                        disabled={!connected || !t?.rf_on || thermal?.armed}
+                      >
+                        {thermal?.armed ? "Armed" : "Arm"}
+                      </button>
+                      <button
+                        className="btn full"
+                        onClick={disarmThermal}
+                        disabled={!connected || !thermal?.armed}
+                      >
+                        Disarm
+                      </button>
+                    </div>
+                    <div className="hint">
+                      Auto mode drives the RF <em>setpoint</em> within the plan ceiling. On real
+                      hardware it drives only while armed and RF is on; a fault or RF-off disarms.
+                      Set the trajectory in Settings → Thermal plan.
+                    </div>
+                  </section>
+                </div>
+              </div>
             )}
           </>
         )}
