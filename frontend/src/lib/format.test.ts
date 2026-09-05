@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fmtPct, fmtTemp, fmtWatts, reflectedZone, statusFlagNames } from "./format.ts";
+import { fmtPct, fmtTemp, fmtWatts, flirStatusLabel, reflectedZone, statusFlagNames } from "./format.ts";
 
 test("fmtWatts: one decimal with unit", () => {
   assert.equal(fmtWatts(150), "150.0 W");
@@ -31,4 +31,24 @@ test("statusFlagNames: decodes set bits in order", () => {
   assert.deepEqual(statusFlagNames(1), ["RF_ENABLED"]);
   assert.deepEqual(statusFlagNames(1 | 2048), ["RF_ENABLED", "INTERLOCK_OPEN"]);
   assert.deepEqual(statusFlagNames(1024), ["OVER_TEMPERATURE"]);
+});
+
+test("flirStatusLabel: null result or null ok reads as idle", () => {
+  assert.equal(flirStatusLabel(null), "idle");
+  assert.equal(flirStatusLabel({ ok: null, message: "", ts: 0 }), "idle");
+});
+
+test("flirStatusLabel: ok result reads as linked", () => {
+  assert.equal(flirStatusLabel({ ok: true, message: "started run r1", ts: 123 }), "linked · ok");
+});
+
+test("flirStatusLabel: failed result surfaces the message", () => {
+  assert.equal(
+    flirStatusLabel({ ok: false, message: "connection refused", ts: 123 }),
+    "error: connection refused",
+  );
+});
+
+test("flirStatusLabel: failed result with empty message falls back", () => {
+  assert.equal(flirStatusLabel({ ok: false, message: "", ts: 123 }), "error: unknown");
 });

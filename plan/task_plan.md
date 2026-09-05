@@ -50,6 +50,10 @@ in-situ closed-loop control.
 ruff + mypy --strict clean; frontend builds; live browser run verified (setpoint clamp, RF on/off,
 recording, WS telemetry, plot). Simulator-first, safety-first, mirrors FLIR.
 
+**Published 2026-09-05:** github.com/mattlmccoy/tc-power-interface (public, `main`), CI + Pages
+green, hosted UI live at https://mattlmccoy.github.io/tc-power-interface/ (FLIR-style site mode +
+CORS/X-TCP-Client guard). 97 tests (85 backend + 12 frontend).
+
 Next candidates (not started): (a) read-only hardware probe on the real unit to confirm the CXN
 dialect; (b) local match-tracking loop; (c) wire the advisory thermal loop to FLIR + accepted-power
-control after true-power commissioning; (d) `git init` + initial commit.
+control after true-power commissioning.

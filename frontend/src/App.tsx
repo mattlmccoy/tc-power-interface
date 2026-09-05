@@ -2,10 +2,20 @@ import { useEffect, useRef, useState } from "react";
 
 import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
-import { fmtPct, fmtTemp, fmtWatts, reflectedZone, statusFlagNames } from "./lib/format.ts";
+import type { FlirLink } from "./lib/api.ts";
+import {
+  flirStatusLabel,
+  fmtPct,
+  fmtTemp,
+  fmtWatts,
+  reflectedZone,
+  statusFlagNames,
+} from "./lib/format.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
 import type { Point, Status } from "./lib/telemetry.ts";
+
+const FLIR_POLL_MS = 3000;
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -19,6 +29,9 @@ export function App() {
   const [plot, setPlot] = useState<{ fwd: Point[]; refl: Point[] }>({ fwd: [], refl: [] });
   const [base, setBase] = useState(operatorBase());
   const [baseInput, setBaseInput] = useState(operatorBase());
+  const [flirUrlInput, setFlirUrlInput] = useState("");
+  const [flirEnabled, setFlirEnabled] = useState(false);
+  const [flirLast, setFlirLast] = useState<FlirLink["last_result"] | null>(null);
 
   const fwdBuf = useRef(new TraceBuffer(150));
   const reflBuf = useRef(new TraceBuffer(150));
@@ -58,6 +71,34 @@ export function App() {
       closed = true;
       if (retry) clearTimeout(retry);
       ws?.close();
+    };
+  }, [base]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const link = await api.flirLink();
+        if (cancelled) return;
+        setFlirUrlInput(link.url);
+        setFlirEnabled(link.enabled);
+        setFlirLast(link.last_result);
+      } catch {
+        /* operator unreachable — status line stays at its last known value */
+      }
+    };
+    load();
+    const poll = setInterval(async () => {
+      try {
+        const link = await api.flirLink();
+        if (!cancelled) setFlirLast(link.last_result);
+      } catch {
+        /* transient poll failure — keep showing the last known result */
+      }
+    }, FLIR_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
     };
   }, [base]);
 
@@ -110,6 +151,28 @@ export function App() {
   async function sendLoad(v: number) {
     setLoad(v);
     await api.load(v);
+  }
+  async function applyFlirLink(url: string, enabled: boolean) {
+    try {
+      const res = await api.setFlirLink(url.trim(), enabled);
+      if (res.ok) {
+        const link = (await res.json()) as FlirLink;
+        setFlirUrlInput(link.url);
+        setFlirEnabled(link.enabled);
+        setFlirLast(link.last_result);
+      } else {
+        flash("FLIR link update failed: " + (await detail(res)));
+      }
+    } catch {
+      flash("FLIR link update failed: could not reach operator");
+    }
+  }
+  function applyFlirUrl() {
+    applyFlirLink(flirUrlInput, flirEnabled);
+  }
+  function toggleFlirEnabled(on: boolean) {
+    setFlirEnabled(on);
+    applyFlirLink(flirUrlInput, on);
   }
 
   return (
@@ -332,6 +395,44 @@ export function App() {
                 </button>
               </>
             )}
+          </section>
+
+          <section className="panel">
+            <h2>Instruments</h2>
+            <label className="field-label" htmlFor="flir-url">
+              FLIR link URL
+            </label>
+            <input
+              id="flir-url"
+              className="mono"
+              style={{
+                width: "100%",
+                background: "var(--bg-deep)",
+                border: "1px solid var(--line-control)",
+                borderRadius: "var(--radius)",
+                padding: "8px 10px",
+                marginBottom: "8px",
+              }}
+              placeholder="http://localhost:8000"
+              value={flirUrlInput}
+              onChange={(e) => setFlirUrlInput(e.target.value)}
+              onBlur={applyFlirUrl}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyFlirUrl();
+              }}
+            />
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={flirEnabled}
+                onChange={(e) => toggleFlirEnabled(e.target.checked)}
+              />
+              Enable FLIR link
+            </label>
+            <div className="hint mono">{flirStatusLabel(flirLast)}</div>
+            <div className="hint">
+              RF on/off starts + annotates a FLIR recording (FLIR owns stop-vs-keep).
+            </div>
           </section>
         </div>
       </div>
