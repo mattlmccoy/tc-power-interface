@@ -36,3 +36,13 @@ def test_post_failure_is_swallowed_and_recorded():
     link.join()
     assert link.last_result["ok"] is False
     assert "refused" in link.last_result["message"]
+
+
+def test_thread_list_does_not_grow_unbounded():
+    # Finished sends are pruned on the next notify, so a long RF-toggling session cannot
+    # accumulate dead Thread objects.
+    link = FlirLink(url="http://localhost:8000", enabled=True, _post=lambda u, b, t: None)
+    for _ in range(5):
+        link.notify(state="on", forward_w=1.0, reflected_fraction=0.0, reason="operator")
+        link.join()
+    assert len(link._threads) <= 1

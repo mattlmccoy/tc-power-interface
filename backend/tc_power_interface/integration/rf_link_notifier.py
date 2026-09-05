@@ -32,6 +32,9 @@ class RfLinkNotifier:
             state = "on"
         else:
             state = "off"
+            # On a protection trip the controller reads telemetry, then commands RF off and latches
+            # FAULT; the falling rf_on edge therefore appears on the NEXT tick's snapshot, by which
+            # time state=="fault" and fault_reasons are latched and still present here.
             reasons = snapshot.get("fault_reasons") or []
             reason = f"fault: {'; '.join(reasons)}" if (
                 snapshot.get("state") == "fault" and reasons) else "operator"

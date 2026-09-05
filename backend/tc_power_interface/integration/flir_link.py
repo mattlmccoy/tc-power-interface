@@ -37,6 +37,10 @@ class FlirLink:
                reason: str) -> None:
         if not self.enabled or not self.url:
             return
+        # Drop finished sends so a long session of RF toggling doesn't accumulate dead threads.
+        # (self.url/self.enabled are re-read on the worker thread; if the operator changes them
+        # mid-send a request may use the prior value — acceptable for a best-effort link.)
+        self._threads = [t for t in self._threads if t.is_alive()]
         body = build_payload(state=state, forward_w=forward_w,
                              reflected_fraction=reflected_fraction, reason=reason)
         t = threading.Thread(target=self._send, args=(body,), daemon=True)
