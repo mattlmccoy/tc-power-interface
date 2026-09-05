@@ -55,9 +55,9 @@ Run the full app (UI + API) against the simulator:
 
 ```bash
 cd frontend && npm install && npm run build     # builds frontend/dist, served by the backend
-cd ../backend && uv run tcp-serve                # http://127.0.0.1:8000
+cd ../backend && uv run tcp-serve                # http://127.0.0.1:8010 (8000 is FLIR)
 # UI hot-reload during development:
-cd frontend && npm run dev                       # http://127.0.0.1:5174 (proxies /api + /ws to :8000)
+cd frontend && npm run dev                       # http://127.0.0.1:5174 (proxies /api + /ws to :8010)
 ```
 
 ## Hosted UI (GitHub Pages)
@@ -67,10 +67,10 @@ static, site-mode build). It controls nothing on its own — it connects back to
 you run on the machine wired to the generator:
 
 ```bash
-cd backend && uv run tcp-serve      # API on 127.0.0.1:8000; allows the Pages origin by default
+cd backend && uv run tcp-serve      # API on 127.0.0.1:8010; allows the Pages origin by default
 ```
 
-Open the hosted page, leave the `operator` field at `http://localhost:8000`, and it drives your
+Open the hosted page, leave the `operator` field at `http://localhost:8010`, and it drives your
 local generator. The operator is localhost-bound and only accepts cross-origin control from the
 Pages origin carrying an `X-TCP-Client` header, so no other website can reach your RF hardware. Use
 `tcp-serve --site-origin <origin>` to allow a different UI origin, or `--site-origin ''` to disable
