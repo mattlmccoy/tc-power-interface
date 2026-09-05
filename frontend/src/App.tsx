@@ -12,7 +12,7 @@ import {
 } from "./lib/format.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
-import type { Point, SafetyLimitsStatus, Status } from "./lib/telemetry.ts";
+import type { Point, SafetyLimitsStatus, Status, ThermalPlanStatus } from "./lib/telemetry.ts";
 
 const FLIR_POLL_MS = 3000;
 const REFLECT_PLOT_CEIL = 15; // history-plot reflected % y-scale
@@ -35,6 +35,17 @@ export function App() {
   const [flirLast, setFlirLast] = useState<FlirLink["last_result"] | null>(null);
   const [limitsStatus, setLimitsStatus] = useState<SafetyLimitsStatus | null>(null);
   const [limForm, setLimForm] = useState({ max_forward_w: "", max_reflected_w: "", temperature_c_trip: "" });
+  const [thermalPlanStatus, setThermalPlanStatus] = useState<ThermalPlanStatus | null>(null);
+  const [thermalForm, setThermalForm] = useState({
+    target_c: "",
+    soak_s: "",
+    approach_band_c: "",
+    loop_ceiling_w: "",
+    max_step_w: "",
+    done_below_c: "",
+  });
+  const [thermalMode, setThermalMode] = useState<"advisory" | "auto">("advisory");
+  const [thermalFlirUrl, setThermalFlirUrl] = useState("");
 
   const fwdBuf = useRef(new TraceBuffer(150));
   const reflBuf = useRef(new TraceBuffer(150));
@@ -51,6 +62,18 @@ export function App() {
       max_forward_w: String(s.max_forward_w),
       max_reflected_w: String(s.max_reflected_w),
       temperature_c_trip: String(s.temperature_c_trip),
+    });
+  };
+
+  const fillThermalForm = (s: ThermalPlanStatus) => {
+    setThermalPlanStatus(s);
+    setThermalForm({
+      target_c: String(s.target_c),
+      soak_s: String(s.soak_s),
+      approach_band_c: String(s.approach_band_c),
+      loop_ceiling_w: String(s.loop_ceiling_w),
+      max_step_w: String(s.max_step_w),
+      done_below_c: String(s.done_below_c),
     });
   };
 
@@ -105,6 +128,12 @@ export function App() {
       } catch {
         /* keep last known */
       }
+      try {
+        const tp = await api.thermalPlan();
+        if (!cancelled) fillThermalForm(tp);
+      } catch {
+        /* keep last known */
+      }
     };
     loadConfig();
     const poll = setInterval(async () => {
@@ -131,6 +160,7 @@ export function App() {
   const limits = ctrl?.limits;
   const device = status?.device;
   const recording = status?.recording;
+  const thermal = status?.thermal;
   const state = ctrl?.state ?? "disconnected";
   const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
   const faulted = state === "fault";
@@ -207,6 +237,47 @@ export function App() {
     } else {
       flash(await detail(res));
     }
+  }
+  async function saveThermalPlan() {
+    const body = {
+      target_c: Number(thermalForm.target_c),
+      soak_s: Number(thermalForm.soak_s),
+      approach_band_c: Number(thermalForm.approach_band_c),
+      loop_ceiling_w: Number(thermalForm.loop_ceiling_w),
+      max_step_w: Number(thermalForm.max_step_w),
+      done_below_c: Number(thermalForm.done_below_c),
+    };
+    if (Object.values(body).some((n) => Number.isNaN(n))) return flash("thermal plan must be numbers");
+    const res = await api.saveThermalPlan(body);
+    if (res.ok) {
+      fillThermalForm((await res.json()) as ThermalPlanStatus);
+      flash("thermal plan saved");
+    } else {
+      flash(await detail(res));
+    }
+  }
+  async function startThermal() {
+    const res = await api.thermalStart(thermalMode);
+    if (!res.ok) flash("thermal start failed: " + (await detail(res)));
+  }
+  async function stopThermal() {
+    await api.thermalStop();
+  }
+  async function armThermal() {
+    if (
+      !window.confirm(
+        "Arm the thermal loop to drive the RF setpoint on real hardware? Only do this while you are watching the system.",
+      )
+    )
+      return;
+    await api.thermalArm();
+  }
+  async function disarmThermal() {
+    await api.thermalDisarm();
+  }
+  async function applyThermalSource(type: "simulated" | "flir") {
+    const res = await api.thermalSource(type, type === "flir" ? thermalFlirUrl.trim() : undefined);
+    if (!res.ok) flash("thermal source failed: " + (await detail(res)));
   }
 
   const textInputStyle = {
@@ -361,6 +432,109 @@ export function App() {
             </section>
 
             <section className="panel">
+              <h2>Thermal control (closed loop)</h2>
+              <div className="cards">
+                <div className="readout">
+                  <div className="label">Phase</div>
+                  <div className={`value ${thermal?.running ? "rf-on" : ""}`}>
+                    {thermal?.running ? thermal.phase : "idle"}
+                  </div>
+                </div>
+                <div className="readout">
+                  <div className="label">Control temp → target</div>
+                  <div className="value">
+                    {thermal ? `${fmtTemp(thermal.control_temp_c)} → ${fmtTemp(thermal.target_c)}` : "—"}
+                  </div>
+                </div>
+                <div className="readout">
+                  <div className="label">Recommended → applied</div>
+                  <div className="value">
+                    {thermal
+                      ? `${fmtWatts(thermal.recommended_w)} → ${
+                          thermal.applied_w === null ? "advisory" : fmtWatts(thermal.applied_w)
+                        }`
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+              <div className="gauge" style={{ marginTop: "10px" }}>
+                <div
+                  className="fill ok"
+                  style={{
+                    width: `${
+                      thermal && thermal.target_c > 0
+                        ? Math.min(100, Math.max(0, (thermal.control_temp_c / thermal.target_c) * 100))
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+              <label className="field-label" style={{ marginTop: "12px" }}>
+                Temperature source
+              </label>
+              <div className="row">
+                <select
+                  value={thermal?.source ?? "simulated"}
+                  onChange={(e) => applyThermalSource(e.target.value as "simulated" | "flir")}
+                  disabled={!connected}
+                >
+                  <option value="simulated">simulated model</option>
+                  <option value="flir">FLIR stream</option>
+                </select>
+              </div>
+              {(thermal?.source ?? "simulated") === "flir" ? (
+                <input
+                  className="mono"
+                  style={textInputStyle}
+                  placeholder="ws://localhost:8000/ws/frames"
+                  value={thermalFlirUrl}
+                  onChange={(e) => setThermalFlirUrl(e.target.value)}
+                  onBlur={() => applyThermalSource("flir")}
+                />
+              ) : null}
+              <div className="row" style={{ marginTop: "10px" }}>
+                <select
+                  value={thermalMode}
+                  onChange={(e) => setThermalMode(e.target.value as "advisory" | "auto")}
+                  disabled={thermal?.running}
+                >
+                  <option value="advisory">advisory (recommend only)</option>
+                  <option value="auto">auto (drive setpoint)</option>
+                </select>
+                {thermal?.running ? (
+                  <button className="btn full" onClick={stopThermal}>
+                    Stop loop
+                  </button>
+                ) : (
+                  <button className="btn accent full" onClick={startThermal} disabled={!connected}>
+                    Start loop
+                  </button>
+                )}
+              </div>
+              <div className="row" style={{ marginTop: "8px" }}>
+                <button
+                  className="btn full"
+                  onClick={armThermal}
+                  disabled={!connected || !t?.rf_on || thermal?.armed}
+                >
+                  {thermal?.armed ? "Armed" : "Arm"}
+                </button>
+                <button
+                  className="btn full"
+                  onClick={disarmThermal}
+                  disabled={!connected || !thermal?.armed}
+                >
+                  Disarm
+                </button>
+              </div>
+              <div className="hint">
+                Auto mode drives the RF <em>setpoint</em> within the plan ceiling — it never enables
+                RF. On real hardware it drives only while armed and RF is on; a fault or RF-off
+                disarms. Set the trajectory in Settings → Thermal plan.
+              </div>
+            </section>
+
+            <section className="panel">
               <h2>Matching network</h2>
               <label className="toggle">
                 <input
@@ -469,6 +643,87 @@ export function App() {
                     disabled={!connected}
                   >
                     Save limits
+                  </button>
+                </>
+              ) : (
+                <div className="muted">loading…</div>
+              )}
+            </section>
+
+            <section className="panel">
+              <h2>Thermal plan</h2>
+              {thermalPlanStatus ? (
+                <>
+                  <div className="hint">
+                    The closed-loop trajectory (ramp → approach → soak → cool). The loop ceiling is
+                    additionally clamped to the max forward power. Values are clamped to the hard
+                    bounds shown.
+                  </div>
+                  <label className="field-label">
+                    Target temperature (°C) — {thermalPlanStatus.bounds.target_c[0]}–
+                    {thermalPlanStatus.bounds.target_c[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={thermalForm.target_c}
+                    onChange={(e) => setThermalForm({ ...thermalForm, target_c: e.target.value })}
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Soak time (s) — {thermalPlanStatus.bounds.soak_s[0]}–
+                    {thermalPlanStatus.bounds.soak_s[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={thermalForm.soak_s}
+                    onChange={(e) => setThermalForm({ ...thermalForm, soak_s: e.target.value })}
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Loop ceiling (W) — {thermalPlanStatus.bounds.loop_ceiling_w[0]}–
+                    {thermalPlanStatus.bounds.loop_ceiling_w[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={thermalForm.loop_ceiling_w}
+                    onChange={(e) =>
+                      setThermalForm({ ...thermalForm, loop_ceiling_w: e.target.value })
+                    }
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Approach band (°C) — {thermalPlanStatus.bounds.approach_band_c[0]}–
+                    {thermalPlanStatus.bounds.approach_band_c[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={thermalForm.approach_band_c}
+                    onChange={(e) =>
+                      setThermalForm({ ...thermalForm, approach_band_c: e.target.value })
+                    }
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Max step (W per tick) — {thermalPlanStatus.bounds.max_step_w[0]}–
+                    {thermalPlanStatus.bounds.max_step_w[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={thermalForm.max_step_w}
+                    onChange={(e) => setThermalForm({ ...thermalForm, max_step_w: e.target.value })}
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Done-below temperature (°C) — {thermalPlanStatus.bounds.done_below_c[0]}–
+                    {thermalPlanStatus.bounds.done_below_c[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={thermalForm.done_below_c}
+                    onChange={(e) => setThermalForm({ ...thermalForm, done_below_c: e.target.value })}
+                  />
+                  <button
+                    className="btn accent full"
+                    style={{ marginTop: "12px" }}
+                    onClick={saveThermalPlan}
+                    disabled={!connected}
+                  >
+                    Save thermal plan
                   </button>
                 </>
               ) : (
