@@ -5,7 +5,13 @@
 
 import type { FlirLinkResult } from "./format.ts";
 import { apiUrl, loadOperatorBase, saveOperatorBase } from "./operator.ts";
-import type { SafetyLimitsForm, SafetyLimitsStatus, Status } from "./telemetry.ts";
+import type {
+  SafetyLimitsForm,
+  SafetyLimitsStatus,
+  Status,
+  ThermalPlanForm,
+  ThermalPlanStatus,
+} from "./telemetry.ts";
 
 /** Shape of GET/POST /api/flir-link — the operator's link to the separate FLIR tool. */
 export interface FlirLink {
@@ -15,7 +21,7 @@ export interface FlirLink {
 }
 
 /** Site mode: the UI is served from GitHub Pages and talks to a local operator. */
-export const SITE_MODE = import.meta.env.VITE_SITE_MODE === "1";
+export const SITE_MODE = import.meta.env?.VITE_SITE_MODE === "1";
 
 const storage: Storage | null = (() => {
   try {
@@ -34,14 +40,22 @@ export function setOperatorBase(base: string): void {
   BASE = loadOperatorBase(storage, { siteMode: SITE_MODE });
 }
 
-async function post(path: string, body?: unknown): Promise<Response> {
+function send(method: "POST" | "PUT", path: string, body?: unknown): Promise<Response> {
   const headers = new Headers(body !== undefined ? { "Content-Type": "application/json" } : {});
   headers.set("X-TCP-Client", "1");
   return fetch(apiUrl(BASE, path), {
-    method: "POST",
+    method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+}
+
+function post(path: string, body?: unknown): Promise<Response> {
+  return send("POST", path, body);
+}
+
+function put(path: string, body?: unknown): Promise<Response> {
+  return send("PUT", path, body);
 }
 
 export async function detail(res: Response): Promise<string> {
@@ -68,5 +82,13 @@ export const api = {
   setFlirLink: (url: string, enabled: boolean) => post("/api/flir-link", { url, enabled }),
   safetyLimits: async (): Promise<SafetyLimitsStatus> =>
     (await fetch(apiUrl(BASE, "/api/safety-limits"))).json(),
-  saveSafetyLimits: (v: SafetyLimitsForm) => post("/api/safety-limits", v),
+  saveSafetyLimits: (v: SafetyLimitsForm) => put("/api/safety-limits", v),
+  thermalPlan: async (): Promise<ThermalPlanStatus> =>
+    (await fetch(apiUrl(BASE, "/api/thermal/plan"))).json(),
+  saveThermalPlan: (v: ThermalPlanForm) => put("/api/thermal/plan", v),
+  thermalStart: (mode: string) => post("/api/thermal/start", { mode }),
+  thermalStop: () => post("/api/thermal/stop"),
+  thermalArm: () => post("/api/thermal/arm"),
+  thermalDisarm: () => post("/api/thermal/disarm"),
+  thermalSource: (type: string, url?: string) => post("/api/thermal/source", { type, url }),
 };
