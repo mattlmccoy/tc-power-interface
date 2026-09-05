@@ -27,6 +27,8 @@ from tc_power_interface.control.controller import Controller
 from tc_power_interface.control.safety import SafetyLimits
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
+from tc_power_interface.integration.flir_link import FlirLink
+from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 
 API_VERSION = "0.1"
@@ -95,6 +97,11 @@ class RecordingStartRequest(BaseModel):
     notes: str = ""
 
 
+class FlirLinkBody(BaseModel):
+    url: str
+    enabled: bool
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -104,6 +111,7 @@ def create_app(
     transport_kwargs: dict[str, Any] | None = None,
     frontend_dist: Path | None = None,
     site_origin: str | None = None,
+    flir_url: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI app. The controller/device start in the lifespan."""
     experiments_root = Path(experiments_root or (Path.cwd() / "experiments"))
@@ -117,6 +125,8 @@ def create_app(
         )
         recorder = TelemetryRecorder(experiments_root)
         controller.add_listener(recorder.record)
+        flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
+        controller.add_listener(RfLinkNotifier(flir_link).on_snapshot)
         controller.start()
         try:
             device_info = controller.identify()
@@ -128,6 +138,7 @@ def create_app(
         app.state.device_info = device_info
         app.state.backend = backend
         app.state.current_run = None
+        app.state.flir_link = flir_link
         try:
             yield
         finally:
@@ -143,6 +154,9 @@ def create_app(
 
     def _recorder() -> TelemetryRecorder:
         return cast(TelemetryRecorder, app.state.recorder)
+
+    def _flir_link() -> FlirLink:
+        return cast(FlirLink, app.state.flir_link)
 
     # --- REST ------------------------------------------------------------------------------
     @app.get("/api/health")
@@ -239,6 +253,18 @@ def create_app(
     def recording_status() -> dict[str, Any]:
         rec = _recorder()
         return {"active": rec.state is RecorderState.RECORDING, "run": app.state.current_run}
+
+    @app.get("/api/flir-link")
+    def get_flir_link() -> dict[str, Any]:
+        link = _flir_link()
+        return {"url": link.url, "enabled": link.enabled, "last_result": link.last_result}
+
+    @app.post("/api/flir-link")
+    def set_flir_link(body: FlirLinkBody) -> dict[str, Any]:
+        link = _flir_link()
+        link.url = body.url.rstrip("/")
+        link.enabled = body.enabled
+        return {"url": link.url, "enabled": link.enabled, "last_result": link.last_result}
 
     # --- WebSocket -------------------------------------------------------------------------
     @app.websocket("/ws/telemetry")

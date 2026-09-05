@@ -28,6 +28,12 @@ def main() -> None:
         help="origin allowed to control this operator cross-origin (the GitHub Pages UI); "
         "pass '' to disable",
     )
+    parser.add_argument(
+        "--flir-url",
+        default=None,
+        help="base URL of the FLIR Research Interface to notify on RF on/off (e.g. "
+        "http://localhost:8000); omit to disable the link",
+    )
     args = parser.parse_args()
 
     backend = args.backend
@@ -42,6 +48,7 @@ def main() -> None:
         experiments_root=args.experiments_root,
         transport_kwargs=transport_kwargs,
         site_origin=args.site_origin or None,
+        flir_url=args.flir_url,
     )
     uvicorn.run(app, host=args.host, port=args.port)
 
