@@ -121,12 +121,33 @@ class TestListeners:
 
 class TestSetpointGuard:
     def test_setpoint_clamped_to_policy_ceiling(self):
-        c = make_controller(max_setpoint_w=350)
+        c = make_controller(max_forward_w=350)
         c.connect()
         c.set_setpoint(1000)
         c.enable_rf()
         c._tick()
         assert c.latest_telemetry.forward_w == 350.0
+
+
+class TestLimitsUpdate:
+    def test_set_limits_swaps_live(self):
+        from tc_power_interface.control.safety import SafetyLimits
+
+        c = make_controller()
+        c.set_limits(SafetyLimits(max_forward_w=100))
+        assert c.limits.max_forward_w == 100
+        c.connect()
+        assert c.set_setpoint(400) == 100  # clamp uses the new limit immediately
+
+    def test_snapshot_limits_uses_new_field_names(self):
+        c = make_controller()
+        lim = c.snapshot()["limits"]
+        assert set(lim) >= {
+            "max_forward_w",
+            "max_reflected_w",
+            "temperature_c_trip",
+            "reflected_fraction_warn",
+        }
 
 
 class TestLifecycle:
