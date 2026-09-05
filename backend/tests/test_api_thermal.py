@@ -16,7 +16,7 @@ def _client(tmp_path):
 def test_get_thermal_plan_defaults_and_bounds(tmp_path):
     with _client(tmp_path) as c:
         b = c.get("/api/thermal/plan").json()
-        assert b["target_c"] == 150.0
+        assert b["target_c"] == 185.0  # default = ~nylon 12 (PA12) melt temp
         assert b["bounds"]["target_c"] == [30, 300]
 
 

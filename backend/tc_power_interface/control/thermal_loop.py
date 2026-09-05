@@ -45,7 +45,7 @@ _PHASE_ORDER = {
 
 @dataclass(frozen=True)
 class ThermalPlan:
-    target_c: float = 150.0
+    target_c: float = 185.0  # ~melt temp of nylon 12 (PA12), the powder being sintered
     soak_s: float = 30.0
     approach_band_c: float = 15.0
     loop_ceiling_w: int = 200

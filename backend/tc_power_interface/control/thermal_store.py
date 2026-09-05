@@ -21,7 +21,7 @@ def load_plan(root: Path, *, max_forward_w: int) -> ThermalPlan:
     except (FileNotFoundError, ValueError):
         return ThermalPlan()
     return ThermalPlan.bounded(
-        target_c=d.get("target_c", 150.0),
+        target_c=d.get("target_c", 185.0),
         soak_s=d.get("soak_s", 30.0),
         approach_band_c=d.get("approach_band_c", 15.0),
         loop_ceiling_w=d.get("loop_ceiling_w", 200),
