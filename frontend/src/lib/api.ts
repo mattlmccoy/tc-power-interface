@@ -91,4 +91,21 @@ export const api = {
   thermalArm: () => post("/api/thermal/arm"),
   thermalDisarm: () => post("/api/thermal/disarm"),
   thermalSource: (type: string, url?: string) => post("/api/thermal/source", { type, url }),
+  autoLog: async (): Promise<{ enabled: boolean }> =>
+    (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
+  setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),
+  /** Fetch a run's telemetry.csv and trigger a browser download. Throws with the server detail. */
+  downloadRecording: async (run: string): Promise<void> => {
+    const res = await fetch(apiUrl(BASE, `/api/recordings/${encodeURIComponent(run)}/telemetry.csv`));
+    if (!res.ok) throw new Error(await detail(res));
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${run}_telemetry.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };

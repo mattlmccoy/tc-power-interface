@@ -29,6 +29,8 @@ export function App() {
   const [load, setLoad] = useState(50);
   const [manual, setManual] = useState(false);
   const [runName, setRunName] = useState("");
+  const [lastRun, setLastRun] = useState<string | null>(null);
+  const [autoLog, setAutoLog] = useState(true);
   const [plot, setPlot] = useState<{ fwd: Point[]; refl: Point[] }>({ fwd: [], refl: [] });
   const [base, setBase] = useState(operatorBase());
   const [baseInput, setBaseInput] = useState(operatorBase());
@@ -89,6 +91,7 @@ export function App() {
       ws.onmessage = (ev) => {
         const s = JSON.parse(ev.data) as Status;
         setStatus(s);
+        if (s.recording?.run) setLastRun(s.recording.run);
         const tel = s.controller.telemetry;
         if (tel) {
           const ts = tel.host_timestamp_ns / 1e9;
@@ -133,6 +136,12 @@ export function App() {
       try {
         const tp = await api.thermalPlan();
         if (!cancelled) fillThermalForm(tp);
+      } catch {
+        /* keep last known */
+      }
+      try {
+        const al = await api.autoLog();
+        if (!cancelled) setAutoLog(al.enabled);
       } catch {
         /* keep last known */
       }
@@ -600,6 +609,23 @@ export function App() {
                   </button>
                 </>
               )}
+              {lastRun ? (
+                <button
+                  className="btn full"
+                  style={{ marginTop: "8px" }}
+                  onClick={() =>
+                    api
+                      .downloadRecording(lastRun)
+                      .catch((e) => flash("download failed: " + (e as Error).message))
+                  }
+                >
+                  ⬇ Download power curves ({lastRun}) CSV
+                </button>
+              ) : null}
+              <div className="hint">
+                Logs forward / reflected / load power + the thermal-loop commanded curve (phase,
+                control temp, commanded W) to telemetry.csv.
+              </div>
             </section>
           </div>
         </div>
@@ -725,6 +751,26 @@ export function App() {
               ) : (
                 <div className="muted">loading…</div>
               )}
+            </section>
+
+            <section className="panel">
+              <h2>Logging</h2>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={autoLog}
+                  onChange={(e) => {
+                    setAutoLog(e.target.checked);
+                    api.setAutoLog(e.target.checked);
+                  }}
+                />
+                Auto-log power curves on RF-on
+              </label>
+              <div className="hint">
+                Starts a telemetry recording automatically when RF turns on (device power + the
+                thermal-loop commanded curve). Keeps recording through cooldown — stop it manually.
+                Download the CSV from the Recording panel.
+              </div>
             </section>
 
             <section className="panel">

@@ -15,10 +15,12 @@ import asyncio
 import contextlib
 import platform
 from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -130,6 +132,10 @@ class ThermalSourceBody(BaseModel):
     url: str | None = None
 
 
+class AutoLogBody(BaseModel):
+    enabled: bool
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -153,7 +159,6 @@ def create_app(
             CxnDevice(transport), limits=active_limits, poll_interval_s=poll_interval_s
         )
         recorder = TelemetryRecorder(experiments_root)
-        controller.add_listener(recorder.record)
         flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
         controller.add_listener(RfLinkNotifier(flir_link).on_snapshot)
         controller.backend = backend
@@ -162,7 +167,33 @@ def create_app(
             plan=load_plan(experiments_root, max_forward_w=active_limits.max_forward_w),
             mode="advisory",
         )
+        # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve.
         controller.add_listener(lambda _snap: thermal.tick(poll_interval_s))
+
+        # Auto-log: on an RF-on rising edge, start a recording if one isn't already running. This
+        # runs BEFORE the recorder listener so the first sample of the run is captured.
+        app.state.auto_log = True
+        _auto_prev = {"rf": False}
+
+        def _auto_log(snap: dict[str, Any]) -> None:
+            rf = bool((snap.get("telemetry") or {}).get("rf_on"))
+            if (
+                app.state.auto_log
+                and rf
+                and not _auto_prev["rf"]
+                and recorder.state is not RecorderState.RECORDING
+            ):
+                run_dir = recorder.start(
+                    f"RF_{datetime.now():%Y%m%d_%H%M%S}",
+                    {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
+                )
+                app.state.current_run = run_dir.name
+            _auto_prev["rf"] = rf
+
+        controller.add_listener(_auto_log)
+        controller.add_listener(
+            lambda snap: recorder.record({**snap, "thermal": thermal.snapshot()})
+        )
         app.state.thermal = thermal
         app.state.thermal_source = "simulated"
         controller.start()
@@ -389,6 +420,43 @@ def create_app(
     def recording_status() -> dict[str, Any]:
         rec = _recorder()
         return {"active": rec.state is RecorderState.RECORDING, "run": app.state.current_run}
+
+    @app.get("/api/recordings")
+    def list_recordings() -> dict[str, Any]:
+        root = experiments_root
+        runs: list[dict[str, Any]] = []
+        if root.is_dir():
+            for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
+                csv_file = d / "telemetry.csv"
+                if csv_file.is_file():
+                    runs.append(
+                        {
+                            "run": d.name,
+                            "complete": (d / "manifest.json").is_file(),
+                            "size_bytes": csv_file.stat().st_size,
+                        }
+                    )
+        return {"runs": runs}
+
+    @app.get("/api/recordings/{run}/telemetry.csv")
+    def download_recording(run: str) -> FileResponse:
+        root = experiments_root.resolve()
+        target = (root / run).resolve()
+        if target.parent != root:  # reject path traversal / nested paths
+            raise HTTPException(status_code=400, detail="invalid run name")
+        csv_file = target / "telemetry.csv"
+        if not csv_file.is_file():
+            raise HTTPException(status_code=404, detail="no such recording")
+        return FileResponse(csv_file, media_type="text/csv", filename=f"{run}_telemetry.csv")
+
+    @app.get("/api/auto-log")
+    def get_auto_log() -> dict[str, Any]:
+        return {"enabled": bool(app.state.auto_log)}
+
+    @app.put("/api/auto-log")
+    def put_auto_log(body: AutoLogBody) -> dict[str, Any]:
+        app.state.auto_log = body.enabled
+        return {"enabled": app.state.auto_log}
 
     @app.get("/api/flir-link")
     def get_flir_link() -> dict[str, Any]:

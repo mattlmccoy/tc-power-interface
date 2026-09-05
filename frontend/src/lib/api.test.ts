@@ -67,6 +67,14 @@ test("thermalArm/thermalDisarm/thermalStop post to their routes", async () => {
   assert.match(calls[2].url, /\/api\/thermal\/stop$/);
 });
 
+test("setAutoLog issues a PUT to /api/auto-log with the flag", async () => {
+  const calls = stubFetch();
+  await api.setAutoLog(false);
+  assert.equal(calls[0].method, "PUT");
+  assert.match(calls[0].url, /\/api\/auto-log$/);
+  assert.equal(calls[0].body?.enabled, false);
+});
+
 test("thermalSource posts type and url to /api/thermal/source", async () => {
   const calls = stubFetch();
   await api.thermalSource("flir", "ws://x/ws/frames");

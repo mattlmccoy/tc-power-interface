@@ -67,6 +67,39 @@ def test_no_manifest_until_finalized(tmp_path):
     assert not (path / "manifest.json").exists()
 
 
+def test_records_thermal_loop_curve(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    path = rec.start("loop", {})
+    s = snap(fwd=100.0, rf=True, ts=1)
+    s["thermal"] = {
+        "running": True, "phase": "ramp", "mode": "auto", "armed": False,
+        "control_temp_c": 150.0, "target_c": 185.0, "recommended_w": 120.0, "applied_w": 120,
+    }
+    rec.record(s)
+    rec.stop()
+    rows = (path / "telemetry.csv").read_text().strip().splitlines()
+    header = rows[0].split(",")
+    assert "thermal_phase" in header
+    assert "thermal_recommended_w" in header
+    assert "thermal_applied_w" in header
+    data = dict(zip(header, rows[1].split(","), strict=True))
+    assert data["thermal_phase"] == "ramp"
+    assert data["thermal_recommended_w"] == "120.0"
+    assert data["thermal_target_c"] == "185.0"
+
+
+def test_records_blank_thermal_when_absent(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    path = rec.start("nolo", {})
+    rec.record(snap(fwd=10.0))  # snapshot with no thermal block
+    rec.stop()
+    rows = (path / "telemetry.csv").read_text().strip().splitlines()
+    header = rows[0].split(",")
+    assert "thermal_phase" in header  # column present even without loop data
+    data = dict(zip(header, rows[1].split(","), strict=True))
+    assert data["thermal_phase"] == ""
+
+
 def test_slug_sanitizes_name(tmp_path):
     rec = TelemetryRecorder(tmp_path)
     path = rec.start("My Run! #2", {})
