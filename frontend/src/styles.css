@@ -24,6 +24,12 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .topbar .brand .amp { color: var(--accent); }
 .topbar .device { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
 .topbar .spacer { flex: 1; }
+.viewtabs { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius);
+  overflow: hidden; margin-right: calc(var(--space) * 2); }
+.viewtabs button { background: transparent; color: var(--muted); border: none; padding: 5px 12px;
+  cursor: pointer; font-size: 12px; font-family: var(--font-ui); }
+.viewtabs button:hover { color: var(--fg); }
+.viewtabs button.active { background: var(--panel); color: var(--fg-strong); }
 .op-field { display: inline-flex; align-items: center; gap: var(--space); color: var(--muted);
   font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .op-field input { width: 190px; padding: 4px 8px; font-size: 11px; text-transform: none;

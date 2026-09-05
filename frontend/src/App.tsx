@@ -5,7 +5,6 @@ import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api
 import type { FlirLink } from "./lib/api.ts";
 import {
   flirStatusLabel,
-  fmtPct,
   fmtTemp,
   fmtWatts,
   reflectedZone,
@@ -13,14 +12,16 @@ import {
 } from "./lib/format.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
-import type { Point, Status } from "./lib/telemetry.ts";
+import type { Point, SafetyLimitsStatus, Status } from "./lib/telemetry.ts";
 
 const FLIR_POLL_MS = 3000;
+const REFLECT_PLOT_CEIL = 15; // history-plot reflected % y-scale
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [connected, setConnected] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [view, setView] = useState<"dashboard" | "settings">("dashboard");
   const [setpointInput, setSetpointInput] = useState("100");
   const [tune, setTune] = useState(50);
   const [load, setLoad] = useState(50);
@@ -32,6 +33,8 @@ export function App() {
   const [flirUrlInput, setFlirUrlInput] = useState("");
   const [flirEnabled, setFlirEnabled] = useState(false);
   const [flirLast, setFlirLast] = useState<FlirLink["last_result"] | null>(null);
+  const [limitsStatus, setLimitsStatus] = useState<SafetyLimitsStatus | null>(null);
+  const [limForm, setLimForm] = useState({ max_forward_w: "", max_reflected_w: "", temperature_c_trip: "" });
 
   const fwdBuf = useRef(new TraceBuffer(150));
   const reflBuf = useRef(new TraceBuffer(150));
@@ -40,6 +43,15 @@ export function App() {
     setOperatorBase(baseInput);
     setBase(operatorBase());
     setBaseInput(operatorBase());
+  };
+
+  const fillLimForm = (s: SafetyLimitsStatus) => {
+    setLimitsStatus(s);
+    setLimForm({
+      max_forward_w: String(s.max_forward_w),
+      max_reflected_w: String(s.max_reflected_w),
+      temperature_c_trip: String(s.temperature_c_trip),
+    });
   };
 
   useEffect(() => {
@@ -52,11 +64,11 @@ export function App() {
       ws.onmessage = (ev) => {
         const s = JSON.parse(ev.data) as Status;
         setStatus(s);
-        const t = s.controller.telemetry;
-        if (t) {
-          const ts = t.host_timestamp_ns / 1e9;
-          fwdBuf.current.push(ts, t.forward_w);
-          reflBuf.current.push(ts, t.reflected_fraction * 100);
+        const tel = s.controller.telemetry;
+        if (tel) {
+          const ts = tel.host_timestamp_ns / 1e9;
+          fwdBuf.current.push(ts, tel.forward_w);
+          reflBuf.current.push(ts, tel.reflected_fraction * 100);
           setPlot({ fwd: fwdBuf.current.toArray(), refl: reflBuf.current.toArray() });
         }
       };
@@ -76,24 +88,31 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
+    const loadConfig = async () => {
       try {
         const link = await api.flirLink();
-        if (cancelled) return;
-        setFlirUrlInput(link.url);
-        setFlirEnabled(link.enabled);
-        setFlirLast(link.last_result);
+        if (!cancelled) {
+          setFlirUrlInput(link.url);
+          setFlirEnabled(link.enabled);
+          setFlirLast(link.last_result);
+        }
       } catch {
-        /* operator unreachable — status line stays at its last known value */
+        /* operator unreachable — keep last known */
+      }
+      try {
+        const lim = await api.safetyLimits();
+        if (!cancelled) fillLimForm(lim);
+      } catch {
+        /* keep last known */
       }
     };
-    load();
+    loadConfig();
     const poll = setInterval(async () => {
       try {
         const link = await api.flirLink();
         if (!cancelled) setFlirLast(link.last_result);
       } catch {
-        /* transient poll failure — keep showing the last known result */
+        /* transient */
       }
     }, FLIR_POLL_MS);
     return () => {
@@ -115,11 +134,11 @@ export function App() {
   const state = ctrl?.state ?? "disconnected";
   const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
   const faulted = state === "fault";
-  const warn = limits?.reflected_fraction_warn ?? 0.02;
-  const trip = limits?.reflected_fraction_trip ?? 0.1;
-  const zone = t ? reflectedZone(t.reflected_fraction, warn, trip) : "ok";
+  const maxRefl = limits?.max_reflected_w ?? 25;
+  const reflW = t?.reverse_w ?? 0;
+  const zone = t ? reflectedZone(reflW, maxRefl * 0.5, maxRefl) : "ok";
+  const reflFillPct = Math.min(100, (reflW / maxRefl) * 100);
   const powerCeil = device?.power_limit_w ?? 600;
-  const reflectCeil = Math.max(trip * 100 * 1.5, 5);
 
   async function rfOn() {
     if (!window.confirm("Enable RF output now? The generator will begin delivering power.")) return;
@@ -174,6 +193,30 @@ export function App() {
     setFlirEnabled(on);
     applyFlirLink(flirUrlInput, on);
   }
+  async function saveLimits() {
+    const body = {
+      max_forward_w: Number(limForm.max_forward_w),
+      max_reflected_w: Number(limForm.max_reflected_w),
+      temperature_c_trip: Number(limForm.temperature_c_trip),
+    };
+    if (Object.values(body).some((n) => Number.isNaN(n))) return flash("limits must be numbers");
+    const res = await api.saveSafetyLimits(body);
+    if (res.ok) {
+      fillLimForm((await res.json()) as SafetyLimitsStatus);
+      flash("safety limits saved");
+    } else {
+      flash(await detail(res));
+    }
+  }
+
+  const textInputStyle = {
+    width: "100%",
+    background: "var(--bg-deep)",
+    border: "1px solid var(--line-control)",
+    borderRadius: "var(--radius)",
+    padding: "8px 10px",
+    marginBottom: "8px",
+  } as const;
 
   return (
     <div className="app">
@@ -186,20 +229,14 @@ export function App() {
           {device?.frequency_hz ? ` · ${(device.frequency_hz / 1e6).toFixed(2)} MHz` : ""}
         </span>
         <span className="spacer" />
-        {SITE_MODE ? (
-          <label className="op-field" title="Local operator (tcp-serve) this UI connects to">
-            operator
-            <input
-              value={baseInput}
-              onChange={(e) => setBaseInput(e.target.value)}
-              onBlur={applyBase}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") applyBase();
-              }}
-              placeholder="http://localhost:8000"
-            />
-          </label>
-        ) : null}
+        <span className="viewtabs">
+          <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
+            Dashboard
+          </button>
+          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+            Settings
+          </button>
+        </span>
         <span className={`pill ${pillState}`}>
           <span className="dot" />
           {pillState}
@@ -216,226 +253,283 @@ export function App() {
         </div>
       ) : null}
 
-      <div className="main">
-        <div className="col">
-          <section className="panel">
-            <h2>Telemetry</h2>
-            <div className="cards">
-              <div className="readout">
-                <div className="label">Forward power</div>
-                <div className={`value ${t?.rf_on ? "rf-on" : ""}`}>
-                  {t ? fmtWatts(t.forward_w) : "—"}
+      {view === "dashboard" ? (
+        <div className="main">
+          <div className="col">
+            <section className="panel">
+              <h2>Telemetry</h2>
+              <div className="cards">
+                <div className="readout">
+                  <div className="label">Forward power</div>
+                  <div className={`value ${t?.rf_on ? "rf-on" : ""}`}>
+                    {t ? fmtWatts(t.forward_w) : "—"}
+                  </div>
+                </div>
+                <div className={`readout zone-${zone}`}>
+                  <div className="label">Reflected power</div>
+                  <div className="value">{t ? fmtWatts(t.reverse_w) : "—"}</div>
+                </div>
+                <div className="readout">
+                  <div className="label">Load power</div>
+                  <div className="value">{t ? fmtWatts(t.load_w) : "—"}</div>
+                </div>
+                <div className="readout">
+                  <div className="label">Heat-sink temp</div>
+                  <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
                 </div>
               </div>
-              <div className={`readout zone-${zone}`}>
-                <div className="label">Reflected</div>
-                <div className="value">{t ? fmtPct(t.reflected_fraction) : "—"}</div>
+              <div className="hint mono">
+                RF {t?.rf_on ? "ON" : "off"} · mode {t?.operation_mode ?? "—"} · tuner{" "}
+                {t?.tuner ?? "—"}
+                {t && statusFlagNames(t.status).length > 0
+                  ? ` · ${statusFlagNames(t.status).join(", ")}`
+                  : ""}
               </div>
-              <div className="readout">
-                <div className="label">Load power</div>
-                <div className="value">{t ? fmtWatts(t.load_w) : "—"}</div>
+            </section>
+
+            <section className="panel">
+              <h2>Reflected power</h2>
+              <div className="gauge">
+                <div className={`fill ${zone}`} style={{ width: `${reflFillPct}%` }} />
               </div>
-              <div className="readout">
-                <div className="label">Heat-sink temp</div>
-                <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
+              <div className="gauge-legend">
+                <span>0 W</span>
+                <span>warn {(maxRefl * 0.5).toFixed(0)} W · trip {maxRefl.toFixed(0)} W</span>
+                <span>{maxRefl.toFixed(0)} W</span>
               </div>
-            </div>
-            <div className="hint mono">
-              RF {t?.rf_on ? "ON" : "off"} · mode {t?.operation_mode ?? "—"} · tuner{" "}
-              {t?.tuner ?? "—"}
-              {t && statusFlagNames(t.status).length > 0
-                ? ` · ${statusFlagNames(t.status).join(", ")}`
-                : ""}
-            </div>
-          </section>
+            </section>
 
-          <section className="panel">
-            <h2>Reflected power</h2>
-            <div className="gauge">
-              <div
-                className={`fill ${zone}`}
-                style={{ width: `${Math.min(100, ((t?.reflected_fraction ?? 0) / reflectCeil) * 100 * 100)}%` }}
+            <section className="panel">
+              <h2>History</h2>
+              <TimePlot
+                forward={plot.fwd}
+                reflectedPct={plot.refl}
+                powerCeil={powerCeil}
+                reflectCeil={REFLECT_PLOT_CEIL}
               />
-            </div>
-            <div className="gauge-legend">
-              <span>0%</span>
-              <span>
-                warn {fmtPct(warn)} · trip {fmtPct(trip)}
-              </span>
-              <span>{fmtPct(reflectCeil / 100)}</span>
-            </div>
-          </section>
+              <div className="plot-legend">
+                <span>
+                  <span className="swatch fwd" />
+                  forward power (0–{powerCeil} W)
+                </span>
+                <span>
+                  <span className="swatch refl" />
+                  reflected (0–{REFLECT_PLOT_CEIL}%)
+                </span>
+              </div>
+            </section>
+          </div>
 
-          <section className="panel">
-            <h2>History</h2>
-            <TimePlot
-              forward={plot.fwd}
-              reflectedPct={plot.refl}
-              powerCeil={powerCeil}
-              reflectCeil={reflectCeil}
-            />
-            <div className="plot-legend">
-              <span>
-                <span className="swatch fwd" />
-                forward power (0–{powerCeil} W)
-              </span>
-              <span>
-                <span className="swatch refl" />
-                reflected (0–{fmtPct(reflectCeil / 100)})
-              </span>
-            </div>
-          </section>
-        </div>
-
-        <div className="col">
-          <section className="panel">
-            <h2>Power setpoint</h2>
-            <label className="field-label" htmlFor="sp">
-              Forward power (W)
-            </label>
-            <div className="row">
-              <input
-                id="sp"
-                type="number"
-                min={0}
-                value={setpointInput}
-                onChange={(e) => setSetpointInput(e.target.value)}
-              />
-              <button className="btn accent" onClick={applySetpoint} disabled={!connected}>
-                Apply
-              </button>
-            </div>
-            <div className="hint">
-              Policy ceiling {limits?.max_setpoint_w ?? "—"} W (values above are clamped).
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>RF output</h2>
-            <div className="row">
-              <button className="btn danger full" onClick={rfOn} disabled={!connected || faulted}>
-                RF ON
-              </button>
-              <button className="btn full" onClick={rfOff} disabled={!connected}>
-                RF OFF
-              </button>
-            </div>
-            <div className="hint">
-              {faulted
-                ? "RF-enable is blocked while faulted (protection latched)."
-                : "RF-enable prompts for confirmation. Protection commands RF off on any trip."}
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>Matching network</h2>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={manual}
-                onChange={(e) => toggleManual(e.target.checked)}
-                disabled={!connected}
-              />
-              Manual tune mode
-            </label>
-            <div style={{ marginTop: "12px" }}>
-              <label className="field-label">Tune {tune}%</label>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={tune}
-                disabled={!manual}
-                onChange={(e) => sendTune(Number(e.target.value))}
-              />
-              <label className="field-label">Load {load}%</label>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={load}
-                disabled={!manual}
-                onChange={(e) => sendLoad(Number(e.target.value))}
-              />
-            </div>
-            <div className="hint">Capacities are writable only in manual mode.</div>
-          </section>
-
-          <section className="panel">
-            <h2>Recording</h2>
-            {recording?.active ? (
-              <>
-                <button className="btn rec full" onClick={() => api.stopRecording()}>
-                  ■ Stop recording
-                </button>
-                <div className="hint mono">recording → {recording.run}</div>
-              </>
-            ) : (
-              <>
+          <div className="col">
+            <section className="panel">
+              <h2>Power setpoint</h2>
+              <label className="field-label" htmlFor="sp">
+                Forward power (W)
+              </label>
+              <div className="row">
                 <input
-                  className="mono"
-                  style={{
-                    width: "100%",
-                    background: "var(--bg-deep)",
-                    border: "1px solid var(--line-control)",
-                    borderRadius: "var(--radius)",
-                    padding: "8px 10px",
-                    marginBottom: "8px",
-                  }}
-                  placeholder="run name"
-                  value={runName}
-                  onChange={(e) => setRunName(e.target.value)}
+                  id="sp"
+                  type="number"
+                  min={0}
+                  value={setpointInput}
+                  onChange={(e) => setSetpointInput(e.target.value)}
                 />
-                <button
-                  className="btn full"
-                  disabled={!connected}
-                  onClick={() => api.startRecording(runName.trim() || "run", "")}
-                >
-                  ● Start recording
+                <button className="btn accent" onClick={applySetpoint} disabled={!connected}>
+                  Apply
                 </button>
-              </>
-            )}
-          </section>
+              </div>
+              <div className="hint">
+                Ceiling {limits?.max_forward_w ?? "—"} W (values above are clamped). Edit in Settings.
+              </div>
+            </section>
 
-          <section className="panel">
-            <h2>Instruments</h2>
-            <label className="field-label" htmlFor="flir-url">
-              FLIR link URL
-            </label>
-            <input
-              id="flir-url"
-              className="mono"
-              style={{
-                width: "100%",
-                background: "var(--bg-deep)",
-                border: "1px solid var(--line-control)",
-                borderRadius: "var(--radius)",
-                padding: "8px 10px",
-                marginBottom: "8px",
-              }}
-              placeholder="http://localhost:8000"
-              value={flirUrlInput}
-              onChange={(e) => setFlirUrlInput(e.target.value)}
-              onBlur={applyFlirUrl}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") applyFlirUrl();
-              }}
-            />
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={flirEnabled}
-                onChange={(e) => toggleFlirEnabled(e.target.checked)}
-              />
-              Enable FLIR link
-            </label>
-            <div className="hint mono">{flirStatusLabel(flirLast)}</div>
-            <div className="hint">
-              RF on/off starts + annotates a FLIR recording (FLIR owns stop-vs-keep).
-            </div>
-          </section>
+            <section className="panel">
+              <h2>RF output</h2>
+              <div className="row">
+                <button className="btn danger full" onClick={rfOn} disabled={!connected || faulted}>
+                  RF ON
+                </button>
+                <button className="btn full" onClick={rfOff} disabled={!connected}>
+                  RF OFF
+                </button>
+              </div>
+              <div className="hint">
+                {faulted
+                  ? "RF-enable is blocked while faulted (protection latched)."
+                  : "RF-enable prompts for confirmation. Protection commands RF off on any trip."}
+              </div>
+            </section>
+
+            <section className="panel">
+              <h2>Matching network</h2>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={manual}
+                  onChange={(e) => toggleManual(e.target.checked)}
+                  disabled={!connected}
+                />
+                Manual tune mode
+              </label>
+              <div style={{ marginTop: "12px" }}>
+                <label className="field-label">Tune {tune}%</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={tune}
+                  disabled={!manual}
+                  onChange={(e) => sendTune(Number(e.target.value))}
+                />
+                <label className="field-label">Load {load}%</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={load}
+                  disabled={!manual}
+                  onChange={(e) => sendLoad(Number(e.target.value))}
+                />
+              </div>
+              <div className="hint">Capacities are writable only in manual mode.</div>
+            </section>
+
+            <section className="panel">
+              <h2>Recording</h2>
+              {recording?.active ? (
+                <>
+                  <button className="btn rec full" onClick={() => api.stopRecording()}>
+                    ■ Stop recording
+                  </button>
+                  <div className="hint mono">recording → {recording.run}</div>
+                </>
+              ) : (
+                <>
+                  <input
+                    className="mono"
+                    style={textInputStyle}
+                    placeholder="run name"
+                    value={runName}
+                    onChange={(e) => setRunName(e.target.value)}
+                  />
+                  <button
+                    className="btn full"
+                    disabled={!connected}
+                    onClick={() => api.startRecording(runName.trim() || "run", "")}
+                  >
+                    ● Start recording
+                  </button>
+                </>
+              )}
+            </section>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="main">
+          <div className="col">
+            <section className="panel">
+              <h2>Safety limits</h2>
+              {limitsStatus ? (
+                <>
+                  <div className="hint">
+                    Protection thresholds. You can always tighten; values are clamped to the hard
+                    bounds shown and take effect on the next telemetry poll.
+                  </div>
+                  <label className="field-label">
+                    Max forward power (W) — {limitsStatus.bounds.max_forward_w[0]}–
+                    {limitsStatus.bounds.max_forward_w[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={limForm.max_forward_w}
+                    onChange={(e) => setLimForm({ ...limForm, max_forward_w: e.target.value })}
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Max reflected power / trip (W) — {limitsStatus.bounds.max_reflected_w[0]}–
+                    {limitsStatus.bounds.max_reflected_w[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={limForm.max_reflected_w}
+                    onChange={(e) => setLimForm({ ...limForm, max_reflected_w: e.target.value })}
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Over-temperature shutoff (°C) — {limitsStatus.bounds.temperature_c_trip[0]}–
+                    {limitsStatus.bounds.temperature_c_trip[1]}
+                  </label>
+                  <input
+                    type="number"
+                    value={limForm.temperature_c_trip}
+                    onChange={(e) => setLimForm({ ...limForm, temperature_c_trip: e.target.value })}
+                  />
+                  <button
+                    className="btn accent full"
+                    style={{ marginTop: "12px" }}
+                    onClick={saveLimits}
+                    disabled={!connected}
+                  >
+                    Save limits
+                  </button>
+                </>
+              ) : (
+                <div className="muted">loading…</div>
+              )}
+            </section>
+
+            <section className="panel">
+              <h2>FLIR link</h2>
+              <label className="field-label" htmlFor="flir-url">
+                FLIR operator URL
+              </label>
+              <input
+                id="flir-url"
+                className="mono"
+                style={textInputStyle}
+                placeholder="http://localhost:8000"
+                value={flirUrlInput}
+                onChange={(e) => setFlirUrlInput(e.target.value)}
+                onBlur={applyFlirUrl}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyFlirUrl();
+                }}
+              />
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={flirEnabled}
+                  onChange={(e) => toggleFlirEnabled(e.target.checked)}
+                />
+                Enable FLIR link
+              </label>
+              <div className="hint mono">{flirStatusLabel(flirLast)}</div>
+              <div className="hint">
+                RF on/off starts + annotates a FLIR recording (FLIR owns stop-vs-keep).
+              </div>
+            </section>
+
+            {SITE_MODE ? (
+              <section className="panel">
+                <h2>Operator</h2>
+                <label className="field-label" htmlFor="op">
+                  Local operator (tcp-serve) this UI connects to
+                </label>
+                <input
+                  id="op"
+                  className="mono"
+                  style={textInputStyle}
+                  value={baseInput}
+                  onChange={(e) => setBaseInput(e.target.value)}
+                  onBlur={applyBase}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") applyBase();
+                  }}
+                  placeholder="http://localhost:8010"
+                />
+              </section>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {toast ? <div className="toast">{toast}</div> : null}
     </div>
