@@ -14,10 +14,20 @@ export interface Telemetry {
 }
 
 export interface Limits {
-  reflected_fraction_trip: number;
-  reflected_fraction_warn: number;
+  max_forward_w: number;
+  max_reflected_w: number;
   temperature_c_trip: number;
-  max_setpoint_w: number;
+  reflected_fraction_warn: number;
+}
+
+export interface SafetyLimitsForm {
+  max_forward_w: number;
+  max_reflected_w: number;
+  temperature_c_trip: number;
+}
+
+export interface SafetyLimitsStatus extends SafetyLimitsForm {
+  bounds: Record<string, [number, number]>;
 }
 
 export interface Snapshot {

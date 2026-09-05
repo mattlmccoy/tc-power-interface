@@ -168,6 +168,11 @@ class Controller:
             self.device.set_setpoint(clamped)
         return clamped
 
+    def set_limits(self, limits: SafetyLimits) -> None:
+        """Swap the protection limits live; ``evaluate`` reads ``self.limits`` each tick."""
+        with self._lock:
+            self.limits = limits
+
     def set_manual_mode(self, on: bool) -> None:
         with self._io_lock:
             self.device.set_manual_mode(on)
@@ -204,9 +209,9 @@ class Controller:
             },
             "warnings": [] if d is None else list(d.warnings),
             "limits": {
-                "reflected_fraction_trip": self.limits.reflected_fraction_trip,
-                "reflected_fraction_warn": self.limits.reflected_fraction_warn,
+                "max_forward_w": self.limits.max_forward_w,
+                "max_reflected_w": self.limits.max_reflected_w,
                 "temperature_c_trip": self.limits.temperature_c_trip,
-                "max_setpoint_w": self.limits.max_setpoint_w,
+                "reflected_fraction_warn": self.limits.reflected_fraction_warn,
             },
         }

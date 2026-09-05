@@ -3,7 +3,7 @@
 // Served by the operator itself: same origin, base "". Served from GitHub Pages (site mode):
 // http://localhost:8000 by default, overridable and persisted in localStorage. Mirrors FLIR.
 
-export const DEFAULT_SITE_BASE = "http://localhost:8000";
+export const DEFAULT_SITE_BASE = "http://localhost:8010";
 const KEY = "tcp.operator.v1";
 
 /** "" for same-origin, an http(s) origin without trailing slash, or null when invalid. */

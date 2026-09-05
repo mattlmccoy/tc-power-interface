@@ -5,7 +5,7 @@
 
 import type { FlirLinkResult } from "./format.ts";
 import { apiUrl, loadOperatorBase, saveOperatorBase } from "./operator.ts";
-import type { Status } from "./telemetry.ts";
+import type { SafetyLimitsForm, SafetyLimitsStatus, Status } from "./telemetry.ts";
 
 /** Shape of GET/POST /api/flir-link — the operator's link to the separate FLIR tool. */
 export interface FlirLink {
@@ -66,4 +66,7 @@ export const api = {
   stopRecording: () => post("/api/recording/stop"),
   flirLink: async (): Promise<FlirLink> => (await fetch(apiUrl(BASE, "/api/flir-link"))).json(),
   setFlirLink: (url: string, enabled: boolean) => post("/api/flir-link", { url, enabled }),
+  safetyLimits: async (): Promise<SafetyLimitsStatus> =>
+    (await fetch(apiUrl(BASE, "/api/safety-limits"))).json(),
+  saveSafetyLimits: (v: SafetyLimitsForm) => post("/api/safety-limits", v),
 };
