@@ -28,6 +28,13 @@ class Telemetry:
     temperature_c: float
     operation_mode: str
     tuner: str
+    # Matching-network / generator readback (from the CXN GT block); defaults keep older
+    # constructors and hand-built test samples valid.
+    manual_mode: bool = False
+    tune_cap_percent: float = 0.0
+    load_cap_percent: float = 0.0
+    dc_voltage: float = 0.0
+    preset_slot: int = 0
 
 
 class Transport(ABC):

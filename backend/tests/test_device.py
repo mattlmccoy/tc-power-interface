@@ -68,6 +68,20 @@ class TestTelemetry:
         device.set_rf(True)
         assert device.read_telemetry().rf_on is False
 
+    def test_telemetry_reports_matching_network_readback(self, device: CxnDevice):
+        # The matching-network readback (manual mode, tune/load cap %, VDC, preset) comes from the
+        # CXN GT block and rides along on telemetry so the UI + recording can show live positions.
+        device.request_control()
+        device.set_manual_mode(True)
+        device.set_tune_capacity(37)
+        device.set_load_capacity(62)
+        t = device.read_telemetry()
+        assert t.manual_mode is True
+        assert t.tune_cap_percent == pytest.approx(37.0)
+        assert t.load_cap_percent == pytest.approx(62.0)
+        assert t.dc_voltage == pytest.approx(0.0)  # sim has no DC-bus model
+        assert t.preset_slot == 0
+
 
 class TestIdentify:
     def test_identify_returns_id_serial_firmware_frequency_limit(self, device: CxnDevice):
