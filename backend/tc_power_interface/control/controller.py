@@ -44,6 +44,9 @@ class Controller:
         self.limits = limits or SafetyLimits()
         self.poll_interval_s = poll_interval_s
         self._clock = clock
+        #: Backend name ("simulated"/"serial"), set by the app; the thermal loop's arming gate
+        #: allows auto-drive freely in sim but requires an explicit arm on real hardware.
+        self.backend = "simulated"
 
         self.state = ControllerState.DISCONNECTED
         self.latest_telemetry: Telemetry | None = None
