@@ -16,28 +16,57 @@ from dataclasses import dataclass
 from tc_power_interface.device.base import Telemetry
 from tc_power_interface.protocol.codec import Status
 
+#: Hard outer bounds for the operator-editable limits: (min, max). Tighten-only — the operator
+#: can never set a value outside these, so protection cannot be disabled or hardware over-driven.
+HARD_BOUNDS: dict[str, tuple[float, float]] = {
+    "max_forward_w": (0, 400),  # HT50 bank brief-test ceiling
+    "max_reflected_w": (1.0, 200.0),
+    "temperature_c_trip": (30.0, 90.0),
+}
+
 
 @dataclass(frozen=True)
 class SafetyLimits:
-    """Protection thresholds and command-side policy guards."""
+    """Protection thresholds and command-side policy guards (editable ones are hard-bounded)."""
 
-    #: Hard RF-off trip on reflected fraction while RF is on.
-    reflected_fraction_trip: float = 0.10
-    #: Advisory warning threshold (surfaced to the UI, does not trip).
-    reflected_fraction_warn: float = 0.02
-    #: Optional absolute reflected-power trip in watts (percentage alone is insufficient
-    #: as forward power rises). ``None`` disables the absolute check.
-    reflected_w_trip: float | None = None
-    #: Heat-sink temperature trip in deg C.
+    #: Command-side ceiling on the forward-power setpoint (watts).
+    max_forward_w: int = 350
+    #: RF-off trip on absolute reflected power (watts) while RF is on.
+    max_reflected_w: float = 25.0
+    #: Heat-sink temperature trip (deg C).
     temperature_c_trip: float = 70.0
+    #: Advisory-only reflected-fraction warn (drives the warnings banner, never trips).
+    reflected_fraction_warn: float = 0.02
     #: Trip if the newest telemetry sample is older than this (must stay < 2 s control lease).
     telemetry_timeout_s: float = 1.5
-    #: Command-side policy ceiling on the forward-power setpoint (HT50 bank continuous policy).
-    max_setpoint_w: int = 350
+
+    @classmethod
+    def bounded(
+        cls,
+        *,
+        max_forward_w: float,
+        max_reflected_w: float,
+        temperature_c_trip: float,
+        reflected_fraction_warn: float = 0.02,
+        telemetry_timeout_s: float = 1.5,
+    ) -> SafetyLimits:
+        """Build limits with each editable field clamped into its hard range."""
+
+        def clamp(name: str, value: float) -> float:
+            lo, hi = HARD_BOUNDS[name]
+            return max(lo, min(value, hi))
+
+        return cls(
+            max_forward_w=int(clamp("max_forward_w", max_forward_w)),
+            max_reflected_w=float(clamp("max_reflected_w", max_reflected_w)),
+            temperature_c_trip=float(clamp("temperature_c_trip", temperature_c_trip)),
+            reflected_fraction_warn=reflected_fraction_warn,
+            telemetry_timeout_s=telemetry_timeout_s,
+        )
 
     def clamp_setpoint(self, watts: int) -> int:
-        """Clamp a requested setpoint into ``[0, max_setpoint_w]``."""
-        return max(0, min(int(watts), self.max_setpoint_w))
+        """Clamp a requested setpoint into ``[0, max_forward_w]``."""
+        return max(0, min(int(watts), self.max_forward_w))
 
 
 @dataclass(frozen=True)
@@ -70,19 +99,14 @@ def evaluate(telemetry: Telemetry, limits: SafetyLimits, telemetry_age_s: float)
         )
 
     if telemetry.rf_on:
-        if telemetry.reflected_fraction > limits.reflected_fraction_trip:
+        if telemetry.reverse_w > limits.max_reflected_w:
             reasons.append(
-                f"reflected fraction {telemetry.reflected_fraction:.3f} > "
-                f"{limits.reflected_fraction_trip:.3f}"
+                f"reflected power {telemetry.reverse_w:.1f}W > {limits.max_reflected_w:.1f}W"
             )
         elif telemetry.reflected_fraction > limits.reflected_fraction_warn:
             warnings.append(
                 f"reflected fraction {telemetry.reflected_fraction:.3f} above warn "
                 f"{limits.reflected_fraction_warn:.3f}"
-            )
-        if limits.reflected_w_trip is not None and telemetry.reverse_w > limits.reflected_w_trip:
-            reasons.append(
-                f"reflected power {telemetry.reverse_w:.1f}W > {limits.reflected_w_trip:.1f}W"
             )
 
     return SafetyDecision(trip=bool(reasons), reasons=tuple(reasons), warnings=tuple(warnings))
