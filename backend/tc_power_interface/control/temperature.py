@@ -8,7 +8,9 @@ control law and phase machine can be exercised. The FLIR-backed source lives in
 
 from __future__ import annotations
 
+import bisect
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -39,3 +41,38 @@ class SimulatedThermalSource:
 
     def read(self) -> TemperatureSample:
         return TemperatureSample(celsius=self._t, valid=True, ts=time.time())
+
+
+class RecordedTemperatureSource:
+    """Replays a recorded ``(time_s, celsius)`` trace (e.g. a FLIR control-ROI series).
+
+    A cursor advances in simulated time via :meth:`advance`; :meth:`read` returns the linearly
+    interpolated temperature at the cursor, holding the last value past the end. It has no ``step``
+    method so the thermal loop treats it as an external source (it does not integrate a model).
+    """
+
+    def __init__(self, times_s: Sequence[float], celsius: Sequence[float]) -> None:
+        if len(times_s) == 0 or len(times_s) != len(celsius):
+            raise ValueError("times_s and celsius must be non-empty and the same length")
+        self._times = [float(t) for t in times_s]
+        self._temps = [float(c) for c in celsius]
+        self._cursor = self._times[0]
+
+    def advance(self, dt_s: float) -> None:
+        self._cursor += dt_s
+
+    def read(self) -> TemperatureSample:
+        return TemperatureSample(celsius=self._interp(self._cursor), valid=True, ts=self._cursor)
+
+    def _interp(self, t: float) -> float:
+        times = self._times
+        if t <= times[0]:
+            return self._temps[0]
+        if t >= times[-1]:
+            return self._temps[-1]
+        i = bisect.bisect_right(times, t)  # times[i-1] <= t < times[i]
+        t0, t1 = times[i - 1], times[i]
+        c0, c1 = self._temps[i - 1], self._temps[i]
+        if t1 == t0:
+            return c1
+        return c0 + (c1 - c0) * (t - t0) / (t1 - t0)
