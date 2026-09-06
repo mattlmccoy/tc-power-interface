@@ -443,6 +443,10 @@ export function App() {
 
             <section className="panel">
               <h2>Generator</h2>
+              <div className="readout" style={{ marginBottom: "8px" }}>
+                <div className="label">Internal temperature</div>
+                <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
+              </div>
               <div className="cards">
                 <div className="readout">
                   <div className="label">DC bus</div>
