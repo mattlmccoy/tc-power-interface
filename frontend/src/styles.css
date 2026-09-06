@@ -136,8 +136,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 /* --- CXN-style analog gauges: compact light instrument faces, single row --- */
 .gauge-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.gauge-card { background: linear-gradient(#f6f7f4, #e7e9e4); border: 1px solid #b9bdc2;
-  border-radius: 4px; padding: 3px 3px 4px; text-align: center; }
+.gauge-card { background: #fbfbf9; border: 1px solid #b9bdc2;
+  border-radius: 3px; padding: 3px 3px 4px; text-align: center; }
 .gauge-label { font-size: 8px; letter-spacing: 0.03em; text-transform: uppercase; color: #4a4f55;
   font-weight: 600; }
 .gauge-svg { width: 100%; height: auto; display: block; margin: 0; }

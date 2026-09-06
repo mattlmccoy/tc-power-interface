@@ -7,23 +7,22 @@ interface Props {
   unit?: string;
 }
 
-// Faithful, COMPACT replica of the reference analog dial: a wide shallow arc of dense tick marks
-// with bold upright numerals sitting OUTSIDE the arc, and a SHORT needle from a pivot just below the
-// arc so the whole meter is a short horizontal band (minimal vertical space). Cream face.
+// Faithful compact replica of the reference analog dial: a shallow arc of DENSE, varied-length tick
+// marks (a 3-level long/medium/short hierarchy), bold upright numerals OUTSIDE the arc, and a thin
+// black needle from a pivot just below the arc. Near-white face; short vertical footprint.
 const CX = 100;
-const CY = 60; // pivot sits just under the arc (short needle)
-const R = 46; // tick-arc radius
-const NUM_R = 55; // numerals sit outside the ticks (like the reference)
-const NEEDLE = 42; // SHORT needle
-const START = -62;
-const END = 62;
-const DIVS = 24; // dense divisions
-const MAJOR_EVERY = 6; // labeled majors at 0/25/50/75/100 %
+const CY = 60; // pivot just under the arc (short needle)
+const R = 47; // tick-arc radius
+const NUM_R = 56; // numerals sit outside the ticks
+const NEEDLE = 43; // short needle
+const START = -64;
+const END = 64;
+const DIVS = 48; // fine minor divisions
+const LABEL_EVERY = 12; // labeled majors: 0/25/50/75/100 %
+const MID_EVERY = 4; // medium ticks between labels
 
-const FACE_TICK = "#33383e";
-const FACE_MINOR = "#5a6068";
-const FACE_NEEDLE = "#b3261e";
-const FACE_PIVOT = "#1a1d21";
+const INK = "#1b1e22";
+const INK_MINOR = "#565c64";
 const NUM_FONT = "'Arial Narrow', 'Helvetica Neue', Arial, sans-serif";
 
 function polar(angleDeg: number, r: number): [number, number] {
@@ -31,7 +30,7 @@ function polar(angleDeg: number, r: number): [number, number] {
   return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
 }
 
-/** Faithful compact analog dial: cream face, dense-tick shallow arc, bold numerals, short needle. */
+/** Faithful compact analog dial: near-white face, dense 3-level ticks, bold numerals, thin needle. */
 export function Gauge({ label, value, max, unit = "W" }: Props) {
   const v = value ?? 0;
   const angle = gaugeAngle(v, 0, max, START, END);
@@ -41,16 +40,19 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
   const px = Math.cos(a);
   const py = Math.sin(a);
   const tip: [number, number] = [CX + NEEDLE * ux, CY + NEEDLE * uy];
-  const baseHalf = 2;
-  const b1 = `${CX + baseHalf * px},${CY + baseHalf * py}`;
-  const b2 = `${CX - baseHalf * px},${CY - baseHalf * py}`;
+  const bh = 1.5;
+  const b1 = `${CX + bh * px},${CY + bh * py}`;
+  const b2 = `${CX - bh * px},${CY - bh * py}`;
 
   const ticks = [];
   for (let i = 0; i <= DIVS; i++) {
     const ta = START + (i / DIVS) * (END - START);
-    const major = i % MAJOR_EVERY === 0;
+    const labeled = i % LABEL_EVERY === 0;
+    const mid = !labeled && i % MID_EVERY === 0;
+    const len = labeled ? 11 : mid ? 7 : 3.5;
+    const w = labeled ? 1.7 : mid ? 1.0 : 0.6;
     const [x1, y1] = polar(ta, R);
-    const [x2, y2] = polar(ta, R - (major ? 9 : 4.5));
+    const [x2, y2] = polar(ta, R - len);
     ticks.push(
       <line
         key={`k${i}`}
@@ -58,21 +60,21 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
         y1={y1}
         x2={x2}
         y2={y2}
-        stroke={major ? FACE_TICK : FACE_MINOR}
-        strokeWidth={major ? 1.6 : 0.7}
+        stroke={labeled || mid ? INK : INK_MINOR}
+        strokeWidth={w}
       />,
     );
-    if (major) {
+    if (labeled) {
       const [lx, ly] = polar(ta, NUM_R);
       ticks.push(
         <text
           key={`l${i}`}
           x={lx}
           y={ly}
-          fontSize="11"
+          fontSize="10.5"
           fontFamily={NUM_FONT}
           fontWeight="700"
-          fill={FACE_TICK}
+          fill={INK}
           textAnchor="middle"
           dominantBaseline="middle"
         >
@@ -87,9 +89,8 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
       <div className="gauge-label">{label}</div>
       <svg viewBox="0 0 200 66" className="gauge-svg" role="img" aria-label={`${label} ${v}`}>
         {ticks}
-        <polygon points={`${b1} ${tip[0]},${tip[1]} ${b2}`} fill={FACE_NEEDLE} />
-        <circle cx={CX} cy={CY} r="3.4" fill={FACE_PIVOT} />
-        <circle cx={CX} cy={CY} r="1.2" fill="#e7e9e4" />
+        <polygon points={`${b1} ${tip[0]},${tip[1]} ${b2}`} fill={INK} />
+        <circle cx={CX} cy={CY} r="2.6" fill={INK} />
       </svg>
       <div className="gauge-readout">
         {value === null ? "—" : v.toFixed(0)} <span className="gauge-unit">{unit}</span>
