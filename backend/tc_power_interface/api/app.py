@@ -28,6 +28,7 @@ from tc_power_interface import __version__
 from tc_power_interface.control.controller import Controller
 from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, RampPlan
 from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
+from tc_power_interface.control.pulse import PULSE_BOUNDS, PulseController, PulsePlan
 from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
@@ -154,6 +155,12 @@ class PresetBody(BaseModel):
     load: float
 
 
+class PulseBody(BaseModel):
+    on_ms: float
+    off_ms: float
+    power_w: float
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -234,6 +241,17 @@ def create_app(
         # Software tuner-cap presets (recall applies caps in MANUAL mode, never ATUNE).
         app.state.presets = PresetStore(experiments_root)
 
+        # Simulator-first PULSE (gate the setpoint on/off); ticks from the poll. Never enables RF.
+        pulse = PulseController(
+            controller,
+            plan=PulsePlan.bounded(
+                on_ms=1000, off_ms=1000, power_w=100,
+                max_forward_w=active_limits.max_forward_w,
+            ),
+        )
+        controller.add_listener(lambda _snap: pulse.tick(poll_interval_s))
+        app.state.pulse = pulse
+
         controller.start()
         try:
             device_info = controller.identify()
@@ -277,6 +295,9 @@ def create_app(
     def _presets() -> PresetStore:
         return cast(PresetStore, app.state.presets)
 
+    def _pulse() -> PulseController:
+        return cast(PulseController, app.state.pulse)
+
     def _presets_payload() -> dict[str, Any]:
         return {
             "slots": {str(k): v for k, v in _presets().list().items()},
@@ -306,6 +327,7 @@ def create_app(
             "ramp": _ramp().snapshot(),
             "timer": _timer().snapshot(),
             "presets": _presets_payload(),
+            "pulse": _pulse().snapshot(),
         }
 
     @app.get("/api/status")
@@ -499,6 +521,40 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _presets_payload()
+
+    # --- pulse (simulator-first; real generator PULSE command unverified) ------------------
+    def _pulse_payload() -> dict[str, Any]:
+        p = _pulse().plan
+        return {
+            "on_ms": p.on_ms,
+            "off_ms": p.off_ms,
+            "power_w": p.power_w,
+            "bounds": {k: [v[0], v[1]] for k, v in PULSE_BOUNDS.items()},
+        }
+
+    @app.get("/api/pulse")
+    def get_pulse() -> dict[str, Any]:
+        return _pulse_payload()
+
+    @app.put("/api/pulse")
+    def put_pulse(body: PulseBody) -> dict[str, Any]:
+        _pulse().plan = PulsePlan.bounded(
+            on_ms=body.on_ms,
+            off_ms=body.off_ms,
+            power_w=body.power_w,
+            max_forward_w=_controller().limits.max_forward_w,
+        )
+        return _pulse_payload()
+
+    @app.post("/api/pulse/start")
+    def pulse_start() -> dict[str, Any]:
+        _pulse().start()
+        return _pulse().snapshot()
+
+    @app.post("/api/pulse/stop")
+    def pulse_stop() -> dict[str, Any]:
+        _pulse().stop()
+        return _pulse().snapshot()
 
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:

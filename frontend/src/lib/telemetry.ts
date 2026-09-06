@@ -124,6 +124,23 @@ export interface PresetsStatus {
   num_slots: number;
 }
 
+/** Live state of the simulator-first PULSE (setpoint gated on/off). */
+export interface PulseStatus {
+  running: boolean;
+  on_ms: number;
+  off_ms: number;
+  power_w: number;
+  duty: number;
+  output_on: boolean;
+}
+
+export interface PulseConfig {
+  on_ms: number;
+  off_ms: number;
+  power_w: number;
+  bounds: Record<string, [number, number]>;
+}
+
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
@@ -132,6 +149,7 @@ export interface Status {
   ramp: RampStatus;
   timer: TimerStatus;
   presets: PresetsStatus;
+  pulse: PulseStatus;
 }
 
 export interface Point {

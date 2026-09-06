@@ -11,6 +11,7 @@ import type {
   SafetyLimitsForm,
   SafetyLimitsStatus,
   Status,
+  PulseConfig,
   ThermalPlanForm,
   ThermalPlanStatus,
   TimerConfig,
@@ -110,6 +111,11 @@ export const api = {
     put(`/api/presets/${slot}`, { tune, load }),
   presetRecall: (slot: number) => post(`/api/presets/${slot}/recall`),
   presetDelete: (slot: number) => del(`/api/presets/${slot}`),
+  pulse: async (): Promise<PulseConfig> => (await fetch(apiUrl(BASE, "/api/pulse"))).json(),
+  savePulse: (on_ms: number, off_ms: number, power_w: number) =>
+    put("/api/pulse", { on_ms, off_ms, power_w }),
+  pulseStart: () => post("/api/pulse/start"),
+  pulseStop: () => post("/api/pulse/stop"),
   autoLog: async (): Promise<{ enabled: boolean }> =>
     (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
   setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),
