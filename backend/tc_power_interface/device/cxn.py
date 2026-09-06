@@ -100,13 +100,14 @@ class CxnDevice:
     def set_setpoint(self, watts: int) -> None:
         self._command(codec.cmd_setpoint(watts))
 
-    def set_manual_mode(self, on: bool) -> None:
-        self._command(codec.cmd_manual_mode(on))
+    def force_manual_mode(self) -> None:
+        """Put the tuner in MANUAL mode. No automatic path exists — ATUNE must never be engaged."""
+        self._command(codec.cmd_manual_mode())
 
-    def set_tune_capacity(self, percent: int) -> None:
+    def set_tune_capacity(self, percent: float) -> None:
         self._command(codec.cmd_tune_capacity(percent))
 
-    def set_load_capacity(self, percent: int) -> None:
+    def set_load_capacity(self, percent: float) -> None:
         self._command(codec.cmd_load_capacity(percent))
 
     def close(self) -> None:

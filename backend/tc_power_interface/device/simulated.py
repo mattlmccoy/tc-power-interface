@@ -38,8 +38,8 @@ class SimulatedCxnTransport(Transport):
         self.rf_on = False
         self.setpoint_w = 0
         self.manual_mode = False
-        self.load_capacity = 0
-        self.tune_capacity = 0
+        self.load_capacity = 0.0
+        self.tune_capacity = 0.0
         self.interlock_open = False
         # identity
         self.id_string = "AG 0613"
@@ -121,8 +121,8 @@ class SimulatedCxnTransport(Transport):
         elif mnem == b"TM":  # manual mode (ack only)
             self.manual_mode = p1 == b"\x00\x02"
             self._ack(True)
-        elif mnem == b"TC":  # tune/load capacity (ack only)
-            value = command[5]
+        elif mnem == b"TC":  # tune/load capacity (ack only); value is percent*10 (0.1% resolution)
+            value = int.from_bytes(command[4:6], "big") / 10
             if p1 == b"\x00\x01":
                 self.load_capacity = value
             elif p1 == b"\x00\x02":
