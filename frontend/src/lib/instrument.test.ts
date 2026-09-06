@@ -1,7 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampPercent, gaugeAngle, generatorModes, statusLeds } from "./instrument.ts";
+import { clampPercent, gaugeAngle, generatorModes, statusLeds, tempBar } from "./instrument.ts";
+
+test("tempBar: fraction from room->max, green at bottom to red at top, clamped", () => {
+  assert.equal(tempBar(25, 25, 70).fraction, 0);
+  assert.equal(tempBar(70, 25, 70).fraction, 1);
+  assert.ok(Math.abs(tempBar(47.5, 25, 70).fraction - 0.5) < 1e-9);
+  assert.equal(tempBar(10, 25, 70).fraction, 0); // below room clamps to 0
+  assert.equal(tempBar(999, 25, 70).fraction, 1); // above max clamps to 1
+  // hue goes 120 (green) -> 0 (red) as fraction rises
+  assert.match(tempBar(25, 25, 70).color, /hsl\(120/);
+  assert.match(tempBar(70, 25, 70).color, /hsl\(0/);
+});
+
+test("tempBar: degenerate range does not divide by zero", () => {
+  assert.equal(tempBar(50, 70, 70).fraction, 0);
+});
 
 test("generatorModes reads RF-source and leveling from the status bits", () => {
   assert.deepEqual(generatorModes(0), { rfSource: "internal", leveling: "forward" });

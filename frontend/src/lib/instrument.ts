@@ -43,6 +43,20 @@ export function statusLeds(status: number): Led[] {
   });
 }
 
+/** Temperature progress from room->max (e.g. the over-temp trip), with a green->red hue.
+ *  fraction 0 = green (hsl 120), fraction 1 = red (hsl 0), clamped to [0,1]. */
+export function tempBar(
+  tempC: number,
+  roomC: number,
+  maxC: number,
+): { fraction: number; color: string } {
+  const denom = maxC - roomC;
+  const raw = denom <= 0 ? 0 : (tempC - roomC) / denom;
+  const fraction = Math.max(0, Math.min(1, raw));
+  const hue = Math.round(120 * (1 - fraction));
+  return { fraction, color: `hsl(${hue}, 65%, 45%)` };
+}
+
 /** RF-source (internal/external) + leveling (forward/load) read from the CXN status bits. */
 export function generatorModes(status: number): {
   rfSource: "internal" | "external";
