@@ -313,6 +313,15 @@ def create_app(
     app = FastAPI(title="T&C Power Interface", version=__version__, lifespan=lifespan)
     install_cross_origin_policy(app, site_origin=site_origin)
 
+    @app.middleware("http")
+    async def _no_cache_html(request, call_next):  # type: ignore[no-untyped-def]
+        # The SPA shell (index.html) must never be cached, or the browser keeps loading stale UI
+        # after a redeploy. Hashed JS/CSS under /assets keep their normal (immutable) caching.
+        response = await call_next(request)
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     def _controller() -> Controller:
         return cast(Controller, app.state.controller)
 
