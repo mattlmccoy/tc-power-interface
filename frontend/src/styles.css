@@ -134,15 +134,23 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .hint { color: var(--muted); font-size: 11px; margin-top: var(--space); line-height: 1.4; }
 .mono { font-family: var(--font-mono); }
 
-/* --- CXN-style analog gauges (compact: a single row of small gauges) --- */
+/* --- CXN-style analog gauges: compact light instrument faces, single row --- */
 .gauge-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.gauge-card { background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 4px 2px 5px; text-align: center; }
-.gauge-label { font-size: 8px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
-.gauge-svg { width: 100%; height: auto; display: block; margin: 1px 0 0; }
-.gauge-readout { font-family: var(--font-mono); font-size: 13px; color: var(--fg-strong); font-weight: 600;
-  line-height: 1.1; }
-.gauge-unit { font-size: 9px; color: var(--muted); font-weight: 400; }
+.gauge-card { background: linear-gradient(#f6f7f4, #e7e9e4); border: 1px solid #b9bdc2;
+  border-radius: 4px; padding: 3px 3px 4px; text-align: center; }
+.gauge-label { font-size: 8px; letter-spacing: 0.03em; text-transform: uppercase; color: #4a4f55;
+  font-weight: 600; }
+.gauge-svg { width: 100%; height: auto; display: block; margin: 0; }
+.gauge-readout { font-family: var(--font-mono); font-size: 12px; color: #1a1d21; font-weight: 700;
+  line-height: 1; margin-top: 1px; }
+.gauge-unit { font-size: 8px; color: #666; font-weight: 400; }
+
+/* --- internal-temperature progress bar (room -> trip, green->red) --- */
+.temp-bar { height: 8px; border-radius: 4px; background: var(--line-strong); overflow: hidden;
+  margin-top: 8px; }
+.temp-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease, background 0.3s ease; }
+.temp-bar-legend { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted);
+  margin-top: 3px; }
 
 /* --- status LED strip --- */
 .led-strip { display: flex; flex-wrap: wrap; gap: 6px 14px; }

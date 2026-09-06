@@ -7,7 +7,7 @@ import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
-import { clampPercent, generatorModes } from "./lib/instrument.ts";
+import { clampPercent, generatorModes, tempBar } from "./lib/instrument.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
 import type { Point, SafetyLimitsStatus, Status, ThermalPlanStatus } from "./lib/telemetry.ts";
@@ -446,6 +446,23 @@ export function App() {
               <div className="readout" style={{ marginBottom: "8px" }}>
                 <div className="label">Internal temperature</div>
                 <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
+                {t && limits ? (
+                  <>
+                    <div className="temp-bar">
+                      <div
+                        className="temp-bar-fill"
+                        style={{
+                          width: `${tempBar(t.temperature_c, 25, limits.temperature_c_trip).fraction * 100}%`,
+                          background: tempBar(t.temperature_c, 25, limits.temperature_c_trip).color,
+                        }}
+                      />
+                    </div>
+                    <div className="temp-bar-legend">
+                      <span>25 °C</span>
+                      <span>trip {limits.temperature_c_trip.toFixed(0)} °C</span>
+                    </div>
+                  </>
+                ) : null}
               </div>
               <div className="cards">
                 <div className="readout">
