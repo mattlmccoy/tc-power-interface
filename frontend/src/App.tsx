@@ -9,8 +9,22 @@ import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
 import { capVolts, clampCap, generatorModes, LOAD_VOLTS, tempBar, TUNE_VOLTS } from "./lib/instrument.ts";
 import { wsUrl } from "./lib/operator.ts";
+import {
+  LIMITS_KEY,
+  loadSettings,
+  settingsStorage,
+  storeSettings,
+  THERMAL_KEY,
+} from "./lib/settings_store.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
-import type { Point, SafetyLimitsStatus, Status, ThermalPlanStatus } from "./lib/telemetry.ts";
+import type {
+  Point,
+  SafetyLimitsForm,
+  SafetyLimitsStatus,
+  Status,
+  ThermalPlanForm,
+  ThermalPlanStatus,
+} from "./lib/telemetry.ts";
 
 const FLIR_POLL_MS = 3000;
 const REFLECT_PLOT_CEIL = 15; // history-plot reflected % y-scale
@@ -75,6 +89,7 @@ export function App() {
 
   const fwdBuf = useRef(new TraceBuffer(150));
   const reflBuf = useRef(new TraceBuffer(150));
+  const store = settingsStorage();
 
   const applyBase = () => {
     setOperatorBase(baseInput);
@@ -151,17 +166,43 @@ export function App() {
       } catch {
         /* operator unreachable — keep last known */
       }
+      // Safety limits: prefer the operator, but auto-apply any offline-saved (pending) local values,
+      // and fall back to showing local values when the operator is unreachable.
+      const localLim = loadSettings<SafetyLimitsForm>(store, LIMITS_KEY);
       try {
         const lim = await api.safetyLimits();
-        if (!cancelled) fillLimForm(lim);
+        if (cancelled) return;
+        if (localLim?.pending) {
+          const res = await api.saveSafetyLimits(localLim.v);
+          if (res.ok) {
+            storeSettings(store, LIMITS_KEY, { v: localLim.v, pending: false });
+            fillLimForm((await res.json()) as SafetyLimitsStatus);
+          } else {
+            fillLimForm(lim);
+          }
+        } else {
+          fillLimForm(lim);
+        }
       } catch {
-        /* keep last known */
+        if (!cancelled && localLim) fillLimForm({ ...localLim.v, bounds: {} });
       }
+      const localTp = loadSettings<ThermalPlanForm>(store, THERMAL_KEY);
       try {
         const tp = await api.thermalPlan();
-        if (!cancelled) fillThermalForm(tp);
+        if (cancelled) return;
+        if (localTp?.pending) {
+          const res = await api.saveThermalPlan(localTp.v);
+          if (res.ok) {
+            storeSettings(store, THERMAL_KEY, { v: localTp.v, pending: false });
+            fillThermalForm((await res.json()) as ThermalPlanStatus);
+          } else {
+            fillThermalForm(tp);
+          }
+        } else {
+          fillThermalForm(tp);
+        }
       } catch {
-        /* keep last known */
+        if (!cancelled && localTp) fillThermalForm({ ...localTp.v, bounds: {} });
       }
       try {
         const al = await api.autoLog();
@@ -380,13 +421,17 @@ export function App() {
     try {
       const res = await api.saveSafetyLimits(body);
       if (res.ok) {
+        storeSettings(store, LIMITS_KEY, { v: body, pending: false });
         fillLimForm((await res.json()) as SafetyLimitsStatus);
         flash("safety limits saved");
       } else {
         flash(await detail(res));
       }
     } catch {
-      flash("could not reach operator — is it running?");
+      // Operator unreachable: keep the values locally and apply them on the next connect.
+      storeSettings(store, LIMITS_KEY, { v: body, pending: true });
+      fillLimForm({ ...body, bounds: limitsStatus?.bounds ?? {} });
+      flash("saved locally — will apply when the operator connects");
     }
   }
   async function saveThermalPlan() {
@@ -402,13 +447,16 @@ export function App() {
     try {
       const res = await api.saveThermalPlan(body);
       if (res.ok) {
+        storeSettings(store, THERMAL_KEY, { v: body, pending: false });
         fillThermalForm((await res.json()) as ThermalPlanStatus);
         flash("thermal plan saved");
       } else {
         flash(await detail(res));
       }
     } catch {
-      flash("could not reach operator — is it running?");
+      storeSettings(store, THERMAL_KEY, { v: body, pending: true });
+      fillThermalForm({ ...body, bounds: thermalPlanStatus?.bounds ?? {} });
+      flash("saved locally — will apply when the operator connects");
     }
   }
   async function startThermal() {
@@ -751,12 +799,9 @@ export function App() {
                 >
                   +
                 </button>
-                <span className="cap-name">%</span>
+                <span className="cap-live-v">% · {capVolts(tune, TUNE_VOLTS).toFixed(2)} V</span>
                 <span className="cap-readback">
-                  act{" "}
-                  {t?.tune_cap_percent != null
-                    ? `${t.tune_cap_percent.toFixed(1)}% · ${capVolts(t.tune_cap_percent, TUNE_VOLTS).toFixed(2)} V`
-                    : "—"}
+                  act {t?.tune_cap_percent != null ? `${t.tune_cap_percent.toFixed(1)}%` : "—"}
                 </span>
               </div>
               <input
@@ -797,12 +842,9 @@ export function App() {
                 >
                   +
                 </button>
-                <span className="cap-name">%</span>
+                <span className="cap-live-v">% · {capVolts(load, LOAD_VOLTS).toFixed(2)} V</span>
                 <span className="cap-readback">
-                  act{" "}
-                  {t?.load_cap_percent != null
-                    ? `${t.load_cap_percent.toFixed(1)}% · ${capVolts(t.load_cap_percent, LOAD_VOLTS).toFixed(2)} V`
-                    : "—"}
+                  act {t?.load_cap_percent != null ? `${t.load_cap_percent.toFixed(1)}%` : "—"}
                 </span>
               </div>
               <input
