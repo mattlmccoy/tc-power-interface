@@ -201,6 +201,12 @@ export function App() {
   const ramp = status?.ramp;
   const timer = status?.timer;
   const presets = status?.presets;
+  const presetEntries = presets
+    ? Object.entries(presets.slots)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => [Number(k), v as NonNullable<typeof v>] as const)
+        .sort((a, b) => a[0] - b[0])
+    : [];
   const pulse = status?.pulse;
   const state = ctrl?.state ?? "disconnected";
   const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
@@ -260,7 +266,10 @@ export function App() {
     await api.timerStop();
   }
   async function savePreset(slot: number) {
-    await api.presetSave(slot, Math.round(tune), Math.round(load));
+    await api.presetSave(slot, tune, load);
+  }
+  async function clearPreset(slot: number) {
+    await api.presetDelete(slot);
   }
   async function recallPreset(slot: number) {
     const res = await api.presetRecall(slot);
@@ -763,30 +772,42 @@ export function App() {
                 </span>
               </div>
 
-              {/* Software presets: recall stored caps in MANUAL mode (not the forbidden ATUNE). */}
+              {/* Software presets: recall stored caps in MANUAL mode (not the forbidden ATUNE).
+                  Only configured slots are shown; the save control below creates/overwrites one. */}
               <div className="field-label" style={{ marginTop: "12px", fontWeight: 700 }}>
                 Presets
               </div>
-              <div className="preset-bank">
-                {Array.from({ length: presets?.num_slots ?? 9 }, (_, i) => i + 1).map((n) => {
-                  const slot = presets?.slots?.[String(n)] ?? null;
-                  return (
-                    <button
-                      key={n}
-                      className={slot ? "preset on" : "preset"}
-                      disabled={!connected || !slot}
-                      title={
-                        slot
-                          ? `T ${slot.tune_cap_percent}% · L ${slot.load_cap_percent}%`
-                          : "empty"
-                      }
-                      onClick={() => recallPreset(n)}
-                    >
-                      {n}
-                    </button>
-                  );
-                })}
-              </div>
+              {presetEntries.length > 0 ? (
+                <div className="preset-bank">
+                  {presetEntries.map(([n, slot]) => (
+                    <div key={n} className="preset-chip">
+                      <button
+                        className="preset-recall"
+                        disabled={!connected}
+                        title="Recall these cap positions (manual mode)"
+                        onClick={() => recallPreset(n)}
+                      >
+                        <span className="preset-n">{n}</span>
+                        <span className="preset-vals">
+                          T {slot.tune_cap_percent.toFixed(1)} · L {slot.load_cap_percent.toFixed(1)}
+                        </span>
+                      </button>
+                      <button
+                        className="preset-clear"
+                        disabled={!connected}
+                        title="Clear this preset"
+                        onClick={() => clearPreset(n)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="hint" style={{ marginTop: "4px" }}>
+                  No presets saved yet — save the current cap positions below.
+                </div>
+              )}
               <div className="preset-save">
                 <span className="hint" style={{ margin: 0 }}>
                   Save current caps →
@@ -805,10 +826,6 @@ export function App() {
                 <button className="btn" disabled={!connected} onClick={() => savePreset(Number(saveSlot))}>
                   Save
                 </button>
-              </div>
-              <div className="hint">
-                Recall applies the stored tune/load caps in manual mode — not the generator's native
-                ATUNE presets (forbidden here).
               </div>
             </section>
 
