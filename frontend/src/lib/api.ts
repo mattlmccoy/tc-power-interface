@@ -80,6 +80,7 @@ export const api = {
   setSetpoint: (watts: number) => post("/api/setpoint", { watts }),
   rfEnable: () => post("/api/rf/enable"),
   rfDisable: () => post("/api/rf/disable"),
+  estop: () => post("/api/estop"),
   manual: (on: boolean) => post("/api/match/manual", { on }),
   tune: (percent: number) => post("/api/match/tune", { percent }),
   load: (percent: number) => post("/api/match/load", { percent }),

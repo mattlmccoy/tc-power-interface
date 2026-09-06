@@ -7,7 +7,7 @@ import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
-import { clampPercent, generatorModes, tempBar } from "./lib/instrument.ts";
+import { clampCap, generatorModes, tempBar } from "./lib/instrument.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
 import type { Point, SafetyLimitsStatus, Status, ThermalPlanStatus } from "./lib/telemetry.ts";
@@ -43,7 +43,6 @@ export function App() {
   const [pulseForm, setPulseForm] = useState({ on_ms: "1000", off_ms: "1000", power_w: "100" });
   const [tune, setTune] = useState(50);
   const [load, setLoad] = useState(50);
-  const [manual, setManual] = useState(false);
   const [runName, setRunName] = useState("");
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [autoLog, setAutoLog] = useState(true);
@@ -211,6 +210,8 @@ export function App() {
   const zone = t ? reflectedZone(reflW, maxRefl * 0.5, maxRefl) : "ok";
   const reflFillPct = Math.min(100, (reflW / maxRefl) * 100);
   const powerCeil = device?.power_limit_w ?? 600;
+  const fwdLimit = limits?.max_forward_w ?? null;
+  const requested = Number.isNaN(Number(setpointInput)) ? null : Number(setpointInput);
 
   async function rfOn() {
     if (!window.confirm("Enable RF output now? The generator will begin delivering power.")) return;
@@ -219,6 +220,10 @@ export function App() {
   }
   async function rfOff() {
     await api.rfDisable();
+  }
+  async function estop() {
+    await api.estop();
+    flash("E-STOP — RF off, setpoint 0, all drivers halted");
   }
   async function applySetpoint() {
     const watts = Number(setpointInput);
@@ -258,7 +263,6 @@ export function App() {
     await api.presetSave(slot, Math.round(tune), Math.round(load));
   }
   async function recallPreset(slot: number) {
-    if (!manual) setManual(true);
     const res = await api.presetRecall(slot);
     if (!res.ok) return flash("recall failed: " + (await detail(res)));
     const applied = (await res.json())?.applied;
@@ -277,10 +281,6 @@ export function App() {
   }
   async function stopPulse() {
     await api.pulseStop();
-  }
-  async function toggleManual(on: boolean) {
-    setManual(on);
-    await api.manual(on);
   }
   async function sendTune(v: number) {
     setTune(v);
@@ -303,8 +303,8 @@ export function App() {
     stopRepeat();
     repeatRef.current = setInterval(fn, 140);
   };
-  const bumpTune = (d: number) => sendTune(clampPercent(tune + d));
-  const bumpLoad = (d: number) => sendLoad(clampPercent(load + d));
+  const bumpTune = (d: number) => sendTune(clampCap(tune + d));
+  const bumpLoad = (d: number) => sendLoad(clampCap(load + d));
   const bumpActive = (d: number) => (activeCap === "tune" ? bumpTune(d) : bumpLoad(d));
   async function applyFlirLink(url: string, enabled: boolean) {
     try {
@@ -439,6 +439,15 @@ export function App() {
         {() => (
           <>
             {view === "dashboard" ? (
+          <>
+          {!connected ? (
+            <div className="banner startup">
+              <strong>Power-on order — generator first, then AIT.</strong> Turning the AIT (matching
+              network) on before the generator shifts the caps and ruins the tune. Per run: load part
+              → connect VNA → assess S11 → AIT on → match T/L → AIT off → unplug VNA → N-cable to
+              generator → safety check → <strong>generator on → wait for boot → AIT on</strong>.
+            </div>
+          ) : null}
           <div className="main">
           <div className="col">
             <section className="panel">
@@ -457,17 +466,17 @@ export function App() {
               </div>
               {showGauges ? (
                 <div className="gauge-grid" style={{ marginTop: "10px" }}>
-                  <Gauge
-                    label="Requested"
-                    value={Number.isNaN(Number(setpointInput)) ? null : Number(setpointInput)}
-                    max={powerCeil}
-                  />
-                  <Gauge label="Forward" value={t ? t.forward_w : null} max={powerCeil} />
-                  <Gauge label="Reverse" value={t ? t.reverse_w : null} max={powerCeil} />
-                  <Gauge label="Load" value={t ? t.load_w : null} max={powerCeil} />
+                  <Gauge label="Requested" value={requested} max={powerCeil} limit={fwdLimit} />
+                  <Gauge label="Forward" value={t ? t.forward_w : null} max={powerCeil} limit={fwdLimit} />
+                  <Gauge label="Reverse" value={t ? t.reverse_w : null} max={powerCeil} limit={maxRefl} />
+                  <Gauge label="Load" value={t ? t.load_w : null} max={powerCeil} limit={fwdLimit} />
                 </div>
               ) : (
                 <div className="cards" style={{ marginTop: "10px" }}>
+                  <div className="readout">
+                    <div className="label">Requested</div>
+                    <div className="value">{requested === null ? "—" : fmtWatts(requested)}</div>
+                  </div>
                   <div className="readout">
                     <div className="label">Forward power</div>
                     <div className={`value ${t?.rf_on ? "rf-on" : ""}`}>
@@ -475,16 +484,12 @@ export function App() {
                     </div>
                   </div>
                   <div className={`readout zone-${zone}`}>
-                    <div className="label">Reflected power</div>
+                    <div className="label">Reverse power</div>
                     <div className="value">{t ? fmtWatts(t.reverse_w) : "—"}</div>
                   </div>
                   <div className="readout">
                     <div className="label">Load power</div>
                     <div className="value">{t ? fmtWatts(t.load_w) : "—"}</div>
-                  </div>
-                  <div className="readout">
-                    <div className="label">Heat-sink temp</div>
-                    <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
                   </div>
                 </div>
               )}
@@ -498,14 +503,18 @@ export function App() {
             </section>
 
             <section className="panel">
-              <h2>Reflected power</h2>
-              <div className="gauge">
-                <div className={`fill ${zone}`} style={{ width: `${reflFillPct}%` }} />
-              </div>
-              <div className="gauge-legend">
-                <span>0 W</span>
-                <span>warn {(maxRefl * 0.5).toFixed(0)} W · trip {maxRefl.toFixed(0)} W</span>
-                <span>{maxRefl.toFixed(0)} W</span>
+              <h2>Reverse power</h2>
+              <div className="revmeter">
+                <div className={`revmeter-value zone-${zone}`}>
+                  {t ? fmtWatts(t.reverse_w) : "—"}
+                </div>
+                <div className="revmeter-track">
+                  <div className={`revmeter-fill ${zone}`} style={{ width: `${reflFillPct}%` }} />
+                  <div className="revmeter-mark warn" style={{ left: "50%" }} />
+                </div>
+                <div className="revmeter-legend">
+                  warn {(maxRefl * 0.5).toFixed(0)} W · trip {maxRefl.toFixed(0)} W
+                </div>
               </div>
             </section>
 
@@ -583,7 +592,7 @@ export function App() {
                 </span>
                 <span>
                   <span className="swatch refl" />
-                  reflected (0–{REFLECT_PLOT_CEIL}%)
+                  reverse (0–{REFLECT_PLOT_CEIL}%)
                 </span>
               </div>
             </section>
@@ -591,26 +600,45 @@ export function App() {
 
           <div className="col">
             <section className="panel">
+              <h2>RF control</h2>
+              <button
+                className="btn estop full"
+                onClick={estop}
+                disabled={!connected}
+                title="Emergency stop: RF off, setpoint 0, all drivers halted"
+              >
+                ⏻ E-STOP
+              </button>
+              <div className="row" style={{ marginTop: "10px" }}>
+                <button className="btn danger full" onClick={rfOn} disabled={!connected || faulted}>
+                  RF ON
+                </button>
+                <button className="btn full" onClick={rfOff} disabled={!connected}>
+                  RF OFF
+                </button>
+              </div>
+              <div className="hint">
+                {faulted
+                  ? "RF-enable is blocked while faulted (protection latched)."
+                  : "RF-enable prompts for confirmation. Protection commands RF off on any trip."}
+              </div>
+            </section>
+
+            <section className="panel">
               <h2>Matching network</h2>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={manual}
-                  onChange={(e) => toggleManual(e.target.checked)}
-                  disabled={!connected}
-                />
-                Manual tune mode
-              </label>
+              <div className="lock-badge">
+                🔒 Manual tuning — locked on. The built-in auto-tuner (ATUNE) is never engaged.
+              </div>
               <div className="hint" style={{ marginTop: "6px" }}>
-                Tune / load cap positions — writable only in manual mode. Type a value, or use −/+
-                (hold to repeat) for fine adjustment.
+                Tune / load cap positions (0.1% steps). Type a value, or use −/+ (hold to repeat) for
+                fine adjustment.
               </div>
               <div className="cap-row" style={{ marginTop: "10px" }}>
                 <span className="cap-name">Tune cap</span>
                 <button
                   className="btn step-btn"
-                  disabled={!manual}
-                  onMouseDown={() => holdStep(() => bumpTune(-1))}
+                  disabled={!connected}
+                  onMouseDown={() => holdStep(() => bumpTune(-0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
                 >
@@ -620,14 +648,15 @@ export function App() {
                   type="number"
                   min={0}
                   max={100}
+                  step={0.1}
                   value={tune}
-                  disabled={!manual}
-                  onChange={(e) => sendTune(clampPercent(Number(e.target.value)))}
+                  disabled={!connected}
+                  onChange={(e) => sendTune(clampCap(Number(e.target.value)))}
                 />
                 <button
                   className="btn step-btn"
-                  disabled={!manual}
-                  onMouseDown={() => holdStep(() => bumpTune(1))}
+                  disabled={!connected}
+                  onMouseDown={() => holdStep(() => bumpTune(0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
                 >
@@ -635,23 +664,24 @@ export function App() {
                 </button>
                 <span className="cap-name">%</span>
                 <span className="cap-readback">
-                  act {t?.tune_cap_percent != null ? Math.round(t.tune_cap_percent) : "—"}%
+                  act {t?.tune_cap_percent != null ? t.tune_cap_percent.toFixed(1) : "—"}%
                 </span>
               </div>
               <input
                 type="range"
                 min={0}
                 max={100}
+                step={0.1}
                 value={tune}
-                disabled={!manual}
+                disabled={!connected}
                 onChange={(e) => sendTune(Number(e.target.value))}
               />
               <div className="cap-row" style={{ marginTop: "10px" }}>
                 <span className="cap-name">Load cap</span>
                 <button
                   className="btn step-btn"
-                  disabled={!manual}
-                  onMouseDown={() => holdStep(() => bumpLoad(-1))}
+                  disabled={!connected}
+                  onMouseDown={() => holdStep(() => bumpLoad(-0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
                 >
@@ -661,14 +691,15 @@ export function App() {
                   type="number"
                   min={0}
                   max={100}
+                  step={0.1}
                   value={load}
-                  disabled={!manual}
-                  onChange={(e) => sendLoad(clampPercent(Number(e.target.value)))}
+                  disabled={!connected}
+                  onChange={(e) => sendLoad(clampCap(Number(e.target.value)))}
                 />
                 <button
                   className="btn step-btn"
-                  disabled={!manual}
-                  onMouseDown={() => holdStep(() => bumpLoad(1))}
+                  disabled={!connected}
+                  onMouseDown={() => holdStep(() => bumpLoad(0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
                 >
@@ -676,15 +707,16 @@ export function App() {
                 </button>
                 <span className="cap-name">%</span>
                 <span className="cap-readback">
-                  act {t?.load_cap_percent != null ? Math.round(t.load_cap_percent) : "—"}%
+                  act {t?.load_cap_percent != null ? t.load_cap_percent.toFixed(1) : "—"}%
                 </span>
               </div>
               <input
                 type="range"
                 min={0}
                 max={100}
+                step={0.1}
                 value={load}
-                disabled={!manual}
+                disabled={!connected}
                 onChange={(e) => sendLoad(Number(e.target.value))}
               />
 
@@ -695,14 +727,14 @@ export function App() {
                 <div className="seg">
                   <button
                     className={activeCap === "tune" ? "seg-btn on" : "seg-btn"}
-                    disabled={!manual}
+                    disabled={!connected}
                     onClick={() => setActiveCap("tune")}
                   >
                     TUNE
                   </button>
                   <button
                     className={activeCap === "load" ? "seg-btn on" : "seg-btn"}
-                    disabled={!manual}
+                    disabled={!connected}
                     onClick={() => setActiveCap("load")}
                   >
                     LOAD
@@ -710,8 +742,8 @@ export function App() {
                 </div>
                 <button
                   className="btn step-btn"
-                  disabled={!manual}
-                  onMouseDown={() => holdStep(() => bumpActive(-1))}
+                  disabled={!connected}
+                  onMouseDown={() => holdStep(() => bumpActive(-0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
                 >
@@ -719,8 +751,8 @@ export function App() {
                 </button>
                 <button
                   className="btn step-btn"
-                  disabled={!manual}
-                  onMouseDown={() => holdStep(() => bumpActive(1))}
+                  disabled={!connected}
+                  onMouseDown={() => holdStep(() => bumpActive(0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
                 >
@@ -861,24 +893,7 @@ export function App() {
             </section>
 
             <section className="panel">
-              <h2>RF output</h2>
-              <div className="row">
-                <button className="btn danger full" onClick={rfOn} disabled={!connected || faulted}>
-                  RF ON
-                </button>
-                <button className="btn full" onClick={rfOff} disabled={!connected}>
-                  RF OFF
-                </button>
-              </div>
-              <div className="hint">
-                {faulted
-                  ? "RF-enable is blocked while faulted (protection latched)."
-                  : "RF-enable prompts for confirmation. Protection commands RF off on any trip."}
-              </div>
-
-              <div className="field-label" style={{ marginTop: "14px", fontWeight: 700 }}>
-                Auto-shutoff timer
-              </div>
+              <h2>Auto-shutoff timer</h2>
               <div className="ramp-actions">
                 <label className="ramp-field" style={{ flex: "0 0 82px" }}>
                   <span>Minutes</span>
@@ -959,6 +974,7 @@ export function App() {
             </section>
           </div>
         </div>
+          </>
       ) : view === "settings" ? (
         <div className="main">
           <div className="col">

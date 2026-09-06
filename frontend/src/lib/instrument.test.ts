@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clampPercent, gaugeAngle, generatorModes, statusLeds, tempBar } from "./instrument.ts";
+import {
+  clampCap,
+  clampPercent,
+  gaugeAngle,
+  generatorModes,
+  statusLeds,
+  tempBar,
+} from "./instrument.ts";
 
 test("tempBar: fraction from room->max, green at bottom to red at top, clamped", () => {
   assert.equal(tempBar(25, 25, 70).fraction, 0);
@@ -35,6 +42,14 @@ test("gaugeAngle maps value across the arc and clamps out-of-range", () => {
 
 test("gaugeAngle handles a degenerate range without dividing by zero", () => {
   assert.equal(gaugeAngle(5, 10, 10, -120, 120), -120);
+});
+
+test("clampCap clamps to 0..100 at 0.1% resolution; NaN -> 0", () => {
+  assert.equal(clampCap(42.54), 42.5);
+  assert.equal(clampCap(42.55), 42.6);
+  assert.equal(clampCap(-3), 0);
+  assert.equal(clampCap(140), 100);
+  assert.equal(clampCap(Number.NaN), 0);
 });
 
 test("clampPercent clamps to 0..100 and rounds; NaN -> 0", () => {

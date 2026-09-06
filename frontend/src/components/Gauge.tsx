@@ -5,6 +5,8 @@ interface Props {
   value: number | null;
   max: number;
   unit?: string;
+  /** Settings limit (W) marked with a colored tick + over-limit arc; omit for no limit. */
+  limit?: number | null;
 }
 
 // Faithful analog panel-meter dial (the classic vacuum-gauge look): the pivot sits OFF-SCREEN below
@@ -24,6 +26,7 @@ const MID_EVERY = 5;
 const INK = "#151515";
 const INK_MINOR = "#5b6067";
 const NEEDLE = "#c0392b"; // floating pointer
+const LIMIT = "#cf3b2e"; // Settings limit tick + over-limit arc
 const NUM_FONT = "'Helvetica Neue', Arial, sans-serif";
 
 function polar(deg: number, r: number): [number, number] {
@@ -32,7 +35,7 @@ function polar(deg: number, r: number): [number, number] {
 }
 
 /** Faithful vacuum-gauge-style dial: off-screen pivot, flat arc, picket-fence ticks, long needle. */
-export function Gauge({ label, value, max, unit = "W" }: Props) {
+export function Gauge({ label, value, max, unit = "W", limit = null }: Props) {
   const v = value ?? 0;
   const ang = gaugeAngle(v, 0, max, -THETA, THETA);
   const a = (ang * Math.PI) / 180;
@@ -49,15 +52,17 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
   const nt1 = `${(tipx + tH * px).toFixed(1)},${(tipy + tH * py).toFixed(1)}`;
   const nt2 = `${(tipx - tH * px).toFixed(1)},${(tipy - tH * py).toFixed(1)}`;
 
-  // Warning zones just outside the ticks: yellow 400-500 W, red 500-max.
+  // The Settings limit (if within range) draws a bold colored tick + an over-limit arc beyond it.
   const arcAt = (a0: number, a1: number, r: number) => {
     const [x0, y0] = polar(a0, r);
     const [x1, y1] = polar(a1, r);
     return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
   };
   const zoneR = R + 7;
-  const aWarn = gaugeAngle(Math.min(400, max), 0, max, -THETA, THETA);
-  const aDanger = gaugeAngle(Math.min(500, max), 0, max, -THETA, THETA);
+  const showLimit = limit != null && limit > 0 && limit < max;
+  const aLimit = showLimit ? gaugeAngle(limit, 0, max, -THETA, THETA) : -THETA;
+  const [ltx1, lty1] = polar(aLimit, R - 18);
+  const [ltx2, lty2] = polar(aLimit, R + 12);
 
   const ticks = [];
   for (let i = 0; i <= DIVS; i++) {
@@ -103,13 +108,13 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
     <div className="gauge-card">
       <div className="gauge-label">{label}</div>
       <svg viewBox={`0 0 ${VBW} ${VBH}`} className="gauge-svg" role="img" aria-label={`${label} ${v}`}>
-        {max > 400 ? (
-          <path d={arcAt(aWarn, aDanger, zoneR)} fill="none" stroke="#e0a83a" strokeWidth="5" />
-        ) : null}
-        {max > 500 ? (
-          <path d={arcAt(aDanger, THETA, zoneR)} fill="none" stroke="#cf3b2e" strokeWidth="5" />
+        {showLimit ? (
+          <path d={arcAt(aLimit, THETA, zoneR)} fill="none" stroke={LIMIT} strokeWidth="2.5" opacity="0.7" />
         ) : null}
         {ticks}
+        {showLimit ? (
+          <line x1={ltx1} y1={lty1} x2={ltx2} y2={lty2} stroke={LIMIT} strokeWidth="3.5" />
+        ) : null}
         <polygon points={`${nb1} ${nt1} ${nt2} ${nb2}`} fill={NEEDLE} />
         <circle cx={basex.toFixed(1)} cy={basey.toFixed(1)} r="4" fill={NEEDLE} />
       </svg>

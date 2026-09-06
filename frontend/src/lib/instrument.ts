@@ -19,6 +19,12 @@ export function clampPercent(v: number): number {
   return Math.max(0, Math.min(100, Math.round(v)));
 }
 
+/** Clamp a cap percentage to 0..100 at 0.1% resolution (the CXN tuner's granularity; NaN -> 0). */
+export function clampCap(v: number): number {
+  if (Number.isNaN(v)) return 0;
+  return Math.max(0, Math.min(100, Math.round(v * 10) / 10));
+}
+
 export type LedTone = "ok" | "warn" | "off";
 export interface Led {
   label: string;
