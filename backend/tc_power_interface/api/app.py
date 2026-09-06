@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from tc_power_interface import __version__
 from tc_power_interface.control.controller import Controller
+from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, RampPlan
 from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
@@ -136,6 +137,12 @@ class AutoLogBody(BaseModel):
     enabled: bool
 
 
+class RampBody(BaseModel):
+    init_w: float
+    target_w: float
+    rate_w_per_s: float
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -196,6 +203,18 @@ def create_app(
         )
         app.state.thermal = thermal
         app.state.thermal_source = "simulated"
+
+        # Software power ramp (init -> target at W/s); ticks from the poll, drives the setpoint.
+        ramp = RampController(
+            controller,
+            plan=RampPlan.bounded(
+                init_w=0, target_w=100, rate_w_per_s=10,
+                max_forward_w=active_limits.max_forward_w,
+            ),
+        )
+        controller.add_listener(lambda _snap: ramp.tick(poll_interval_s))
+        app.state.ramp = ramp
+
         controller.start()
         try:
             device_info = controller.identify()
@@ -230,6 +249,9 @@ def create_app(
     def _thermal() -> ThermalController:
         return cast(ThermalController, app.state.thermal)
 
+    def _ramp() -> RampController:
+        return cast(RampController, app.state.ramp)
+
     # --- REST ------------------------------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -250,6 +272,7 @@ def create_app(
                 "run": app.state.current_run,
             },
             "thermal": {**_thermal().snapshot(), "source": app.state.thermal_source},
+            "ramp": _ramp().snapshot(),
         }
 
     @app.get("/api/status")
@@ -354,6 +377,40 @@ def create_app(
             th.source = SimulatedThermalSource()
             app.state.thermal_source = "simulated"
         return {"source": app.state.thermal_source}
+
+    # --- power ramp ------------------------------------------------------------------------
+    def _ramp_payload() -> dict[str, Any]:
+        p = _ramp().plan
+        return {
+            "init_w": p.init_w,
+            "target_w": p.target_w,
+            "rate_w_per_s": p.rate_w_per_s,
+            "bounds": {k: [v[0], v[1]] for k, v in RAMP_BOUNDS.items()},
+        }
+
+    @app.get("/api/ramp")
+    def get_ramp() -> dict[str, Any]:
+        return _ramp_payload()
+
+    @app.put("/api/ramp")
+    def put_ramp(body: RampBody) -> dict[str, Any]:
+        _ramp().plan = RampPlan.bounded(
+            init_w=body.init_w,
+            target_w=body.target_w,
+            rate_w_per_s=body.rate_w_per_s,
+            max_forward_w=_controller().limits.max_forward_w,
+        )
+        return _ramp_payload()
+
+    @app.post("/api/ramp/start")
+    def ramp_start() -> dict[str, Any]:
+        _ramp().start()
+        return _ramp().snapshot()
+
+    @app.post("/api/ramp/stop")
+    def ramp_stop() -> dict[str, Any]:
+        _ramp().stop()
+        return _ramp().snapshot()
 
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:

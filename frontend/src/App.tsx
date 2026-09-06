@@ -36,6 +36,7 @@ export function App() {
     }
   };
   const [setpointInput, setSetpointInput] = useState("100");
+  const [rampForm, setRampForm] = useState({ init_w: "0", target_w: "200", rate_w_per_s: "10" });
   const [tune, setTune] = useState(50);
   const [load, setLoad] = useState(50);
   const [manual, setManual] = useState(false);
@@ -156,6 +157,17 @@ export function App() {
       } catch {
         /* keep last known */
       }
+      try {
+        const rc = await api.ramp();
+        if (!cancelled)
+          setRampForm({
+            init_w: String(rc.init_w),
+            target_w: String(rc.target_w),
+            rate_w_per_s: String(rc.rate_w_per_s),
+          });
+      } catch {
+        /* keep last known */
+      }
     };
     loadConfig();
     const poll = setInterval(async () => {
@@ -183,6 +195,7 @@ export function App() {
   const device = status?.device;
   const recording = status?.recording;
   const thermal = status?.thermal;
+  const ramp = status?.ramp;
   const state = ctrl?.state ?? "disconnected";
   const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
   const faulted = state === "fault";
@@ -210,6 +223,20 @@ export function App() {
     } else {
       flash(await detail(res));
     }
+  }
+  async function startRamp() {
+    const body = {
+      init_w: Number(rampForm.init_w),
+      target_w: Number(rampForm.target_w),
+      rate_w_per_s: Number(rampForm.rate_w_per_s),
+    };
+    if (Object.values(body).some((n) => Number.isNaN(n))) return flash("ramp values must be numbers");
+    await api.saveRamp(body);
+    const res = await api.rampStart();
+    if (!res.ok) flash("ramp start failed: " + (await detail(res)));
+  }
+  async function stopRamp() {
+    await api.rampStop();
   }
   async function toggleManual(on: boolean) {
     setManual(on);
@@ -635,6 +662,59 @@ export function App() {
               <div className="hint">
                 Ceiling {limits?.max_forward_w ?? "—"} W (values above are clamped). Edit in Settings.
               </div>
+
+              <div className="field-label" style={{ marginTop: "12px", fontWeight: 700 }}>
+                Power ramp
+              </div>
+              <div className="cap-row">
+                <span className="cap-name">Init W</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={rampForm.init_w}
+                  disabled={ramp?.running}
+                  onChange={(e) => setRampForm({ ...rampForm, init_w: e.target.value })}
+                />
+                <span className="cap-name">Target W</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={rampForm.target_w}
+                  disabled={ramp?.running}
+                  onChange={(e) => setRampForm({ ...rampForm, target_w: e.target.value })}
+                />
+              </div>
+              <div className="cap-row">
+                <span className="cap-name">Rate W/s</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={rampForm.rate_w_per_s}
+                  disabled={ramp?.running}
+                  onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
+                />
+                {ramp?.running ? (
+                  <button className="btn full" onClick={stopRamp}>
+                    Stop ramp
+                  </button>
+                ) : (
+                  <button className="btn accent full" onClick={startRamp} disabled={!connected}>
+                    Start ramp
+                  </button>
+                )}
+              </div>
+              {ramp?.running ? (
+                <div className="hint mono">
+                  ramping {ramp.output_w} → {ramp.target_w} W @ {ramp.rate_w_per_s} W/s
+                  {ramp.done ? " · reached" : ""}
+                </div>
+              ) : (
+                <div className="hint">
+                  Ramps the setpoint from init to target at the given W/s (1–99). Enable RF to deliver
+                  it.
+                </div>
+              )}
             </section>
 
             <section className="panel">

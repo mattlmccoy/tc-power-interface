@@ -6,6 +6,8 @@
 import type { FlirLinkResult } from "./format.ts";
 import { apiUrl, loadOperatorBase, saveOperatorBase } from "./operator.ts";
 import type {
+  RampConfig,
+  RampForm,
   SafetyLimitsForm,
   SafetyLimitsStatus,
   Status,
@@ -91,6 +93,10 @@ export const api = {
   thermalArm: () => post("/api/thermal/arm"),
   thermalDisarm: () => post("/api/thermal/disarm"),
   thermalSource: (type: string, url?: string) => post("/api/thermal/source", { type, url }),
+  ramp: async (): Promise<RampConfig> => (await fetch(apiUrl(BASE, "/api/ramp"))).json(),
+  saveRamp: (v: RampForm) => put("/api/ramp", v),
+  rampStart: () => post("/api/ramp/start"),
+  rampStop: () => post("/api/ramp/stop"),
   autoLog: async (): Promise<{ enabled: boolean }> =>
     (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
   setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),
