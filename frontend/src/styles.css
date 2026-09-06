@@ -119,6 +119,19 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .gauge .fill.warn { background: var(--warn); }
 .gauge .fill.trip { background: var(--err); }
 
+/* Power row: a promoted, active setpoint box on the left, the reverse-power meter on the right. */
+.power-row { display: flex; gap: 18px; align-items: stretch; flex-wrap: wrap; }
+.setpoint-box { flex: 0 0 auto; min-width: 280px; background: var(--panel);
+  border: 1px solid var(--accent); border-radius: var(--radius); padding: 12px 14px;
+  box-shadow: 0 0 0 1px rgba(224, 168, 58, 0.12); }
+.setpoint-box .row { margin-top: 4px; }
+.setpoint-box input[type="number"] { font-size: 20px; font-family: var(--font-mono);
+  text-align: right; padding: 8px 10px; }
+.setpoint-box .btn.accent { padding: 8px 16px; }
+.setpoint-box .hint { margin: 6px 0 0; }
+.revmeter-box { flex: 1 1 320px; display: flex; flex-direction: column; justify-content: center; }
+.revmeter-box .field-label { margin-bottom: 8px; }
+
 /* Compact reverse-power meter: value + a short fixed-width track, readable at a glance. */
 .revmeter { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .revmeter-value { font-family: var(--font-mono); font-size: 22px; font-weight: 700; min-width: 64px;

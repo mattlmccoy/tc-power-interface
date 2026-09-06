@@ -568,17 +568,41 @@ export function App() {
             </section>
 
             <section className="panel">
-              <h2>Reverse power</h2>
-              <div className="revmeter">
-                <div className={`revmeter-value zone-${zone}`}>
-                  {t ? fmtWatts(t.reverse_w) : "—"}
+              <div className="power-row">
+                <div className="setpoint-box">
+                  <label className="field-label" htmlFor="sp">
+                    Forward power setpoint (W)
+                  </label>
+                  <div className="row">
+                    <input
+                      id="sp"
+                      type="number"
+                      min={0}
+                      value={setpointInput}
+                      onChange={(e) => setSetpointInput(e.target.value)}
+                    />
+                    <button className="btn accent" onClick={applySetpoint} disabled={!connected}>
+                      Apply
+                    </button>
+                  </div>
+                  <div className="hint">
+                    Ceiling {limits?.max_forward_w ?? "—"} W (clamped). Edit in Settings.
+                  </div>
                 </div>
-                <div className="revmeter-track">
-                  <div className={`revmeter-fill ${zone}`} style={{ width: `${reflFillPct}%` }} />
-                  <div className="revmeter-mark warn" style={{ left: "50%" }} />
-                </div>
-                <div className="revmeter-legend">
-                  warn {(maxRefl * 0.5).toFixed(0)} W · trip {maxRefl.toFixed(0)} W
+                <div className="revmeter-box">
+                  <div className="field-label">Reverse power</div>
+                  <div className="revmeter">
+                    <div className={`revmeter-value zone-${zone}`}>
+                      {t ? fmtWatts(t.reverse_w) : "—"}
+                    </div>
+                    <div className="revmeter-track">
+                      <div className={`revmeter-fill ${zone}`} style={{ width: `${reflFillPct}%` }} />
+                      <div className="revmeter-mark warn" style={{ left: "50%" }} />
+                    </div>
+                    <div className="revmeter-legend">
+                      warn {(maxRefl * 0.5).toFixed(0)} W · trip {maxRefl.toFixed(0)} W
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -967,29 +991,7 @@ export function App() {
             </section>
 
             <section className="panel">
-              <h2>Power setpoint</h2>
-              <label className="field-label" htmlFor="sp">
-                Forward power (W)
-              </label>
-              <div className="row">
-                <input
-                  id="sp"
-                  type="number"
-                  min={0}
-                  value={setpointInput}
-                  onChange={(e) => setSetpointInput(e.target.value)}
-                />
-                <button className="btn accent" onClick={applySetpoint} disabled={!connected}>
-                  Apply
-                </button>
-              </div>
-              <div className="hint">
-                Ceiling {limits?.max_forward_w ?? "—"} W (values above are clamped). Edit in Settings.
-              </div>
-
-              <div className="field-label" style={{ marginTop: "14px", fontWeight: 700 }}>
-                Power ramp
-              </div>
+              <h2>Power ramp</h2>
               <div className="ramp-grid">
                 <label className="ramp-field">
                   <span>Init W</span>
