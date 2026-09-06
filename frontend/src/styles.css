@@ -138,8 +138,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .gauge-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .gauge-card { background: #fbfbf9; border: 1px solid #b9bdc2;
   border-radius: 3px; padding: 3px 3px 4px; text-align: center; }
-.gauge-label { font-size: 8px; letter-spacing: 0.03em; text-transform: uppercase; color: #4a4f55;
-  font-weight: 600; }
+.gauge-label { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: #4a4f55;
+  font-weight: 700; }
 .gauge-svg { width: 100%; height: auto; display: block; margin: 0; }
 .gauge-readout { font-family: var(--font-mono); font-size: 12px; color: #1a1d21; font-weight: 700;
   line-height: 1; margin-top: 1px; }

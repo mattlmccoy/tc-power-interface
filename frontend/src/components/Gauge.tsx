@@ -11,9 +11,9 @@ interface Props {
 // the viewBox, giving a flat/wide shallow arc and a long thin needle rising from below. Dense thin
 // "picket-fence" ticks (long/medium/short) with upright numerals above the arc, on a near-white face.
 const VBW = 360;
-const VBH = 132;
+const VBH = 176; // tall enough below the arc to show the long needle rising from the off-screen pivot
 const CX = 180;
-const CY = 350; // pivot far below the 132-tall viewBox → off-screen
+const CY = 350; // pivot far below the viewBox → off-screen (flat arc + long needle)
 const R = 300; // large radius → shallow flat arc
 const NUM_R = 320;
 const THETA = 30; // half-sweep (deg); ends ≈ CX ± R·sin(30) = ±150
@@ -39,10 +39,20 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
   const uy = -Math.cos(a);
   const px = Math.cos(a);
   const py = Math.sin(a);
-  const [tipx, tipy] = [CX + (R - 8) * ux, CY - (R - 8) * uy];
-  const bh = 1.5;
+  const [tipx, tipy] = [CX + (R - 8) * ux, CY + (R - 8) * uy]; // uy = -cos(a): +uy points UP to the arc
+  const bh = 2.2; // needle base half-width (thicker so the short visible segment reads clearly)
   const b1 = `${CX + bh * px},${CY + bh * py}`;
   const b2 = `${CX - bh * px},${CY - bh * py}`;
+
+  // Warning zones just outside the ticks: yellow 400-500 W, red 500-max.
+  const arcAt = (a0: number, a1: number, r: number) => {
+    const [x0, y0] = polar(a0, r);
+    const [x1, y1] = polar(a1, r);
+    return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+  };
+  const zoneR = R + 7;
+  const aWarn = gaugeAngle(Math.min(400, max), 0, max, -THETA, THETA);
+  const aDanger = gaugeAngle(Math.min(500, max), 0, max, -THETA, THETA);
 
   const ticks = [];
   for (let i = 0; i <= DIVS; i++) {
@@ -88,6 +98,12 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
     <div className="gauge-card">
       <div className="gauge-label">{label}</div>
       <svg viewBox={`0 0 ${VBW} ${VBH}`} className="gauge-svg" role="img" aria-label={`${label} ${v}`}>
+        {max > 400 ? (
+          <path d={arcAt(aWarn, aDanger, zoneR)} fill="none" stroke="#e0a83a" strokeWidth="5" />
+        ) : null}
+        {max > 500 ? (
+          <path d={arcAt(aDanger, THETA, zoneR)} fill="none" stroke="#cf3b2e" strokeWidth="5" />
+        ) : null}
         {ticks}
         <polygon points={`${b1} ${tipx.toFixed(1)},${tipy.toFixed(1)} ${b2}`} fill={INK} />
       </svg>
