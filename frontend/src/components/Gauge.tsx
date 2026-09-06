@@ -11,9 +11,9 @@ interface Props {
 // the viewBox, giving a flat/wide shallow arc and a long thin needle rising from below. Dense thin
 // "picket-fence" ticks (long/medium/short) with upright numerals above the arc, on a near-white face.
 const VBW = 360;
-const VBH = 176; // tall enough below the arc to show the long needle rising from the off-screen pivot
+const VBH = 138; // cropped just below the floating needle (bottom truncated — no long tail)
 const CX = 180;
-const CY = 350; // pivot far below the viewBox → off-screen (flat arc + long needle)
+const CY = 350; // virtual pivot far below → flat wide arc (the needle itself is truncated/floating)
 const R = 300; // large radius → shallow flat arc
 const NUM_R = 320;
 const THETA = 30; // half-sweep (deg); ends ≈ CX ± R·sin(30) = ±150
@@ -23,6 +23,7 @@ const MID_EVERY = 5;
 
 const INK = "#151515";
 const INK_MINOR = "#5b6067";
+const NEEDLE = "#c0392b"; // floating pointer
 const NUM_FONT = "'Helvetica Neue', Arial, sans-serif";
 
 function polar(deg: number, r: number): [number, number] {
@@ -35,14 +36,18 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
   const v = value ?? 0;
   const ang = gaugeAngle(v, 0, max, -THETA, THETA);
   const a = (ang * Math.PI) / 180;
-  const ux = Math.sin(a);
-  const uy = -Math.cos(a);
   const px = Math.cos(a);
-  const py = Math.sin(a);
-  const [tipx, tipy] = [CX + (R - 8) * ux, CY + (R - 8) * uy]; // uy = -cos(a): +uy points UP to the arc
-  const bh = 2.2; // needle base half-width (thicker so the short visible segment reads clearly)
-  const b1 = `${CX + bh * px},${CY + bh * py}`;
-  const b2 = `${CX - bh * px},${CY - bh * py}`;
+  const py = Math.sin(a); // perpendicular to the radial direction
+  // Floating pointer: a short thick tapered needle just inside the arc (bottom truncated — it does
+  // not reach the off-screen pivot), with a small hub at its base.
+  const [tipx, tipy] = polar(ang, R - 3);
+  const [basex, basey] = polar(ang, R - 46);
+  const bH = 3.4; // base half-width (thick)
+  const tH = 0.9; // tip half-width (near a point)
+  const nb1 = `${(basex + bH * px).toFixed(1)},${(basey + bH * py).toFixed(1)}`;
+  const nb2 = `${(basex - bH * px).toFixed(1)},${(basey - bH * py).toFixed(1)}`;
+  const nt1 = `${(tipx + tH * px).toFixed(1)},${(tipy + tH * py).toFixed(1)}`;
+  const nt2 = `${(tipx - tH * px).toFixed(1)},${(tipy - tH * py).toFixed(1)}`;
 
   // Warning zones just outside the ticks: yellow 400-500 W, red 500-max.
   const arcAt = (a0: number, a1: number, r: number) => {
@@ -105,7 +110,8 @@ export function Gauge({ label, value, max, unit = "W" }: Props) {
           <path d={arcAt(aDanger, THETA, zoneR)} fill="none" stroke="#cf3b2e" strokeWidth="5" />
         ) : null}
         {ticks}
-        <polygon points={`${b1} ${tipx.toFixed(1)},${tipy.toFixed(1)} ${b2}`} fill={INK} />
+        <polygon points={`${nb1} ${nt1} ${nt2} ${nb2}`} fill={NEEDLE} />
+        <circle cx={basex.toFixed(1)} cy={basey.toFixed(1)} r="4" fill={NEEDLE} />
       </svg>
       <div className="gauge-readout">
         {value === null ? "—" : v.toFixed(0)} <span className="gauge-unit">{unit}</span>
