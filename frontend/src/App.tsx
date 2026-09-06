@@ -654,14 +654,16 @@ export function App() {
                   <label className="field-label" htmlFor="sp">
                     Forward power setpoint (W)
                   </label>
-                  <div className="row">
+                  <div className="setpoint-entry">
                     <input
                       id="sp"
+                      className="setpoint-input"
                       type="number"
                       min={0}
                       value={setpointInput}
                       onChange={(e) => setSetpointInput(e.target.value)}
                     />
+                    <span className="setpoint-unit">W</span>
                     <button className="btn accent" onClick={applySetpoint} disabled={!connected}>
                       Apply
                     </button>
@@ -670,6 +672,15 @@ export function App() {
                     Ceiling {limits?.max_forward_w ?? "—"} W (clamped). Edit in Settings.
                   </div>
                   <div className="setpoint-ramp">
+                    <label className="switch" title="Ramp 0 → setpoint at the set rate">
+                      <input
+                        type="checkbox"
+                        checked={!!ramp?.running}
+                        disabled={!connected}
+                        onChange={(e) => (e.target.checked ? startRamp() : stopRamp())}
+                      />
+                      <span className="switch-slider" />
+                    </label>
                     <span className="cap-name">Ramp 0→setpoint @</span>
                     <input
                       type="number"
@@ -680,15 +691,6 @@ export function App() {
                       onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
                     />
                     <span className="cap-name">W/s</span>
-                    {ramp?.running ? (
-                      <button className="btn" onClick={stopRamp}>
-                        Stop
-                      </button>
-                    ) : (
-                      <button className="btn" onClick={startRamp} disabled={!connected}>
-                        Start ramp
-                      </button>
-                    )}
                   </div>
                   {ramp?.running ? (
                     <div className="hint mono">
