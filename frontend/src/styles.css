@@ -119,36 +119,42 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .gauge .fill.warn { background: var(--warn); }
 .gauge .fill.trip { background: var(--err); }
 
-/* Power row: RF control + active setpoint box (active tools together), then the reverse meter. */
-.power-row { display: flex; gap: 18px; align-items: stretch; flex-wrap: wrap; }
-.rfcontrol-box { flex: 0 0 auto; min-width: 210px; display: flex; flex-direction: column; }
-.rfcontrol-box .hint { margin-top: 6px; }
-/* Simple ramp toggle folded into the setpoint box: rate + start/stop (0 -> the setpoint above). */
-.setpoint-ramp { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-.setpoint-ramp input[type="number"] { width: 54px; text-align: right; }
+/* Power & control strip: three equal-height columns split by subtle dividers — RF control and the
+   forward-power setpoint (the active tools) side by side, then the reverse-power meter. Grid (not
+   flex-wrap) so it never breaks the meter onto its own sparse full-width row. */
+.power-row { display: grid; align-items: stretch;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(240px, 1.1fr) minmax(190px, 1fr); }
+.power-row > div { display: flex; flex-direction: column; min-width: 0; padding: 0 20px;
+  border-left: 1px solid var(--line); }
+.power-row > div:first-child { padding-left: 0; border-left: 0; }
+.power-row > div:last-child { padding-right: 0; }
+.power-row .field-label { margin-bottom: 8px; }
+.rfcontrol-box .hint { margin-top: 8px; }
+
+/* Setpoint column: the primary input, marked active with an accent input border (no heavy box). */
+.setpoint-box .row { margin-top: 2px; }
+.setpoint-box input[type="number"] { font-size: 22px; font-family: var(--font-mono);
+  text-align: right; padding: 9px 12px; border-color: var(--accent); }
+.setpoint-box .btn.accent { padding: 9px 18px; }
+.setpoint-box .hint { margin: 6px 0 0; }
+.setpoint-ramp { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: auto;
+  padding-top: 12px; }
+.setpoint-ramp input[type="number"] { width: 52px; text-align: right; }
 .setpoint-ramp .cap-name { width: auto; }
+
 /* Ramp-active badge on the dashboard (the AG manual's "R" main-screen marker). */
 .ramp-badge { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: #10131a;
   background: var(--accent); border-radius: 999px; padding: 3px 10px; letter-spacing: 0.03em;
   animation: tcp-blink 1.4s infinite; }
-.setpoint-box { flex: 0 0 auto; min-width: 280px; background: var(--panel);
-  border: 1px solid var(--accent); border-radius: var(--radius); padding: 12px 14px;
-  box-shadow: 0 0 0 1px rgba(224, 168, 58, 0.12); }
-.setpoint-box .row { margin-top: 4px; }
-.setpoint-box input[type="number"] { font-size: 20px; font-family: var(--font-mono);
-  text-align: right; padding: 8px 10px; }
-.setpoint-box .btn.accent { padding: 8px 16px; }
-.setpoint-box .hint { margin: 6px 0 0; }
-.revmeter-box { flex: 1 1 320px; display: flex; flex-direction: column; justify-content: center; }
-.revmeter-box .field-label { margin-bottom: 8px; }
 
-/* Compact reverse-power meter: value + a short fixed-width track, readable at a glance. */
-.revmeter { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.revmeter-value { font-family: var(--font-mono); font-size: 22px; font-weight: 700; min-width: 64px;
-  color: var(--fg); }
+/* Reverse-power column: a vertical block (big value, full-width bar, warn/trip) filling the height. */
+.revmeter-box { justify-content: center; }
+.revmeter { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+.revmeter-value { font-family: var(--font-mono); font-size: 30px; font-weight: 700; color: var(--fg);
+  line-height: 1; }
 .revmeter-value.zone-warn { color: var(--warn); }
 .revmeter-value.zone-trip { color: var(--err); }
-.revmeter-track { position: relative; width: 240px; height: 12px; border-radius: 999px;
+.revmeter-track { position: relative; width: 100%; height: 12px; border-radius: 999px;
   background: var(--bg-deep); overflow: hidden; }
 .revmeter-fill { height: 100%; background: var(--live); transition: width 120ms linear; }
 .revmeter-fill.warn { background: var(--warn); }
@@ -190,7 +196,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .btn:hover { border-color: var(--fg); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn.accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-.btn.danger { background: var(--err); color: var(--danger-ink); border-color: var(--err); }
+/* RF ON: a red OUTLINE so the solid-red E-STOP stays the dominant control; fills on hover. */
+.btn.danger { background: transparent; color: var(--err); border-color: var(--err); font-weight: 700; }
+.btn.danger:hover:not(:disabled) { background: var(--err); color: var(--danger-ink); }
 .btn.rec { background: var(--rec); color: var(--danger-ink); border-color: var(--rec); }
 .btn.full { width: 100%; }
 
