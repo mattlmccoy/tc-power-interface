@@ -6,6 +6,8 @@
 import type { FlirLinkResult } from "./format.ts";
 import { apiUrl, loadOperatorBase, saveOperatorBase } from "./operator.ts";
 import type {
+  MatchTunerConfig,
+  MatchTunerForm,
   RampConfig,
   RampForm,
   SafetyLimitsForm,
@@ -117,6 +119,13 @@ export const api = {
     put("/api/pulse", { on_ms, off_ms, power_w }),
   pulseStart: () => post("/api/pulse/start"),
   pulseStop: () => post("/api/pulse/stop"),
+  matchTuner: async (): Promise<MatchTunerConfig> =>
+    (await fetch(apiUrl(BASE, "/api/match-tuner"))).json(),
+  saveMatchTuner: (v: MatchTunerForm) => put("/api/match-tuner", v),
+  matchTunerStart: () => post("/api/match-tuner/start"),
+  matchTunerStop: () => post("/api/match-tuner/stop"),
+  matchTunerArm: () => post("/api/match-tuner/arm"),
+  matchTunerDisarm: () => post("/api/match-tuner/disarm"),
   autoLog: async (): Promise<{ enabled: boolean }> =>
     (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
   setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),
