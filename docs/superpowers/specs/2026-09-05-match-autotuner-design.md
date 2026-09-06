@@ -26,19 +26,27 @@ and `2026-09-04_FULLCAP_2windings`; see the `matching-network-model` memory):
 Because we have magnitude only (no phase), the loop resolves direction by **dithering**: nudge a cap
 a small step, read the change in reflected power, keep the move if it improved. System knowledge
 makes it fast and safe rather than blind:
-- **Tune is the primary, sensitive knob** — dithered with TINY steps (its gradient is strong), it
-  dominates convergence.
-- **Load is the secondary, broad knob** — dithered occasionally with larger steps.
+- **Both caps are needed together — this is a 2-D coordinated search, not tune-then-load.** In
+  practice T and L are trimmed *at the same time* to reach the perfect match: **tune (T) makes the
+  larger swings (coarse capture), load (L) finely trims in closer** — neither alone reaches the
+  minimum. So each iteration estimates the local gradient in **both** caps and steps in both, with a
+  **large/coarse step scale on T and a small/fine step scale on L** (reflecting their sensitivities),
+  rather than optimizing one axis to completion before the other.
 - **Feed-forward (later):** as reflected power creeps up monotonically during sinter, bias the search
   in the direction the optimum has been walking, so the loop anticipates instead of only reacting.
   (Starts as a placeholder — no VNA drift calibration is possible.)
 
 ## Sub-projects (each ships working, tested software)
 
-### S1 — Manual-mode lock (safety first, small)
+### S1 — Manual-mode lock + power-on-order guidance (safety first, small)
 Disabling "Manual tune mode" hands the caps to the forbidden built-in auto-tuner. Lock manual mode
 **on** by default; make turning it off an explicit, hard-confirmed action with a damage warning; never
 clear it automatically. Backend refuses/annotates; UI shows the warning.
+
+Also surface the **power-on order** (see the `rf-startup-sequence` memory): the **generator must be
+on BEFORE the matching network (AIT)** — AIT-first shifts the caps and ruins the tune. When the UI is
+opened **disconnected**, show this order (and ideally the full per-run checklist) so no one powers the
+AIT before the generator.
 
 ### S2 — Finer cap resolution + 0–5 units (prerequisite for tune precision)
 Tune needs ~0.01/5 ≈ **0.2%** resolution; today's `set_tune_capacity(percent:int)` + ±1% steppers are
