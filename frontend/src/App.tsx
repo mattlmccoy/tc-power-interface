@@ -38,6 +38,8 @@ export function App() {
   const [setpointInput, setSetpointInput] = useState("100");
   const [rampForm, setRampForm] = useState({ init_w: "0", target_w: "200", rate_w_per_s: "10" });
   const [timerMin, setTimerMin] = useState("30");
+  const [saveSlot, setSaveSlot] = useState("1");
+  const [activeCap, setActiveCap] = useState<"tune" | "load">("tune");
   const [tune, setTune] = useState(50);
   const [load, setLoad] = useState(50);
   const [manual, setManual] = useState(false);
@@ -198,6 +200,7 @@ export function App() {
   const thermal = status?.thermal;
   const ramp = status?.ramp;
   const timer = status?.timer;
+  const presets = status?.presets;
   const state = ctrl?.state ?? "disconnected";
   const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
   const faulted = state === "fault";
@@ -249,6 +252,19 @@ export function App() {
   async function stopTimer() {
     await api.timerStop();
   }
+  async function savePreset(slot: number) {
+    await api.presetSave(slot, Math.round(tune), Math.round(load));
+  }
+  async function recallPreset(slot: number) {
+    if (!manual) setManual(true);
+    const res = await api.presetRecall(slot);
+    if (!res.ok) return flash("recall failed: " + (await detail(res)));
+    const applied = (await res.json())?.applied;
+    if (applied) {
+      setTune(applied.tune_cap_percent);
+      setLoad(applied.load_cap_percent);
+    }
+  }
   async function toggleManual(on: boolean) {
     setManual(on);
     await api.manual(on);
@@ -276,6 +292,7 @@ export function App() {
   };
   const bumpTune = (d: number) => sendTune(clampPercent(tune + d));
   const bumpLoad = (d: number) => sendLoad(clampPercent(load + d));
+  const bumpActive = (d: number) => (activeCap === "tune" ? bumpTune(d) : bumpLoad(d));
   async function applyFlirLink(url: string, enabled: boolean) {
     try {
       const res = await api.setFlirLink(url.trim(), enabled);
@@ -657,6 +674,97 @@ export function App() {
                 disabled={!manual}
                 onChange={(e) => sendLoad(Number(e.target.value))}
               />
+
+              {/* MODE: in manual tuning, choose which cap the shared fine −/+ act on (the AG Plasma
+                  front-panel MODE button toggles LC/TC in MTUNE for faster tuning). */}
+              <div className="mode-row">
+                <span className="cap-name">MODE</span>
+                <div className="seg">
+                  <button
+                    className={activeCap === "tune" ? "seg-btn on" : "seg-btn"}
+                    disabled={!manual}
+                    onClick={() => setActiveCap("tune")}
+                  >
+                    TUNE
+                  </button>
+                  <button
+                    className={activeCap === "load" ? "seg-btn on" : "seg-btn"}
+                    disabled={!manual}
+                    onClick={() => setActiveCap("load")}
+                  >
+                    LOAD
+                  </button>
+                </div>
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpActive(-1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  −
+                </button>
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpActive(1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  +
+                </button>
+                <span className="hint" style={{ margin: 0 }}>
+                  fine-steps the active cap
+                </span>
+              </div>
+
+              {/* Software presets: recall stored caps in MANUAL mode (not the forbidden ATUNE). */}
+              <div className="field-label" style={{ marginTop: "12px", fontWeight: 700 }}>
+                Presets
+              </div>
+              <div className="preset-bank">
+                {Array.from({ length: presets?.num_slots ?? 9 }, (_, i) => i + 1).map((n) => {
+                  const slot = presets?.slots?.[String(n)] ?? null;
+                  return (
+                    <button
+                      key={n}
+                      className={slot ? "preset on" : "preset"}
+                      disabled={!connected || !slot}
+                      title={
+                        slot
+                          ? `T ${slot.tune_cap_percent}% · L ${slot.load_cap_percent}%`
+                          : "empty"
+                      }
+                      onClick={() => recallPreset(n)}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="preset-save">
+                <span className="hint" style={{ margin: 0 }}>
+                  Save current caps →
+                </span>
+                <select
+                  value={saveSlot}
+                  disabled={!connected}
+                  onChange={(e) => setSaveSlot(e.target.value)}
+                >
+                  {Array.from({ length: presets?.num_slots ?? 9 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={String(n)}>
+                      slot {n}
+                    </option>
+                  ))}
+                </select>
+                <button className="btn" disabled={!connected} onClick={() => savePreset(Number(saveSlot))}>
+                  Save
+                </button>
+              </div>
+              <div className="hint">
+                Recall applies the stored tune/load caps in manual mode — not the generator's native
+                ATUNE presets (forbidden here).
+              </div>
             </section>
 
             <section className="panel">

@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from tc_power_interface import __version__
 from tc_power_interface.control.controller import Controller
 from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, RampPlan
+from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
 from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
@@ -148,6 +149,11 @@ class TimerBody(BaseModel):
     minutes: float
 
 
+class PresetBody(BaseModel):
+    tune: float
+    load: float
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -225,6 +231,9 @@ def create_app(
         controller.add_listener(lambda _snap: timer.tick(poll_interval_s))
         app.state.timer = timer
 
+        # Software tuner-cap presets (recall applies caps in MANUAL mode, never ATUNE).
+        app.state.presets = PresetStore(experiments_root)
+
         controller.start()
         try:
             device_info = controller.identify()
@@ -265,6 +274,15 @@ def create_app(
     def _timer() -> TimerController:
         return cast(TimerController, app.state.timer)
 
+    def _presets() -> PresetStore:
+        return cast(PresetStore, app.state.presets)
+
+    def _presets_payload() -> dict[str, Any]:
+        return {
+            "slots": {str(k): v for k, v in _presets().list().items()},
+            "num_slots": NUM_SLOTS,
+        }
+
     # --- REST ------------------------------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -287,6 +305,7 @@ def create_app(
             "thermal": {**_thermal().snapshot(), "source": app.state.thermal_source},
             "ramp": _ramp().snapshot(),
             "timer": _timer().snapshot(),
+            "presets": _presets_payload(),
         }
 
     @app.get("/api/status")
@@ -451,6 +470,35 @@ def create_app(
     def timer_stop() -> dict[str, Any]:
         _timer().stop()
         return _timer().snapshot()
+
+    # --- tuner-cap presets (software; recall applies caps in MANUAL mode, never ATUNE) ------
+    @app.get("/api/presets")
+    def get_presets() -> dict[str, Any]:
+        return _presets_payload()
+
+    @app.put("/api/presets/{slot}")
+    def put_preset(slot: int, body: PresetBody) -> dict[str, Any]:
+        try:
+            _presets().save(slot, tune=body.tune, load=body.load)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _presets_payload()
+
+    @app.post("/api/presets/{slot}/recall")
+    def recall_preset(slot: int) -> dict[str, Any]:
+        try:
+            applied = _presets().recall(slot, _controller())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"applied": applied}
+
+    @app.delete("/api/presets/{slot}")
+    def delete_preset(slot: int) -> dict[str, Any]:
+        try:
+            _presets().clear(slot)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _presets_payload()
 
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:

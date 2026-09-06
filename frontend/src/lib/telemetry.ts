@@ -113,6 +113,17 @@ export interface TimerConfig {
   bounds: Record<string, [number, number]>;
 }
 
+/** One software tuner-cap preset slot. */
+export interface PresetSlot {
+  tune_cap_percent: number;
+  load_cap_percent: number;
+}
+
+export interface PresetsStatus {
+  slots: Record<string, PresetSlot | null>;
+  num_slots: number;
+}
+
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
@@ -120,6 +131,7 @@ export interface Status {
   thermal: ThermalStatus;
   ramp: RampStatus;
   timer: TimerStatus;
+  presets: PresetsStatus;
 }
 
 export interface Point {

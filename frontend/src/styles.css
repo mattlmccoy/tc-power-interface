@@ -179,3 +179,18 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .ramp-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ramp-actions .btn { flex: 0 0 auto; }
 .ramp-actions .hint { margin: 0; flex: 1 1 140px; }
+
+/* MODE (LC/TC active-field selector) + software preset bank in the matching panel. */
+.mode-row { display: flex; align-items: center; gap: 6px; margin: 10px 0 4px; }
+.seg { display: inline-flex; border: 1px solid var(--line-control); border-radius: 6px; overflow: hidden; }
+.seg-btn { border: 0; background: var(--panel); color: var(--muted); padding: 5px 10px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em; cursor: pointer; }
+.seg-btn.on { background: var(--accent); color: #10131a; }
+.seg-btn:disabled { opacity: 0.5; cursor: default; }
+.preset-bank { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; margin: 4px 0 8px; }
+.preset { border: 1px solid var(--line-control); background: var(--panel); color: var(--muted);
+  border-radius: 5px; padding: 7px 0; font-family: var(--font-mono); font-size: 13px; cursor: pointer; }
+.preset.on { border-color: var(--accent); color: var(--fg); box-shadow: inset 0 0 0 1px var(--accent); }
+.preset:disabled { cursor: default; }
+.preset-save { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.preset-save select { padding: 5px 6px; }
