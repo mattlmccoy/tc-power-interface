@@ -11,8 +11,10 @@ import type {
   SafetyLimitsForm,
   SafetyLimitsStatus,
   Status,
+  PulseConfig,
   ThermalPlanForm,
   ThermalPlanStatus,
+  TimerConfig,
 } from "./telemetry.ts";
 
 /** Shape of GET/POST /api/flir-link — the operator's link to the separate FLIR tool. */
@@ -42,7 +44,7 @@ export function setOperatorBase(base: string): void {
   BASE = loadOperatorBase(storage, { siteMode: SITE_MODE });
 }
 
-function send(method: "POST" | "PUT", path: string, body?: unknown): Promise<Response> {
+function send(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<Response> {
   const headers = new Headers(body !== undefined ? { "Content-Type": "application/json" } : {});
   headers.set("X-TCP-Client", "1");
   return fetch(apiUrl(BASE, path), {
@@ -58,6 +60,10 @@ function post(path: string, body?: unknown): Promise<Response> {
 
 function put(path: string, body?: unknown): Promise<Response> {
   return send("PUT", path, body);
+}
+
+function del(path: string): Promise<Response> {
+  return send("DELETE", path);
 }
 
 export async function detail(res: Response): Promise<string> {
@@ -97,6 +103,19 @@ export const api = {
   saveRamp: (v: RampForm) => put("/api/ramp", v),
   rampStart: () => post("/api/ramp/start"),
   rampStop: () => post("/api/ramp/stop"),
+  timer: async (): Promise<TimerConfig> => (await fetch(apiUrl(BASE, "/api/timer"))).json(),
+  saveTimer: (minutes: number) => put("/api/timer", { minutes }),
+  timerStart: () => post("/api/timer/start"),
+  timerStop: () => post("/api/timer/stop"),
+  presetSave: (slot: number, tune: number, load: number) =>
+    put(`/api/presets/${slot}`, { tune, load }),
+  presetRecall: (slot: number) => post(`/api/presets/${slot}/recall`),
+  presetDelete: (slot: number) => del(`/api/presets/${slot}`),
+  pulse: async (): Promise<PulseConfig> => (await fetch(apiUrl(BASE, "/api/pulse"))).json(),
+  savePulse: (on_ms: number, off_ms: number, power_w: number) =>
+    put("/api/pulse", { on_ms, off_ms, power_w }),
+  pulseStart: () => post("/api/pulse/start"),
+  pulseStop: () => post("/api/pulse/stop"),
   autoLog: async (): Promise<{ enabled: boolean }> =>
     (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
   setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),

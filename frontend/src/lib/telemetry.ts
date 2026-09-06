@@ -99,12 +99,57 @@ export interface RampConfig extends RampForm {
   bounds: Record<string, [number, number]>;
 }
 
+/** Live state of the auto-shutoff timer (N minutes -> RF off). */
+export interface TimerStatus {
+  running: boolean;
+  done: boolean;
+  minutes: number;
+  elapsed_s: number;
+  remaining_s: number;
+}
+
+export interface TimerConfig {
+  minutes: number;
+  bounds: Record<string, [number, number]>;
+}
+
+/** One software tuner-cap preset slot. */
+export interface PresetSlot {
+  tune_cap_percent: number;
+  load_cap_percent: number;
+}
+
+export interface PresetsStatus {
+  slots: Record<string, PresetSlot | null>;
+  num_slots: number;
+}
+
+/** Live state of the simulator-first PULSE (setpoint gated on/off). */
+export interface PulseStatus {
+  running: boolean;
+  on_ms: number;
+  off_ms: number;
+  power_w: number;
+  duty: number;
+  output_on: boolean;
+}
+
+export interface PulseConfig {
+  on_ms: number;
+  off_ms: number;
+  power_w: number;
+  bounds: Record<string, [number, number]>;
+}
+
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
   recording: { active: boolean; run: string | null };
   thermal: ThermalStatus;
   ramp: RampStatus;
+  timer: TimerStatus;
+  presets: PresetsStatus;
+  pulse: PulseStatus;
 }
 
 export interface Point {

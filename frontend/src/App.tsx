@@ -37,6 +37,10 @@ export function App() {
   };
   const [setpointInput, setSetpointInput] = useState("100");
   const [rampForm, setRampForm] = useState({ init_w: "0", target_w: "200", rate_w_per_s: "10" });
+  const [timerMin, setTimerMin] = useState("30");
+  const [saveSlot, setSaveSlot] = useState("1");
+  const [activeCap, setActiveCap] = useState<"tune" | "load">("tune");
+  const [pulseForm, setPulseForm] = useState({ on_ms: "1000", off_ms: "1000", power_w: "100" });
   const [tune, setTune] = useState(50);
   const [load, setLoad] = useState(50);
   const [manual, setManual] = useState(false);
@@ -196,6 +200,9 @@ export function App() {
   const recording = status?.recording;
   const thermal = status?.thermal;
   const ramp = status?.ramp;
+  const timer = status?.timer;
+  const presets = status?.presets;
+  const pulse = status?.pulse;
   const state = ctrl?.state ?? "disconnected";
   const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
   const faulted = state === "fault";
@@ -238,6 +245,39 @@ export function App() {
   async function stopRamp() {
     await api.rampStop();
   }
+  async function startTimer() {
+    const m = Number(timerMin);
+    if (Number.isNaN(m)) return flash("timer minutes must be a number");
+    await api.saveTimer(m);
+    await api.timerStart();
+  }
+  async function stopTimer() {
+    await api.timerStop();
+  }
+  async function savePreset(slot: number) {
+    await api.presetSave(slot, Math.round(tune), Math.round(load));
+  }
+  async function recallPreset(slot: number) {
+    if (!manual) setManual(true);
+    const res = await api.presetRecall(slot);
+    if (!res.ok) return flash("recall failed: " + (await detail(res)));
+    const applied = (await res.json())?.applied;
+    if (applied) {
+      setTune(applied.tune_cap_percent);
+      setLoad(applied.load_cap_percent);
+    }
+  }
+  async function startPulse() {
+    const on = Number(pulseForm.on_ms);
+    const off = Number(pulseForm.off_ms);
+    const pw = Number(pulseForm.power_w);
+    if ([on, off, pw].some((n) => Number.isNaN(n))) return flash("pulse values must be numbers");
+    await api.savePulse(on, off, pw);
+    await api.pulseStart();
+  }
+  async function stopPulse() {
+    await api.pulseStop();
+  }
   async function toggleManual(on: boolean) {
     setManual(on);
     await api.manual(on);
@@ -265,6 +305,7 @@ export function App() {
   };
   const bumpTune = (d: number) => sendTune(clampPercent(tune + d));
   const bumpLoad = (d: number) => sendLoad(clampPercent(load + d));
+  const bumpActive = (d: number) => (activeCap === "tune" ? bumpTune(d) : bumpLoad(d));
   async function applyFlirLink(url: string, enabled: boolean) {
     try {
       const res = await api.setFlirLink(url.trim(), enabled);
@@ -496,7 +537,7 @@ export function App() {
               </div>
               <div className="cards">
                 <div className="readout">
-                  <div className="label">DC bus</div>
+                  <div className="label">DC probe (bias)</div>
                   <div className="value">
                     {t?.dc_voltage != null ? `${t.dc_voltage.toFixed(0)} V` : "—"}
                   </div>
@@ -513,6 +554,12 @@ export function App() {
                   <div className="label">Leveling</div>
                   <div className="value">{t ? generatorModes(t.status).leveling : "—"}</div>
                 </div>
+              </div>
+              <div className="hint">
+                <strong>DC probe</strong> = plasma self-bias measured through the tuner (0–999 V).
+                ~0 V is expected here: a dielectric load (powder between plates) is not a plasma, so
+                no sheath rectifies a DC self-bias — match quality shows up in forward/reflected
+                power, not DC. A nonzero reading would signal arcing or a partial discharge.
               </div>
               <div className="hint">
                 Frequency {device?.frequency_hz ? (device.frequency_hz / 1e6).toFixed(2) : "—"} MHz ·
@@ -640,6 +687,97 @@ export function App() {
                 disabled={!manual}
                 onChange={(e) => sendLoad(Number(e.target.value))}
               />
+
+              {/* MODE: in manual tuning, choose which cap the shared fine −/+ act on (the AG Plasma
+                  front-panel MODE button toggles LC/TC in MTUNE for faster tuning). */}
+              <div className="mode-row">
+                <span className="cap-name">MODE</span>
+                <div className="seg">
+                  <button
+                    className={activeCap === "tune" ? "seg-btn on" : "seg-btn"}
+                    disabled={!manual}
+                    onClick={() => setActiveCap("tune")}
+                  >
+                    TUNE
+                  </button>
+                  <button
+                    className={activeCap === "load" ? "seg-btn on" : "seg-btn"}
+                    disabled={!manual}
+                    onClick={() => setActiveCap("load")}
+                  >
+                    LOAD
+                  </button>
+                </div>
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpActive(-1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  −
+                </button>
+                <button
+                  className="btn step-btn"
+                  disabled={!manual}
+                  onMouseDown={() => holdStep(() => bumpActive(1))}
+                  onMouseUp={stopRepeat}
+                  onMouseLeave={stopRepeat}
+                >
+                  +
+                </button>
+                <span className="hint" style={{ margin: 0 }}>
+                  fine-steps the active cap
+                </span>
+              </div>
+
+              {/* Software presets: recall stored caps in MANUAL mode (not the forbidden ATUNE). */}
+              <div className="field-label" style={{ marginTop: "12px", fontWeight: 700 }}>
+                Presets
+              </div>
+              <div className="preset-bank">
+                {Array.from({ length: presets?.num_slots ?? 9 }, (_, i) => i + 1).map((n) => {
+                  const slot = presets?.slots?.[String(n)] ?? null;
+                  return (
+                    <button
+                      key={n}
+                      className={slot ? "preset on" : "preset"}
+                      disabled={!connected || !slot}
+                      title={
+                        slot
+                          ? `T ${slot.tune_cap_percent}% · L ${slot.load_cap_percent}%`
+                          : "empty"
+                      }
+                      onClick={() => recallPreset(n)}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="preset-save">
+                <span className="hint" style={{ margin: 0 }}>
+                  Save current caps →
+                </span>
+                <select
+                  value={saveSlot}
+                  disabled={!connected}
+                  onChange={(e) => setSaveSlot(e.target.value)}
+                >
+                  {Array.from({ length: presets?.num_slots ?? 9 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={String(n)}>
+                      slot {n}
+                    </option>
+                  ))}
+                </select>
+                <button className="btn" disabled={!connected} onClick={() => savePreset(Number(saveSlot))}>
+                  Save
+                </button>
+              </div>
+              <div className="hint">
+                Recall applies the stored tune/load caps in manual mode — not the generator's native
+                ATUNE presets (forbidden here).
+              </div>
             </section>
 
             <section className="panel">
@@ -663,58 +801,63 @@ export function App() {
                 Ceiling {limits?.max_forward_w ?? "—"} W (values above are clamped). Edit in Settings.
               </div>
 
-              <div className="field-label" style={{ marginTop: "12px", fontWeight: 700 }}>
+              <div className="field-label" style={{ marginTop: "14px", fontWeight: 700 }}>
                 Power ramp
               </div>
-              <div className="cap-row">
-                <span className="cap-name">Init W</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={rampForm.init_w}
-                  disabled={ramp?.running}
-                  onChange={(e) => setRampForm({ ...rampForm, init_w: e.target.value })}
-                />
-                <span className="cap-name">Target W</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={rampForm.target_w}
-                  disabled={ramp?.running}
-                  onChange={(e) => setRampForm({ ...rampForm, target_w: e.target.value })}
-                />
+              <div className="ramp-grid">
+                <label className="ramp-field">
+                  <span>Init W</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={rampForm.init_w}
+                    disabled={ramp?.running}
+                    onChange={(e) => setRampForm({ ...rampForm, init_w: e.target.value })}
+                  />
+                </label>
+                <label className="ramp-field">
+                  <span>Target W</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={rampForm.target_w}
+                    disabled={ramp?.running}
+                    onChange={(e) => setRampForm({ ...rampForm, target_w: e.target.value })}
+                  />
+                </label>
+                <label className="ramp-field">
+                  <span>Rate W/s</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={rampForm.rate_w_per_s}
+                    disabled={ramp?.running}
+                    onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
+                  />
+                </label>
               </div>
-              <div className="cap-row">
-                <span className="cap-name">Rate W/s</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={99}
-                  value={rampForm.rate_w_per_s}
-                  disabled={ramp?.running}
-                  onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
-                />
+              <div className="ramp-actions">
                 {ramp?.running ? (
-                  <button className="btn full" onClick={stopRamp}>
+                  <button className="btn" onClick={stopRamp}>
                     Stop ramp
                   </button>
                 ) : (
-                  <button className="btn accent full" onClick={startRamp} disabled={!connected}>
+                  <button className="btn accent" onClick={startRamp} disabled={!connected}>
                     Start ramp
                   </button>
                 )}
+                {ramp?.running ? (
+                  <span className="hint mono">
+                    ramping {ramp.output_w} → {ramp.target_w} W @ {ramp.rate_w_per_s} W/s
+                    {ramp.done ? " · reached" : ""}
+                  </span>
+                ) : (
+                  <span className="hint">
+                    Ramps the setpoint init → target at the set W/s (1–99). Enable RF to deliver it.
+                  </span>
+                )}
               </div>
-              {ramp?.running ? (
-                <div className="hint mono">
-                  ramping {ramp.output_w} → {ramp.target_w} W @ {ramp.rate_w_per_s} W/s
-                  {ramp.done ? " · reached" : ""}
-                </div>
-              ) : (
-                <div className="hint">
-                  Ramps the setpoint from init to target at the given W/s (1–99). Enable RF to deliver
-                  it.
-                </div>
-              )}
             </section>
 
             <section className="panel">
@@ -731,6 +874,41 @@ export function App() {
                 {faulted
                   ? "RF-enable is blocked while faulted (protection latched)."
                   : "RF-enable prompts for confirmation. Protection commands RF off on any trip."}
+              </div>
+
+              <div className="field-label" style={{ marginTop: "14px", fontWeight: 700 }}>
+                Auto-shutoff timer
+              </div>
+              <div className="ramp-actions">
+                <label className="ramp-field" style={{ flex: "0 0 82px" }}>
+                  <span>Minutes</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={timerMin}
+                    disabled={timer?.running}
+                    onChange={(e) => setTimerMin(e.target.value)}
+                  />
+                </label>
+                {timer?.running ? (
+                  <button className="btn" onClick={stopTimer}>
+                    Cancel
+                  </button>
+                ) : (
+                  <button className="btn" onClick={startTimer} disabled={!connected}>
+                    Start timer
+                  </button>
+                )}
+                {timer?.running ? (
+                  <span className="hint mono">
+                    {Math.ceil(timer.remaining_s / 60)} min left → RF off
+                  </span>
+                ) : timer?.done ? (
+                  <span className="hint mono">timer elapsed · RF commanded off</span>
+                ) : (
+                  <span className="hint">Commands RF off after N minutes (1–99). Never enables RF.</span>
+                )}
               </div>
             </section>
 
@@ -1095,6 +1273,64 @@ export function App() {
                       Auto mode drives the RF <em>setpoint</em> within the plan ceiling. On real
                       hardware it drives only while armed and RF is on; a fault or RF-off disarms.
                       Set the trajectory in Settings → Thermal plan.
+                    </div>
+                  </section>
+
+                  <section className="panel">
+                    <h2>Pulse mode</h2>
+                    <div className="banner warn" style={{ margin: "0 0 12px" }}>
+                      <strong>Experimental — simulator only.</strong> Models the generator's PULSE
+                      waveform by gating the setpoint on/off; it never enables RF. The real unit's
+                      PULSE serial command is unverified, so this is not wired to hardware yet.
+                    </div>
+                    <div className="ramp-grid">
+                      <label className="ramp-field">
+                        <span>Time on (ms)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={9995}
+                          value={pulseForm.on_ms}
+                          disabled={pulse?.running}
+                          onChange={(e) => setPulseForm({ ...pulseForm, on_ms: e.target.value })}
+                        />
+                      </label>
+                      <label className="ramp-field">
+                        <span>Time off (ms)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={9995}
+                          value={pulseForm.off_ms}
+                          disabled={pulse?.running}
+                          onChange={(e) => setPulseForm({ ...pulseForm, off_ms: e.target.value })}
+                        />
+                      </label>
+                      <label className="ramp-field">
+                        <span>Power (W)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={pulseForm.power_w}
+                          disabled={pulse?.running}
+                          onChange={(e) => setPulseForm({ ...pulseForm, power_w: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                    <div className="ramp-actions">
+                      {pulse?.running ? (
+                        <button className="btn" onClick={stopPulse}>
+                          Stop pulse
+                        </button>
+                      ) : (
+                        <button className="btn accent" onClick={startPulse} disabled={!connected}>
+                          Start pulse
+                        </button>
+                      )}
+                      <span className="hint mono" style={{ margin: 0 }}>
+                        duty {pulse ? Math.round(pulse.duty * 100) : "—"}%
+                        {pulse?.running ? ` · ${pulse.output_on ? "ON" : "off"}` : ""}
+                      </span>
                     </div>
                   </section>
                 </div>
