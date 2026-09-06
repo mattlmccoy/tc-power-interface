@@ -14,6 +14,7 @@ import struct
 
 from tc_power_interface.device import register_transport
 from tc_power_interface.device.base import Transport
+from tc_power_interface.device.reflection import reflected_fraction
 from tc_power_interface.protocol import codec
 
 
@@ -27,10 +28,13 @@ class SimulatedCxnTransport(Transport):
         self,
         *,
         address: int = 0,
-        reflected_fraction: float = 0.01,
+        reflected_fraction: float | None = None,
         temperature_c: float = 30.0,
     ) -> None:
         self.address = address
+        # When set to a constant, reverse power is that fixed fraction of forward (deterministic
+        # fault-injection for tests). Left as None, reverse power follows the cap-dependent
+        # reflection well below, so the software match-tuner has real work to do.
         self._reflected_fraction = reflected_fraction
         self._temperature_c = temperature_c
         # device state
@@ -41,6 +45,12 @@ class SimulatedCxnTransport(Transport):
         self.load_capacity = 0.0
         self.tune_capacity = 0.0
         self.interlock_open = False
+        # Reflection well: the optimum is offset from the caps' 0/0 start so the tuner must search,
+        # and drifts slowly while RF is on to emulate the load changing during sinter.
+        self.t_opt = 62.0
+        self.l_opt = 40.0
+        self._t_drift = 0.004  # %/read while RF on (tune optimum walks slowly)
+        self._l_drift = 0.02   # %/read while RF on (load optimum walks faster)
         # identity
         self.id_string = "AG 0613"
         self.serial_number = "SIM-0001"
@@ -70,7 +80,15 @@ class SimulatedCxnTransport(Transport):
         if not (self.control_granted and self.rf_on):
             return (0.0, 0.0, 0.0)
         fwd = float(self.setpoint_w)
-        rev = fwd * self._reflected_fraction
+        if self._reflected_fraction is not None:
+            # Deterministic fixed-fraction override (fault-injection).
+            rev = fwd * self._reflected_fraction
+            return (fwd, rev, fwd - rev)
+        # Drift the optimum while RF is on (bounded so it stays reachable), then evaluate the well.
+        self.t_opt = min(90.0, max(10.0, self.t_opt + self._t_drift))
+        self.l_opt = min(90.0, max(10.0, self.l_opt + self._l_drift))
+        frac = reflected_fraction(self.tune_capacity, self.load_capacity, self.t_opt, self.l_opt)
+        rev = fwd * frac
         return (fwd, rev, fwd - rev)
 
     def _status_word(self) -> int:

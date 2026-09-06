@@ -50,14 +50,17 @@ class TestTelemetry:
         assert codec.Status.RF_ENABLED not in t.status
         assert t.host_timestamp_ns > 0
 
-    def test_setpoint_and_rf_on_produce_forward_power(self, device: CxnDevice):
+    def test_setpoint_and_rf_on_produce_forward_power(self):
+        # Pin a constant reflected fraction so this exercises the forward/reverse/load power
+        # decomposition deterministically (the default sim now uses the cap-dependent well).
+        device = CxnDevice(create_transport("simulated", reflected_fraction=0.01))
         device.request_control()
         device.set_setpoint(150)
         device.set_rf(True)
         t = device.read_telemetry()
         assert t.rf_on is True
         assert t.forward_w == 150.0
-        # simulated reflected fraction is 1%
+        # pinned reflected fraction is 1%
         assert t.reverse_w == pytest.approx(1.5)
         assert t.reflected_fraction == pytest.approx(0.01, abs=1e-3)
         assert t.load_w == pytest.approx(148.5)
