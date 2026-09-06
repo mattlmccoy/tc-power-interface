@@ -145,10 +145,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   line-height: 1; margin-top: 1px; }
 .gauge-unit { font-size: 8px; color: #666; font-weight: 400; }
 
-/* --- internal-temperature progress bar (room -> trip, green->red) --- */
-.temp-bar { height: 8px; border-radius: 4px; background: var(--line-strong); overflow: hidden;
-  margin-top: 8px; }
-.temp-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s ease, background 0.3s ease; }
+/* --- internal-temperature progress bar (room -> trip, green->red), right of the readout --- */
+.temp-row { display: flex; align-items: center; gap: 16px; }
+.temp-bar-wrap { flex: 1; }
+.temp-bar { height: 10px; border-radius: 5px; background: var(--line-strong); overflow: hidden; }
+.temp-bar-fill { height: 100%; border-radius: 5px; transition: width 0.3s ease, background 0.3s ease; }
 .temp-bar-legend { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted);
   margin-top: 3px; }
 

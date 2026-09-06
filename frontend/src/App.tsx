@@ -445,24 +445,27 @@ export function App() {
               <h2>Generator</h2>
               <div className="readout" style={{ marginBottom: "8px" }}>
                 <div className="label">Internal temperature</div>
-                <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
-                {t && limits ? (
-                  <>
-                    <div className="temp-bar">
-                      <div
-                        className="temp-bar-fill"
-                        style={{
-                          width: `${tempBar(t.temperature_c, 25, limits.temperature_c_trip).fraction * 100}%`,
-                          background: tempBar(t.temperature_c, 25, limits.temperature_c_trip).color,
-                        }}
-                      />
+                <div className="temp-row">
+                  <div className="value">{t ? fmtTemp(t.temperature_c) : "—"}</div>
+                  {t && limits ? (
+                    <div className="temp-bar-wrap">
+                      <div className="temp-bar">
+                        <div
+                          className="temp-bar-fill"
+                          style={{
+                            width: `${tempBar(t.temperature_c, 25, limits.temperature_c_trip).fraction * 100}%`,
+                            background: tempBar(t.temperature_c, 25, limits.temperature_c_trip)
+                              .color,
+                          }}
+                        />
+                      </div>
+                      <div className="temp-bar-legend">
+                        <span>25 °C</span>
+                        <span>trip {limits.temperature_c_trip.toFixed(0)} °C</span>
+                      </div>
                     </div>
-                    <div className="temp-bar-legend">
-                      <span>25 °C</span>
-                      <span>trip {limits.temperature_c_trip.toFixed(0)} °C</span>
-                    </div>
-                  </>
-                ) : null}
+                  ) : null}
+                </div>
               </div>
               <div className="cards">
                 <div className="readout">
