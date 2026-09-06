@@ -35,6 +35,7 @@ export function App() {
       /* storage unavailable — keep in-memory only */
     }
   };
+  const [showStartup, setShowStartup] = useState(true); // startup-order popup, every boot
   const [setpointInput, setSetpointInput] = useState("100");
   const [rampForm, setRampForm] = useState({ init_w: "0", target_w: "200", rate_w_per_s: "10" });
   const [timerMin, setTimerMin] = useState("30");
@@ -53,7 +54,13 @@ export function App() {
   const [flirEnabled, setFlirEnabled] = useState(false);
   const [flirLast, setFlirLast] = useState<FlirLink["last_result"] | null>(null);
   const [limitsStatus, setLimitsStatus] = useState<SafetyLimitsStatus | null>(null);
-  const [limForm, setLimForm] = useState({ max_forward_w: "", max_reflected_w: "", temperature_c_trip: "" });
+  const [limForm, setLimForm] = useState({
+    max_forward_w: "",
+    max_reflected_w: "",
+    temperature_c_trip: "",
+    forward_caution_w: "",
+    forward_danger_w: "",
+  });
   const [thermalPlanStatus, setThermalPlanStatus] = useState<ThermalPlanStatus | null>(null);
   const [thermalForm, setThermalForm] = useState({
     target_c: "",
@@ -81,6 +88,8 @@ export function App() {
       max_forward_w: String(s.max_forward_w),
       max_reflected_w: String(s.max_reflected_w),
       temperature_c_trip: String(s.temperature_c_trip),
+      forward_caution_w: String(s.forward_caution_w),
+      forward_danger_w: String(s.forward_danger_w),
     });
   };
 
@@ -216,7 +225,8 @@ export function App() {
   const zone = t ? reflectedZone(reflW, maxRefl * 0.5, maxRefl) : "ok";
   const reflFillPct = Math.min(100, (reflW / maxRefl) * 100);
   const powerCeil = device?.power_limit_w ?? 600;
-  const fwdLimit = limits?.max_forward_w ?? null;
+  const fwdCaution = limits?.forward_caution_w ?? null;
+  const fwdDanger = limits?.forward_danger_w ?? null;
   const requested = Number.isNaN(Number(setpointInput)) ? null : Number(setpointInput);
 
   async function rfOn() {
@@ -342,6 +352,8 @@ export function App() {
       max_forward_w: Number(limForm.max_forward_w),
       max_reflected_w: Number(limForm.max_reflected_w),
       temperature_c_trip: Number(limForm.temperature_c_trip),
+      forward_caution_w: Number(limForm.forward_caution_w),
+      forward_danger_w: Number(limForm.forward_danger_w),
     };
     if (Object.values(body).some((n) => Number.isNaN(n))) return flash("limits must be numbers");
     const res = await api.saveSafetyLimits(body);
@@ -448,15 +460,6 @@ export function App() {
         {() => (
           <>
             {view === "dashboard" ? (
-          <>
-          {!connected ? (
-            <div className="banner startup">
-              <strong>Power-on order — generator first, then AIT.</strong> Turning the AIT (matching
-              network) on before the generator shifts the caps and ruins the tune. Per run: load part
-              → connect VNA → assess S11 → AIT on → match T/L → AIT off → unplug VNA → N-cable to
-              generator → safety check → <strong>generator on → wait for boot → AIT on</strong>.
-            </div>
-          ) : null}
           <div className="main">
           <div className="col">
             <section className="panel">
@@ -475,10 +478,34 @@ export function App() {
               </div>
               {showGauges ? (
                 <div className="gauge-grid" style={{ marginTop: "10px" }}>
-                  <Gauge label="Requested" value={requested} max={powerCeil} limit={fwdLimit} />
-                  <Gauge label="Forward" value={t ? t.forward_w : null} max={powerCeil} limit={fwdLimit} />
-                  <Gauge label="Reverse" value={t ? t.reverse_w : null} max={powerCeil} limit={maxRefl} />
-                  <Gauge label="Load" value={t ? t.load_w : null} max={powerCeil} limit={fwdLimit} />
+                  <Gauge
+                    label="Requested"
+                    value={requested}
+                    max={powerCeil}
+                    caution={fwdCaution}
+                    danger={fwdDanger}
+                  />
+                  <Gauge
+                    label="Forward"
+                    value={t ? t.forward_w : null}
+                    max={powerCeil}
+                    caution={fwdCaution}
+                    danger={fwdDanger}
+                  />
+                  <Gauge
+                    label="Reverse"
+                    value={t ? t.reverse_w : null}
+                    max={powerCeil}
+                    caution={maxRefl * 0.5}
+                    danger={maxRefl}
+                  />
+                  <Gauge
+                    label="Load"
+                    value={t ? t.load_w : null}
+                    max={powerCeil}
+                    caution={fwdCaution}
+                    danger={fwdDanger}
+                  />
                 </div>
               ) : (
                 <div className="cards" style={{ marginTop: "10px" }}>
@@ -527,7 +554,7 @@ export function App() {
               </div>
             </section>
 
-            <section className="panel">
+            <section className="panel gen-panel">
               <h2>Generator</h2>
               <div className="readout" style={{ marginBottom: "8px" }}>
                 <div className="label">Internal temperature</div>
@@ -991,7 +1018,6 @@ export function App() {
             </section>
           </div>
         </div>
-          </>
       ) : view === "settings" ? (
         <div className="main">
           <div className="col">
@@ -1026,6 +1052,26 @@ export function App() {
                     type="number"
                     value={limForm.temperature_c_trip}
                     onChange={(e) => setLimForm({ ...limForm, temperature_c_trip: e.target.value })}
+                  />
+                  <div className="hint" style={{ marginTop: "12px" }}>
+                    Gauge zones (display only — the forward power dials shade at these watts; they do
+                    not change protection).
+                  </div>
+                  <label className="field-label" style={{ marginTop: "8px" }}>
+                    Caution — yellow from (W){boundHint(limitsStatus.bounds, "forward_caution_w")}
+                  </label>
+                  <input
+                    type="number"
+                    value={limForm.forward_caution_w}
+                    onChange={(e) => setLimForm({ ...limForm, forward_caution_w: e.target.value })}
+                  />
+                  <label className="field-label" style={{ marginTop: "10px" }}>
+                    Danger — red from (W){boundHint(limitsStatus.bounds, "forward_danger_w")}
+                  </label>
+                  <input
+                    type="number"
+                    value={limForm.forward_danger_w}
+                    onChange={(e) => setLimForm({ ...limForm, forward_danger_w: e.target.value })}
                   />
                   <button
                     className="btn accent full"
@@ -1374,6 +1420,41 @@ export function App() {
       </ErrorBoundary>
 
       {toast ? <div className="toast">{toast}</div> : null}
+
+      {showStartup ? (
+        <div className="modal-overlay" onClick={() => setShowStartup(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Power-on order</h2>
+              <button
+                className="modal-close"
+                onClick={() => setShowStartup(false)}
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="modal-lead">
+              <strong>Turn the generator ON before the AIT (matching network).</strong> Powering the
+              AIT first shifts the caps and ruins the tune.
+            </p>
+            <ol className="modal-steps">
+              <li>Load the part into the electrodes inside the chamber.</li>
+              <li>Connect the VNA and assess the match (S11).</li>
+              <li>Turn on the AIT; adjust tune / load to reach a match.</li>
+              <li>Turn off the AIT; unplug the VNA.</li>
+              <li>Plug the N-type cable into the RF generator.</li>
+              <li>Confirm everything is in place and safe.</li>
+              <li>
+                <strong>Turn on the generator → wait for boot → turn on the AIT.</strong>
+              </li>
+            </ol>
+            <button className="btn accent full" onClick={() => setShowStartup(false)}>
+              Got it
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
