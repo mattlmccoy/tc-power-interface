@@ -2,13 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  capVolts,
   clampCap,
   clampPercent,
   gaugeAngle,
   generatorModes,
+  LOAD_VOLTS,
   statusLeds,
   tempBar,
+  TUNE_VOLTS,
 } from "./instrument.ts";
+
+test("capVolts maps cap % to control voltage (validated: TC 36%->1.85V, LC 49%->~2.47V)", () => {
+  // Bench match 2026-09-04 (S1P title T1.85/L2.46 at generator TC=36%, LC=49%).
+  assert.ok(Math.abs(capVolts(36, TUNE_VOLTS) - 1.85) < 0.01);
+  assert.ok(Math.abs(capVolts(49, LOAD_VOLTS) - 2.47) < 0.01);
+  assert.equal(capVolts(0, TUNE_VOLTS), 0.12);
+  assert.equal(capVolts(100, LOAD_VOLTS), 4.93);
+  // clamps out-of-range
+  assert.equal(capVolts(-10, TUNE_VOLTS), 0.12);
+  assert.equal(capVolts(150, TUNE_VOLTS), 4.92);
+});
 
 test("tempBar: fraction from room->max, green at bottom to red at top, clamped", () => {
   assert.equal(tempBar(25, 25, 70).fraction, 0);

@@ -25,6 +25,19 @@ export function clampCap(v: number): number {
   return Math.max(0, Math.min(100, Math.round(v * 10) / 10));
 }
 
+// Physical AIT-600 cap control-voltage ranges (~0-5 V). The generator reports position as 0-100%;
+// these map % -> the control voltage the operator reads on the tuner. Validated against the
+// 2026-09-04 bench match (S1P title T1.85/L2.46 measured at generator TC=36%, LC=49%).
+export const TUNE_VOLTS: [number, number] = [0.12, 4.92];
+export const LOAD_VOLTS: [number, number] = [0.11, 4.93];
+
+/** Map a cap percentage (0-100) to its control voltage, linearly across ``range`` (clamped). */
+export function capVolts(percent: number, range: [number, number]): number {
+  const [lo, hi] = range;
+  const p = Math.max(0, Math.min(100, percent));
+  return lo + (p / 100) * (hi - lo);
+}
+
 export type LedTone = "ok" | "warn" | "off";
 export interface Led {
   label: string;

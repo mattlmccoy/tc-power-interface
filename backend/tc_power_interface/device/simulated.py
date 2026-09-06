@@ -30,8 +30,12 @@ class SimulatedCxnTransport(Transport):
         address: int = 0,
         reflected_fraction: float | None = None,
         temperature_c: float = 30.0,
+        deny_control: bool = False,
     ) -> None:
         self.address = address
+        #: When True the device refuses the control lease (models a generator that is powered off /
+        #: not connected) so the operator's resilience can be exercised.
+        self._deny_control = deny_control
         # When set to a constant, reverse power is that fixed fraction of forward (deterministic
         # fault-injection for tests). Left as None, reverse power follows the cap-dependent
         # reflection well below, so the software match-tuner has real work to do.
@@ -119,7 +123,7 @@ class SimulatedCxnTransport(Transport):
         p1 = command[2:4]
         # dispatch
         if mnem == b"BC":  # request/release control (returns a 2-byte status)
-            granted = p1 == b"\x55\x55"
+            granted = p1 == b"\x55\x55" and not self._deny_control
             self.control_granted = granted
             if not granted:
                 self.rf_on = False  # release forces safe defaults

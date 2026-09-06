@@ -7,7 +7,7 @@ import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
-import { clampCap, generatorModes, tempBar } from "./lib/instrument.ts";
+import { capVolts, clampCap, generatorModes, LOAD_VOLTS, tempBar, TUNE_VOLTS } from "./lib/instrument.ts";
 import { wsUrl } from "./lib/operator.ts";
 import { TraceBuffer } from "./lib/telemetry.ts";
 import type { Point, SafetyLimitsStatus, Status, ThermalPlanStatus } from "./lib/telemetry.ts";
@@ -377,12 +377,16 @@ export function App() {
       forward_danger_w: Number(limForm.forward_danger_w),
     };
     if (Object.values(body).some((n) => Number.isNaN(n))) return flash("limits must be numbers");
-    const res = await api.saveSafetyLimits(body);
-    if (res.ok) {
-      fillLimForm((await res.json()) as SafetyLimitsStatus);
-      flash("safety limits saved");
-    } else {
-      flash(await detail(res));
+    try {
+      const res = await api.saveSafetyLimits(body);
+      if (res.ok) {
+        fillLimForm((await res.json()) as SafetyLimitsStatus);
+        flash("safety limits saved");
+      } else {
+        flash(await detail(res));
+      }
+    } catch {
+      flash("could not reach operator — is it running?");
     }
   }
   async function saveThermalPlan() {
@@ -395,12 +399,16 @@ export function App() {
       done_below_c: Number(thermalForm.done_below_c),
     };
     if (Object.values(body).some((n) => Number.isNaN(n))) return flash("thermal plan must be numbers");
-    const res = await api.saveThermalPlan(body);
-    if (res.ok) {
-      fillThermalForm((await res.json()) as ThermalPlanStatus);
-      flash("thermal plan saved");
-    } else {
-      flash(await detail(res));
+    try {
+      const res = await api.saveThermalPlan(body);
+      if (res.ok) {
+        fillThermalForm((await res.json()) as ThermalPlanStatus);
+        flash("thermal plan saved");
+      } else {
+        flash(await detail(res));
+      }
+    } catch {
+      flash("could not reach operator — is it running?");
     }
   }
   async function startThermal() {
@@ -721,7 +729,10 @@ export function App() {
                 </button>
                 <span className="cap-name">%</span>
                 <span className="cap-readback">
-                  act {t?.tune_cap_percent != null ? t.tune_cap_percent.toFixed(1) : "—"}%
+                  act{" "}
+                  {t?.tune_cap_percent != null
+                    ? `${t.tune_cap_percent.toFixed(1)}% · ${capVolts(t.tune_cap_percent, TUNE_VOLTS).toFixed(2)} V`
+                    : "—"}
                 </span>
               </div>
               <input
@@ -764,7 +775,10 @@ export function App() {
                 </button>
                 <span className="cap-name">%</span>
                 <span className="cap-readback">
-                  act {t?.load_cap_percent != null ? t.load_cap_percent.toFixed(1) : "—"}%
+                  act{" "}
+                  {t?.load_cap_percent != null
+                    ? `${t.load_cap_percent.toFixed(1)}% · ${capVolts(t.load_cap_percent, LOAD_VOLTS).toFixed(2)} V`
+                    : "—"}
                 </span>
               </div>
               <input
@@ -1173,7 +1187,6 @@ export function App() {
                     className="btn accent full"
                     style={{ marginTop: "12px" }}
                     onClick={saveLimits}
-                    disabled={!connected}
                   >
                     Save limits
                   </button>
@@ -1248,7 +1261,6 @@ export function App() {
                     className="btn accent full"
                     style={{ marginTop: "12px" }}
                     onClick={saveThermalPlan}
-                    disabled={!connected}
                   >
                     Save thermal plan
                   </button>

@@ -288,10 +288,13 @@ def create_app(
         controller.add_listener(lambda snap: match_tuner.tick(poll_interval_s, _mt_telemetry(snap)))
         app.state.match_tuner = match_tuner
 
-        controller.start()
+        # Start polling, but tolerate a device that won't connect (generator off / not plugged in):
+        # keep serving so limits/plan can be configured before the hardware is attached. The
+        # controller simply stays DISCONNECTED; settings routes don't touch the device.
         try:
+            controller.start()
             device_info = controller.identify()
-        except Exception:  # noqa: BLE001 - identity is best-effort; keep serving
+        except Exception:  # noqa: BLE001 - device may be absent; serve anyway
             device_info = {}
 
         app.state.controller = controller
