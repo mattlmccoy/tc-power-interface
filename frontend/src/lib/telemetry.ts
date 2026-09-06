@@ -79,11 +79,32 @@ export interface ThermalPlanStatus extends ThermalPlanForm {
   bounds: Record<string, [number, number]>;
 }
 
+/** Live state of the software power ramp (init -> target at W/s). */
+export interface RampStatus {
+  running: boolean;
+  done: boolean;
+  output_w: number;
+  init_w: number;
+  target_w: number;
+  rate_w_per_s: number;
+}
+
+export interface RampForm {
+  init_w: number;
+  target_w: number;
+  rate_w_per_s: number;
+}
+
+export interface RampConfig extends RampForm {
+  bounds: Record<string, [number, number]>;
+}
+
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
   recording: { active: boolean; run: string | null };
   thermal: ThermalStatus;
+  ramp: RampStatus;
 }
 
 export interface Point {
