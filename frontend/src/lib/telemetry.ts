@@ -99,12 +99,27 @@ export interface RampConfig extends RampForm {
   bounds: Record<string, [number, number]>;
 }
 
+/** Live state of the auto-shutoff timer (N minutes -> RF off). */
+export interface TimerStatus {
+  running: boolean;
+  done: boolean;
+  minutes: number;
+  elapsed_s: number;
+  remaining_s: number;
+}
+
+export interface TimerConfig {
+  minutes: number;
+  bounds: Record<string, [number, number]>;
+}
+
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
   recording: { active: boolean; run: string | null };
   thermal: ThermalStatus;
   ramp: RampStatus;
+  timer: TimerStatus;
 }
 
 export interface Point {

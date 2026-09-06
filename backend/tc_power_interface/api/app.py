@@ -32,6 +32,7 @@ from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
 from tc_power_interface.control.thermal_loop import THERMAL_BOUNDS, ThermalController, ThermalPlan
 from tc_power_interface.control.thermal_store import load_plan, save_plan
+from tc_power_interface.control.timer import TIMER_BOUNDS, TimerController, TimerPlan
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
 from tc_power_interface.integration.flir_link import FlirLink
@@ -143,6 +144,10 @@ class RampBody(BaseModel):
     rate_w_per_s: float
 
 
+class TimerBody(BaseModel):
+    minutes: float
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -215,6 +220,11 @@ def create_app(
         controller.add_listener(lambda _snap: ramp.tick(poll_interval_s))
         app.state.ramp = ramp
 
+        # Auto-shutoff timer (1-99 min -> RF off); ticks from the poll. Only ever disables RF.
+        timer = TimerController(controller, plan=TimerPlan(minutes=10))
+        controller.add_listener(lambda _snap: timer.tick(poll_interval_s))
+        app.state.timer = timer
+
         controller.start()
         try:
             device_info = controller.identify()
@@ -252,6 +262,9 @@ def create_app(
     def _ramp() -> RampController:
         return cast(RampController, app.state.ramp)
 
+    def _timer() -> TimerController:
+        return cast(TimerController, app.state.timer)
+
     # --- REST ------------------------------------------------------------------------------
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -273,6 +286,7 @@ def create_app(
             },
             "thermal": {**_thermal().snapshot(), "source": app.state.thermal_source},
             "ramp": _ramp().snapshot(),
+            "timer": _timer().snapshot(),
         }
 
     @app.get("/api/status")
@@ -411,6 +425,32 @@ def create_app(
     def ramp_stop() -> dict[str, Any]:
         _ramp().stop()
         return _ramp().snapshot()
+
+    # --- auto-shutoff timer ----------------------------------------------------------------
+    def _timer_payload() -> dict[str, Any]:
+        return {
+            "minutes": _timer().plan.minutes,
+            "bounds": {k: [v[0], v[1]] for k, v in TIMER_BOUNDS.items()},
+        }
+
+    @app.get("/api/timer")
+    def get_timer() -> dict[str, Any]:
+        return _timer_payload()
+
+    @app.put("/api/timer")
+    def put_timer(body: TimerBody) -> dict[str, Any]:
+        _timer().plan = TimerPlan.bounded(minutes=body.minutes)
+        return _timer_payload()
+
+    @app.post("/api/timer/start")
+    def timer_start() -> dict[str, Any]:
+        _timer().start()
+        return _timer().snapshot()
+
+    @app.post("/api/timer/stop")
+    def timer_stop() -> dict[str, Any]:
+        _timer().stop()
+        return _timer().snapshot()
 
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:

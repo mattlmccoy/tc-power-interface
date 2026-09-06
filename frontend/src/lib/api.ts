@@ -13,6 +13,7 @@ import type {
   Status,
   ThermalPlanForm,
   ThermalPlanStatus,
+  TimerConfig,
 } from "./telemetry.ts";
 
 /** Shape of GET/POST /api/flir-link — the operator's link to the separate FLIR tool. */
@@ -97,6 +98,10 @@ export const api = {
   saveRamp: (v: RampForm) => put("/api/ramp", v),
   rampStart: () => post("/api/ramp/start"),
   rampStop: () => post("/api/ramp/stop"),
+  timer: async (): Promise<TimerConfig> => (await fetch(apiUrl(BASE, "/api/timer"))).json(),
+  saveTimer: (minutes: number) => put("/api/timer", { minutes }),
+  timerStart: () => post("/api/timer/start"),
+  timerStop: () => post("/api/timer/stop"),
   autoLog: async (): Promise<{ enabled: boolean }> =>
     (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
   setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),
