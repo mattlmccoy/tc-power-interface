@@ -119,8 +119,18 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .gauge .fill.warn { background: var(--warn); }
 .gauge .fill.trip { background: var(--err); }
 
-/* Power row: a promoted, active setpoint box on the left, the reverse-power meter on the right. */
+/* Power row: RF control + active setpoint box (active tools together), then the reverse meter. */
 .power-row { display: flex; gap: 18px; align-items: stretch; flex-wrap: wrap; }
+.rfcontrol-box { flex: 0 0 auto; min-width: 210px; display: flex; flex-direction: column; }
+.rfcontrol-box .hint { margin-top: 6px; }
+/* Simple ramp toggle folded into the setpoint box: rate + start/stop (0 -> the setpoint above). */
+.setpoint-ramp { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.setpoint-ramp input[type="number"] { width: 54px; text-align: right; }
+.setpoint-ramp .cap-name { width: auto; }
+/* Ramp-active badge on the dashboard (the AG manual's "R" main-screen marker). */
+.ramp-badge { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: #10131a;
+  background: var(--accent); border-radius: 999px; padding: 3px 10px; letter-spacing: 0.03em;
+  animation: tcp-blink 1.4s infinite; }
 .setpoint-box { flex: 0 0 auto; min-width: 280px; background: var(--panel);
   border: 1px solid var(--accent); border-radius: var(--radius); padding: 12px 14px;
   box-shadow: 0 0 0 1px rgba(224, 168, 58, 0.12); }

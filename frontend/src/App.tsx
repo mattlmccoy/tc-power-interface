@@ -298,13 +298,11 @@ export function App() {
     }
   }
   async function startRamp() {
-    const body = {
-      init_w: Number(rampForm.init_w),
-      target_w: Number(rampForm.target_w),
-      rate_w_per_s: Number(rampForm.rate_w_per_s),
-    };
-    if (Object.values(body).some((n) => Number.isNaN(n))) return flash("ramp values must be numbers");
-    await api.saveRamp(body);
+    // Ramp is always 0 -> the current forward-power setpoint, at the chosen rate.
+    const rate = Number(rampForm.rate_w_per_s);
+    const target = Number(setpointInput);
+    if (Number.isNaN(rate) || Number.isNaN(target)) return flash("ramp rate / setpoint must be numbers");
+    await api.saveRamp({ init_w: 0, target_w: target, rate_w_per_s: rate });
     const res = await api.rampStart();
     if (!res.ok) flash("ramp start failed: " + (await detail(res)));
   }
@@ -543,7 +541,14 @@ export function App() {
               <div
                 style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
               >
-                <h2 style={{ margin: 0 }}>Telemetry</h2>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <h2 style={{ margin: 0 }}>Telemetry</h2>
+                  {ramp?.running ? (
+                    <span className="ramp-badge">
+                      ▲ R · ramping → {ramp.target_w} W @ {ramp.rate_w_per_s} W/s
+                    </span>
+                  ) : null}
+                </div>
                 <label className="toggle" style={{ margin: 0, fontSize: "12px" }}>
                   <input
                     type="checkbox"
@@ -617,6 +622,34 @@ export function App() {
 
             <section className="panel">
               <div className="power-row">
+                <div className="rfcontrol-box">
+                  <div className="field-label">RF control</div>
+                  <button
+                    className="btn estop full"
+                    onClick={estop}
+                    disabled={!connected}
+                    title="Emergency stop: RF off, setpoint 0, all drivers halted"
+                  >
+                    ⏻ E-STOP
+                  </button>
+                  <div className="row" style={{ marginTop: "8px" }}>
+                    <button
+                      className="btn danger full"
+                      onClick={rfOn}
+                      disabled={!connected || faulted}
+                    >
+                      RF ON
+                    </button>
+                    <button className="btn full" onClick={rfOff} disabled={!connected}>
+                      RF OFF
+                    </button>
+                  </div>
+                  <div className="hint">
+                    {faulted
+                      ? "RF-enable blocked while faulted."
+                      : "RF-enable prompts to confirm. Protection commands RF off on any trip."}
+                  </div>
+                </div>
                 <div className="setpoint-box">
                   <label className="field-label" htmlFor="sp">
                     Forward power setpoint (W)
@@ -636,6 +669,32 @@ export function App() {
                   <div className="hint">
                     Ceiling {limits?.max_forward_w ?? "—"} W (clamped). Edit in Settings.
                   </div>
+                  <div className="setpoint-ramp">
+                    <span className="cap-name">Ramp 0→setpoint @</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={99}
+                      value={rampForm.rate_w_per_s}
+                      disabled={ramp?.running}
+                      onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
+                    />
+                    <span className="cap-name">W/s</span>
+                    {ramp?.running ? (
+                      <button className="btn" onClick={stopRamp}>
+                        Stop
+                      </button>
+                    ) : (
+                      <button className="btn" onClick={startRamp} disabled={!connected}>
+                        Start ramp
+                      </button>
+                    )}
+                  </div>
+                  {ramp?.running ? (
+                    <div className="hint mono">
+                      ▲ ramping {ramp.output_w} → {ramp.target_w} W{ramp.done ? " · reached" : ""}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="revmeter-box">
                   <div className="field-label">Reverse power</div>
@@ -736,31 +795,6 @@ export function App() {
           </div>
 
           <div className="col">
-            <section className="panel">
-              <h2>RF control</h2>
-              <button
-                className="btn estop full"
-                onClick={estop}
-                disabled={!connected}
-                title="Emergency stop: RF off, setpoint 0, all drivers halted"
-              >
-                ⏻ E-STOP
-              </button>
-              <div className="row" style={{ marginTop: "10px" }}>
-                <button className="btn danger full" onClick={rfOn} disabled={!connected || faulted}>
-                  RF ON
-                </button>
-                <button className="btn full" onClick={rfOff} disabled={!connected}>
-                  RF OFF
-                </button>
-              </div>
-              <div className="hint">
-                {faulted
-                  ? "RF-enable is blocked while faulted (protection latched)."
-                  : "RF-enable prompts for confirmation. Protection commands RF off on any trip."}
-              </div>
-            </section>
-
             <section className="panel">
               <h2>Matching network</h2>
               <div className="lock-badge">
@@ -1030,64 +1064,6 @@ export function App() {
               {mt?.running && !t?.rf_on ? (
                 <div className="hint">Arming is disabled until RF is on.</div>
               ) : null}
-            </section>
-
-            <section className="panel">
-              <h2>Power ramp</h2>
-              <div className="ramp-grid">
-                <label className="ramp-field">
-                  <span>Init W</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={rampForm.init_w}
-                    disabled={ramp?.running}
-                    onChange={(e) => setRampForm({ ...rampForm, init_w: e.target.value })}
-                  />
-                </label>
-                <label className="ramp-field">
-                  <span>Target W</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={rampForm.target_w}
-                    disabled={ramp?.running}
-                    onChange={(e) => setRampForm({ ...rampForm, target_w: e.target.value })}
-                  />
-                </label>
-                <label className="ramp-field">
-                  <span>Rate W/s</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={99}
-                    value={rampForm.rate_w_per_s}
-                    disabled={ramp?.running}
-                    onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
-                  />
-                </label>
-              </div>
-              <div className="ramp-actions">
-                {ramp?.running ? (
-                  <button className="btn" onClick={stopRamp}>
-                    Stop ramp
-                  </button>
-                ) : (
-                  <button className="btn accent" onClick={startRamp} disabled={!connected}>
-                    Start ramp
-                  </button>
-                )}
-                {ramp?.running ? (
-                  <span className="hint mono">
-                    ramping {ramp.output_w} → {ramp.target_w} W @ {ramp.rate_w_per_s} W/s
-                    {ramp.done ? " · reached" : ""}
-                  </span>
-                ) : (
-                  <span className="hint">
-                    Ramps the setpoint init → target at the set W/s (1–99). Enable RF to deliver it.
-                  </span>
-                )}
-              </div>
             </section>
 
             <section className="panel">
