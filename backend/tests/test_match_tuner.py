@@ -1,5 +1,22 @@
-from tc_power_interface.control.match_tuner import MatchTuner, MatchTunerPlan
+from tc_power_interface.control.match_tuner import (
+    MATCH_TUNER_BOUNDS,
+    MatchTuner,
+    MatchTunerPlan,
+)
 from tc_power_interface.device.reflection import FLOOR, reflected_fraction
+
+
+def test_bounded_clamps_out_of_range_steps_and_validates_mode():
+    p = MatchTunerPlan.bounded(mode="auto", tune_step=99.0, load_step=0.0, guard=5.0)
+    assert p.mode == "auto"
+    assert p.tune_step == MATCH_TUNER_BOUNDS["tune_step"][1]  # clamped to max
+    assert p.load_step == MATCH_TUNER_BOUNDS["load_step"][0]  # clamped to min
+    assert p.guard == MATCH_TUNER_BOUNDS["guard"][1]  # clamped to max
+
+
+def test_bounded_rejects_unknown_mode_falling_back_to_advisory():
+    p = MatchTunerPlan.bounded(mode="ATUNE", tune_step=1.0, load_step=0.3, guard=0.6)
+    assert p.mode == "advisory"
 
 
 class FakeController:

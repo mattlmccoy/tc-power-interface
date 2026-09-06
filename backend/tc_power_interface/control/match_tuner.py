@@ -43,6 +43,24 @@ class MatchTunerPlan:
     shrink: float = 0.5      # step multiplier when a move overshoots (reverse rose)
     min_step: float = 0.1    # smallest step (0.1% = the caps' hardware resolution)
 
+    @classmethod
+    def bounded(
+        cls, *, mode: str, tune_step: float, load_step: float, guard: float
+    ) -> MatchTunerPlan:
+        """Build a plan with the mode validated to {advisory, auto} and each numeric field clamped
+        into MATCH_TUNER_BOUNDS (an unknown mode falls back to the safe advisory default)."""
+        def clamp(name: str, v: float) -> float:
+            lo, hi = MATCH_TUNER_BOUNDS[name]
+            return max(lo, min(v, hi))
+
+        safe_mode: Literal["advisory", "auto"] = "auto" if mode == "auto" else "advisory"
+        return cls(
+            mode=safe_mode,
+            tune_step=clamp("tune_step", tune_step),
+            load_step=clamp("load_step", load_step),
+            guard=clamp("guard", guard),
+        )
+
 
 class MatchTuner:
     """Interleaved coordinate descent on reverse power; tune-coarse, load-fine.

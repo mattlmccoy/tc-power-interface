@@ -26,6 +26,11 @@ from pydantic import BaseModel
 
 from tc_power_interface import __version__
 from tc_power_interface.control.controller import Controller
+from tc_power_interface.control.match_tuner import (
+    MATCH_TUNER_BOUNDS,
+    MatchTuner,
+    MatchTunerPlan,
+)
 from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, RampPlan
 from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
 from tc_power_interface.control.pulse import PULSE_BOUNDS, PulseController, PulsePlan
@@ -161,6 +166,13 @@ class PulseBody(BaseModel):
     power_w: float
 
 
+class MatchTunerBody(BaseModel):
+    mode: str
+    tune_step: float
+    load_step: float
+    guard: float
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -252,6 +264,28 @@ def create_app(
         controller.add_listener(lambda _snap: pulse.tick(poll_interval_s))
         app.state.pulse = pulse
 
+        # Software matching auto-tuner (perturb-and-observe on reverse power). Default advisory:
+        # it recommends but never drives until put into auto AND armed. It NEVER enables RF.
+        match_tuner = MatchTuner(controller, plan=MatchTunerPlan())
+
+        def _mt_telemetry(snap: dict[str, Any]) -> dict[str, Any]:
+            t = snap.get("telemetry") or {}
+            tel: dict[str, Any] = {
+                "rf_on": bool(t.get("rf_on", False)),
+                "manual_mode": bool(t.get("manual_mode", True)),
+                # Telemetry already carries reflected_fraction (= reverse/forward); the tuner
+                # minimizes exactly this.
+                "reverse_fraction": float(t.get("reflected_fraction") or 0.0),
+            }
+            if t.get("tune_cap_percent") is not None:
+                tel["tune_cap_percent"] = float(t["tune_cap_percent"])
+            if t.get("load_cap_percent") is not None:
+                tel["load_cap_percent"] = float(t["load_cap_percent"])
+            return tel
+
+        controller.add_listener(lambda snap: match_tuner.tick(poll_interval_s, _mt_telemetry(snap)))
+        app.state.match_tuner = match_tuner
+
         controller.start()
         try:
             device_info = controller.identify()
@@ -298,6 +332,9 @@ def create_app(
     def _pulse() -> PulseController:
         return cast(PulseController, app.state.pulse)
 
+    def _match_tuner() -> MatchTuner:
+        return cast(MatchTuner, app.state.match_tuner)
+
     def _presets_payload() -> dict[str, Any]:
         return {
             "slots": {str(k): v for k, v in _presets().list().items()},
@@ -328,6 +365,7 @@ def create_app(
             "timer": _timer().snapshot(),
             "presets": _presets_payload(),
             "pulse": _pulse().snapshot(),
+            "match_tuner": _match_tuner().snapshot(),
         }
 
     @app.get("/api/status")
@@ -556,6 +594,51 @@ def create_app(
         _pulse().stop()
         return _pulse().snapshot()
 
+    # --- software matching auto-tuner (advisory/auto; arm-gated; never enables RF) --------------
+    def _match_tuner_payload() -> dict[str, Any]:
+        p = _match_tuner().plan
+        return {
+            "mode": p.mode,
+            "tune_step": p.tune_step,
+            "load_step": p.load_step,
+            "guard": p.guard,
+            "bounds": {k: [v[0], v[1]] for k, v in MATCH_TUNER_BOUNDS.items()},
+        }
+
+    @app.get("/api/match-tuner")
+    def get_match_tuner() -> dict[str, Any]:
+        return _match_tuner_payload()
+
+    @app.put("/api/match-tuner")
+    def put_match_tuner(body: MatchTunerBody) -> dict[str, Any]:
+        _match_tuner().plan = MatchTunerPlan.bounded(
+            mode=body.mode,
+            tune_step=body.tune_step,
+            load_step=body.load_step,
+            guard=body.guard,
+        )
+        return _match_tuner_payload()
+
+    @app.post("/api/match-tuner/start")
+    def match_tuner_start() -> dict[str, Any]:
+        _match_tuner().start()
+        return _match_tuner().snapshot()
+
+    @app.post("/api/match-tuner/stop")
+    def match_tuner_stop() -> dict[str, Any]:
+        _match_tuner().stop()
+        return _match_tuner().snapshot()
+
+    @app.post("/api/match-tuner/arm")
+    def match_tuner_arm() -> dict[str, Any]:
+        _match_tuner().arm()
+        return _match_tuner().snapshot()
+
+    @app.post("/api/match-tuner/disarm")
+    def match_tuner_disarm() -> dict[str, Any]:
+        _match_tuner().disarm()
+        return _match_tuner().snapshot()
+
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:
         try:
@@ -573,13 +656,14 @@ def create_app(
 
     @app.post("/api/estop")
     def estop() -> dict[str, Any]:
-        """Emergency stop: RF off, setpoint 0, and halt every driver (ramp/pulse/timer/thermal)."""
+        """Emergency stop: RF off, setpoint 0, halt drivers (ramp/pulse/timer/thermal/tuner)."""
         _controller().disable_rf()
         _controller().set_setpoint(0)
         _ramp().stop()
         _pulse().stop()
         _timer().stop()
         _thermal().stop()
+        _match_tuner().stop()
         _record_event("estop")
         return {"ok": True, "rf": "off"}
 
