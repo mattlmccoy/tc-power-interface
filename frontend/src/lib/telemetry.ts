@@ -145,6 +145,36 @@ export interface PulseConfig {
   bounds: Record<string, [number, number]>;
 }
 
+/** One perturb-and-observe move the tuner made (or would make). */
+export interface MatchTunerMove {
+  axis: "tune" | "load";
+  delta: number;
+}
+
+/** Live state of the software matching auto-tuner (top-level `match_tuner` block). */
+export interface MatchTunerStatus {
+  running: boolean;
+  armed: boolean;
+  phase: "idle" | "searching" | "holding";
+  mode: string;
+  reverse_fraction: number | null;
+  best: number | null;
+  last_move: MatchTunerMove | null;
+  recommended: { tune: number; load: number } | null;
+}
+
+/** Editable match-tuner config (bounds-clamped server-side). */
+export interface MatchTunerForm {
+  mode: string;
+  tune_step: number;
+  load_step: number;
+  guard: number;
+}
+
+export interface MatchTunerConfig extends MatchTunerForm {
+  bounds: Record<string, [number, number]>;
+}
+
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
@@ -154,6 +184,7 @@ export interface Status {
   timer: TimerStatus;
   presets: PresetsStatus;
   pulse: PulseStatus;
+  match_tuner: MatchTunerStatus;
 }
 
 export interface Point {

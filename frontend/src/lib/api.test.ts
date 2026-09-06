@@ -89,3 +89,28 @@ test("thermalSource posts type and url to /api/thermal/source", async () => {
   assert.equal(calls[0].body?.type, "flir");
   assert.equal(calls[0].body?.url, "ws://x/ws/frames");
 });
+
+test("saveMatchTuner issues a PUT to /api/match-tuner with the config body", async () => {
+  const calls = stubFetch();
+  await api.saveMatchTuner({ mode: "auto", tune_step: 1, load_step: 0.3, guard: 0.6 });
+  assert.equal(calls[0].method, "PUT");
+  assert.match(calls[0].url, /\/api\/match-tuner$/);
+  assert.equal(calls[0].body?.mode, "auto");
+  assert.equal(calls[0].body?.tune_step, 1);
+});
+
+test("matchTunerStart/Arm/Disarm/Stop post to their routes", async () => {
+  const calls = stubFetch();
+  await api.matchTunerStart();
+  await api.matchTunerArm();
+  await api.matchTunerDisarm();
+  await api.matchTunerStop();
+  assert.deepEqual(
+    calls.map((c) => c.method),
+    ["POST", "POST", "POST", "POST"],
+  );
+  assert.match(calls[0].url, /\/api\/match-tuner\/start$/);
+  assert.match(calls[1].url, /\/api\/match-tuner\/arm$/);
+  assert.match(calls[2].url, /\/api\/match-tuner\/disarm$/);
+  assert.match(calls[3].url, /\/api\/match-tuner\/stop$/);
+});

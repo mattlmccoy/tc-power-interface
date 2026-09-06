@@ -217,6 +217,10 @@ export function App() {
         .sort((a, b) => a[0] - b[0])
     : [];
   const pulse = status?.pulse;
+  const mt = status?.match_tuner;
+  const revPct = (f: number | null | undefined): string =>
+    f == null ? "—" : `${(f * 100).toFixed(1)}%`;
+  const fmtDelta = (d: number): string => `${d >= 0 ? "+" : ""}${d.toFixed(1)}%`;
   const state = ctrl?.state ?? "disconnected";
   const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
   const faulted = state === "fault";
@@ -297,6 +301,23 @@ export function App() {
     if ([on, off, pw].some((n) => Number.isNaN(n))) return flash("pulse values must be numbers");
     await api.savePulse(on, off, pw);
     await api.pulseStart();
+  }
+  // Software matching auto-tuner. The panel only exposes advisory/auto + start/arm; the step/guard
+  // tuning keeps the server defaults. It NEVER enables RF and only drives caps when armed in auto.
+  async function setMatchMode(mode: string) {
+    await api.saveMatchTuner({ mode, tune_step: 1.0, load_step: 0.3, guard: 0.6 });
+  }
+  async function startMatchTuner() {
+    await api.matchTunerStart();
+  }
+  async function stopMatchTuner() {
+    await api.matchTunerStop();
+  }
+  async function armMatchTuner() {
+    await api.matchTunerArm();
+  }
+  async function disarmMatchTuner() {
+    await api.matchTunerDisarm();
   }
   async function stopPulse() {
     await api.pulseStop();
@@ -854,6 +875,81 @@ export function App() {
                   Save
                 </button>
               </div>
+            </section>
+
+            <section className="panel">
+              <h2>Match tuner</h2>
+              <div className="banner experimental">
+                <strong>Experimental — untested on hardware.</strong> Perturb-and-observe on reverse
+                power: it trims the tune/load caps toward the local minimum as the load drifts. It
+                never enables RF and only drives caps in <em>auto</em> while armed and RF is on.
+              </div>
+              <div className="ramp-actions">
+                <label className="ramp-field" style={{ flex: "0 0 150px" }}>
+                  <span>Mode</span>
+                  <select
+                    value={mt?.mode ?? "advisory"}
+                    disabled={!connected}
+                    onChange={(e) => setMatchMode(e.target.value)}
+                  >
+                    <option value="advisory">advisory (watch only)</option>
+                    <option value="auto">auto (drives caps)</option>
+                  </select>
+                </label>
+                {mt?.running ? (
+                  <button className="btn" onClick={stopMatchTuner}>
+                    Stop
+                  </button>
+                ) : (
+                  <button className="btn accent" onClick={startMatchTuner} disabled={!connected}>
+                    Start
+                  </button>
+                )}
+                {mt?.armed ? (
+                  <button className="btn" onClick={disarmMatchTuner}>
+                    Disarm
+                  </button>
+                ) : (
+                  <button
+                    className="btn danger"
+                    onClick={armMatchTuner}
+                    disabled={!connected || !t?.rf_on || !mt?.running}
+                    title={
+                      !mt?.running
+                        ? "Start the tuner first"
+                        : !t?.rf_on
+                          ? "Enable RF first — the tuner only drives caps while RF is on"
+                          : "Arm: allow the tuner to drive the caps (auto mode)"
+                    }
+                  >
+                    Arm
+                  </button>
+                )}
+              </div>
+              <div className="mt-readout mono">
+                {mt?.running ? (
+                  <>
+                    <span className={`mt-phase ${mt.phase}`}>{mt.phase}</span> · reverse{" "}
+                    {revPct(mt.reverse_fraction)} · best {revPct(mt.best)}
+                    {mt.last_move
+                      ? ` · last ${mt.last_move.axis} ${fmtDelta(mt.last_move.delta)}`
+                      : ""}
+                  </>
+                ) : (
+                  <span className="hint" style={{ margin: 0 }}>
+                    Stopped. Start, then Arm in auto to trim caps toward minimum reverse (RF on).
+                  </span>
+                )}
+              </div>
+              {mt?.mode === "advisory" && mt?.recommended ? (
+                <div className="hint">
+                  Recommended (advisory — not applied): tune {mt.recommended.tune.toFixed(1)}% · load{" "}
+                  {mt.recommended.load.toFixed(1)}%
+                </div>
+              ) : null}
+              {mt?.running && !t?.rf_on ? (
+                <div className="hint">Arming is disabled until RF is on.</div>
+              ) : null}
             </section>
 
             <section className="panel">
