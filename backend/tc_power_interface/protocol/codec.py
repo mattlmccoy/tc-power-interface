@@ -246,20 +246,25 @@ def cmd_gt() -> bytes:
     return b"GT\x00\x00\x00\x00"
 
 
-def cmd_manual_mode(on: bool) -> bytes:
-    """Command to enable (2) or disable (1) manual tuner mode."""
-    return b"TM\x00\x02\x00\x00" if on else b"TM\x00\x01\x00\x00"
+def cmd_manual_mode() -> bytes:
+    """Command to enable MANUAL tuner mode (TM 02).
+
+    SAFETY: there is deliberately NO automatic (ATUNE, TM 01) command in this codec. The generator's
+    built-in auto-tuner will damage the matching circuit and must never be engaged, so the byte
+    sequence that would request it is not constructible here.
+    """
+    return b"TM\x00\x02\x00\x00"
 
 
-def cmd_load_capacity(percent: int) -> bytes:
-    """Command to set load-capacity percentage (requires manual mode)."""
+def cmd_load_capacity(percent: float) -> bytes:
+    """Command to set load-capacity percent (requires manual mode). 0.1% resolution."""
     if not 0 <= percent <= 100:
         raise ValueError(f"load capacity {percent}% out of range 0..100")
-    return b"TC\x00\x01\x00" + bytes([percent])
+    return b"TC\x00\x01" + round(percent * 10).to_bytes(2, "big")
 
 
-def cmd_tune_capacity(percent: int) -> bytes:
-    """Command to set tune-capacity percentage (requires manual mode)."""
+def cmd_tune_capacity(percent: float) -> bytes:
+    """Command to set tune-capacity percent (requires manual mode). 0.1% resolution."""
     if not 0 <= percent <= 100:
         raise ValueError(f"tune capacity {percent}% out of range 0..100")
-    return b"TC\x00\x02\x00" + bytes([percent])
+    return b"TC\x00\x02" + round(percent * 10).to_bytes(2, "big")

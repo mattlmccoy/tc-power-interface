@@ -182,13 +182,15 @@ class TestMatchCommandBuilders:
         assert codec.cmd_power_limit() == b"Gp\x00\x00\x00\x00"
         assert codec.cmd_gt() == b"GT\x00\x00\x00\x00"
 
-    def test_manual_mode_command(self):
-        assert codec.cmd_manual_mode(True) == b"TM\x00\x02\x00\x00"
-        assert codec.cmd_manual_mode(False) == b"TM\x00\x01\x00\x00"
+    def test_manual_mode_command_is_manual_only(self):
+        # SAFETY: only the manual (TM 02) command exists; no automatic (TM 01) path.
+        assert codec.cmd_manual_mode() == b"TM\x00\x02\x00\x00"
 
     def test_capacity_commands(self):
-        assert codec.cmd_load_capacity(55) == b"TC\x00\x01\x00\x37"
-        assert codec.cmd_tune_capacity(42) == b"TC\x00\x02\x00\x2a"
+        # 0.1% resolution: value field is round(percent * 10) as a 2-byte big-endian int.
+        assert codec.cmd_load_capacity(55) == b"TC\x00\x01" + (550).to_bytes(2, "big")
+        assert codec.cmd_tune_capacity(42) == b"TC\x00\x02" + (420).to_bytes(2, "big")
+        assert codec.cmd_tune_capacity(42.5) == b"TC\x00\x02" + (425).to_bytes(2, "big")
 
     def test_capacity_rejects_out_of_range(self):
         with pytest.raises(ValueError):

@@ -72,7 +72,7 @@ class TestTelemetry:
         # The matching-network readback (manual mode, tune/load cap %, VDC, preset) comes from the
         # CXN GT block and rides along on telemetry so the UI + recording can show live positions.
         device.request_control()
-        device.set_manual_mode(True)
+        device.force_manual_mode()
         device.set_tune_capacity(37)
         device.set_load_capacity(62)
         t = device.read_telemetry()
@@ -96,7 +96,7 @@ class TestIdentify:
 class TestMatchReadout:
     def test_manual_mode_and_capacities_roundtrip(self, device: CxnDevice):
         device.request_control()
-        device.set_manual_mode(True)
+        device.force_manual_mode()
         device.set_tune_capacity(42)
         device.set_load_capacity(55)
         gt = device.read_match()

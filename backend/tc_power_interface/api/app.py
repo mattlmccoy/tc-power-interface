@@ -95,7 +95,7 @@ class SetpointRequest(BaseModel):
 
 
 class CapacityRequest(BaseModel):
-    percent: int
+    percent: float
 
 
 class ManualModeRequest(BaseModel):
@@ -571,10 +571,23 @@ def create_app(
         _record_event("rf_disabled")
         return _controller().snapshot()
 
+    @app.post("/api/estop")
+    def estop() -> dict[str, Any]:
+        """Emergency stop: RF off, setpoint 0, and halt every driver (ramp/pulse/timer/thermal)."""
+        _controller().disable_rf()
+        _controller().set_setpoint(0)
+        _ramp().stop()
+        _pulse().stop()
+        _timer().stop()
+        _thermal().stop()
+        _record_event("estop")
+        return {"ok": True, "rf": "off"}
+
     @app.post("/api/match/manual")
-    def match_manual(req: ManualModeRequest) -> dict[str, Any]:
-        _controller().set_manual_mode(req.on)
-        return {"manual_mode": req.on}
+    def match_manual(_req: ManualModeRequest) -> dict[str, Any]:
+        # Tuner is locked to MANUAL — the automatic (ATUNE) path does not exist.
+        _controller().set_manual_mode(True)
+        return {"manual_mode": True}
 
     @app.post("/api/match/tune")
     def match_tune(req: CapacityRequest) -> dict[str, Any]:

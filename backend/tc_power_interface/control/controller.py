@@ -74,11 +74,14 @@ class Controller:
 
     # --- lifecycle -------------------------------------------------------------------------
     def connect(self) -> None:
-        """Acquire the control lease (no background thread)."""
+        """Acquire the control lease and force MANUAL tuning (never the forbidden auto-tuner)."""
         with self._io_lock:
             granted = self.device.request_control()
         if not granted:
             raise RuntimeError("generator denied control request")
+        # SAFETY: the built-in auto-tuner must never run — pin the tuner to manual up front.
+        with self._io_lock:
+            self.device.force_manual_mode()
         self.state = ControllerState.CONNECTED
 
     def identify(self) -> dict[str, Any]:
@@ -176,15 +179,17 @@ class Controller:
         with self._lock:
             self.limits = limits
 
-    def set_manual_mode(self, on: bool) -> None:
+    def set_manual_mode(self, on: bool = True) -> None:
+        """Force MANUAL tuning. ``on`` is accepted for API compatibility but always treated as True:
+        there is no path to the forbidden automatic (ATUNE) mode."""
         with self._io_lock:
-            self.device.set_manual_mode(on)
+            self.device.force_manual_mode()
 
-    def set_tune_capacity(self, percent: int) -> None:
+    def set_tune_capacity(self, percent: float) -> None:
         with self._io_lock:
             self.device.set_tune_capacity(percent)
 
-    def set_load_capacity(self, percent: int) -> None:
+    def set_load_capacity(self, percent: float) -> None:
         with self._io_lock:
             self.device.set_load_capacity(percent)
 

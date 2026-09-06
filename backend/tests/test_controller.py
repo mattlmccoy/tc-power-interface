@@ -86,6 +86,9 @@ class TestProtection:
             def request_control(self):
                 return True
 
+            def force_manual_mode(self):
+                pass
+
             def read_telemetry(self):
                 raise RuntimeError("cable yanked")
 
