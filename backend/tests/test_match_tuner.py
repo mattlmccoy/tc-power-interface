@@ -91,6 +91,24 @@ def test_holds_when_rf_off_or_not_armed():
     assert mt.snapshot()["armed"] is False
 
 
+def test_guard_undoes_a_move_that_spikes_reverse_and_holds():
+    # A move that drives reverse UP past the guard is undone and the tuner backs off to holding.
+    fake = FakeController(tune=50.0, load=50.0)
+    mt = MatchTuner(fake, plan=MatchTunerPlan(mode="auto", guard=0.6))
+    mt.start()
+    mt.arm()
+    # tick 1: low reverse -> the tuner makes its first (tune) move away from 50.
+    mt.tick(0.5, {"rf_on": True, "manual_mode": True, "reverse_fraction": 0.10,
+                  "tune_cap_percent": 50.0, "load_cap_percent": 50.0})
+    moved_tune = fake.tune
+    assert moved_tune != 50.0
+    # tick 2: that move spiked reverse above the guard -> undo it and hold.
+    mt.tick(0.5, {"rf_on": True, "manual_mode": True, "reverse_fraction": 0.70,
+                  "tune_cap_percent": moved_tune, "load_cap_percent": 50.0})
+    assert mt.snapshot()["phase"] == "holding"
+    assert fake.tune == 50.0  # the spiking move was reverted
+
+
 def test_caps_stay_in_bounds():
     fake = FakeController(t_opt=95.0, l_opt=95.0)  # optimum outside [0,100] pull
     mt = MatchTuner(fake, plan=MatchTunerPlan(mode="auto", min_cap=0.0, max_cap=100.0))
