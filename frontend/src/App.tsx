@@ -496,7 +496,7 @@ export function App() {
               </div>
               <div className="cards">
                 <div className="readout">
-                  <div className="label">DC bus</div>
+                  <div className="label">DC probe (bias)</div>
                   <div className="value">
                     {t?.dc_voltage != null ? `${t.dc_voltage.toFixed(0)} V` : "—"}
                   </div>
@@ -513,6 +513,12 @@ export function App() {
                   <div className="label">Leveling</div>
                   <div className="value">{t ? generatorModes(t.status).leveling : "—"}</div>
                 </div>
+              </div>
+              <div className="hint">
+                <strong>DC probe</strong> = plasma self-bias measured through the tuner (0–999 V).
+                ~0 V is expected here: a dielectric load (powder between plates) is not a plasma, so
+                no sheath rectifies a DC self-bias — match quality shows up in forward/reflected
+                power, not DC. A nonzero reading would signal arcing or a partial discharge.
               </div>
               <div className="hint">
                 Frequency {device?.frequency_hz ? (device.frequency_hz / 1e6).toFixed(2) : "—"} MHz ·
@@ -663,58 +669,63 @@ export function App() {
                 Ceiling {limits?.max_forward_w ?? "—"} W (values above are clamped). Edit in Settings.
               </div>
 
-              <div className="field-label" style={{ marginTop: "12px", fontWeight: 700 }}>
+              <div className="field-label" style={{ marginTop: "14px", fontWeight: 700 }}>
                 Power ramp
               </div>
-              <div className="cap-row">
-                <span className="cap-name">Init W</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={rampForm.init_w}
-                  disabled={ramp?.running}
-                  onChange={(e) => setRampForm({ ...rampForm, init_w: e.target.value })}
-                />
-                <span className="cap-name">Target W</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={rampForm.target_w}
-                  disabled={ramp?.running}
-                  onChange={(e) => setRampForm({ ...rampForm, target_w: e.target.value })}
-                />
+              <div className="ramp-grid">
+                <label className="ramp-field">
+                  <span>Init W</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={rampForm.init_w}
+                    disabled={ramp?.running}
+                    onChange={(e) => setRampForm({ ...rampForm, init_w: e.target.value })}
+                  />
+                </label>
+                <label className="ramp-field">
+                  <span>Target W</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={rampForm.target_w}
+                    disabled={ramp?.running}
+                    onChange={(e) => setRampForm({ ...rampForm, target_w: e.target.value })}
+                  />
+                </label>
+                <label className="ramp-field">
+                  <span>Rate W/s</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={rampForm.rate_w_per_s}
+                    disabled={ramp?.running}
+                    onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
+                  />
+                </label>
               </div>
-              <div className="cap-row">
-                <span className="cap-name">Rate W/s</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={99}
-                  value={rampForm.rate_w_per_s}
-                  disabled={ramp?.running}
-                  onChange={(e) => setRampForm({ ...rampForm, rate_w_per_s: e.target.value })}
-                />
+              <div className="ramp-actions">
                 {ramp?.running ? (
-                  <button className="btn full" onClick={stopRamp}>
+                  <button className="btn" onClick={stopRamp}>
                     Stop ramp
                   </button>
                 ) : (
-                  <button className="btn accent full" onClick={startRamp} disabled={!connected}>
+                  <button className="btn accent" onClick={startRamp} disabled={!connected}>
                     Start ramp
                   </button>
                 )}
+                {ramp?.running ? (
+                  <span className="hint mono">
+                    ramping {ramp.output_w} → {ramp.target_w} W @ {ramp.rate_w_per_s} W/s
+                    {ramp.done ? " · reached" : ""}
+                  </span>
+                ) : (
+                  <span className="hint">
+                    Ramps the setpoint init → target at the set W/s (1–99). Enable RF to deliver it.
+                  </span>
+                )}
               </div>
-              {ramp?.running ? (
-                <div className="hint mono">
-                  ramping {ramp.output_w} → {ramp.target_w} W @ {ramp.rate_w_per_s} W/s
-                  {ramp.done ? " · reached" : ""}
-                </div>
-              ) : (
-                <div className="hint">
-                  Ramps the setpoint from init to target at the given W/s (1–99). Enable RF to deliver
-                  it.
-                </div>
-              )}
             </section>
 
             <section className="panel">

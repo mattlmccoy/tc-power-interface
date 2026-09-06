@@ -169,3 +169,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .cap-row input[type="number"] { width: 64px; text-align: right; }
 .cap-readback { font-family: var(--font-mono); font-size: 11px; color: var(--muted); min-width: 54px; }
 .step-btn { width: 30px; padding: 6px 0; font-family: var(--font-mono); font-size: 14px; line-height: 1; }
+
+/* Power-ramp form: three aligned labelled fields, then a normal button + inline status. */
+.ramp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 6px 0 10px; }
+.ramp-field { display: flex; flex-direction: column; gap: 3px; }
+.ramp-field > span { font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--muted); }
+.ramp-field input[type="number"] { width: 100%; text-align: right; }
+.ramp-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ramp-actions .btn { flex: 0 0 auto; }
+.ramp-actions .hint { margin: 0; flex: 1 1 140px; }
