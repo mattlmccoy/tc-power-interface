@@ -24,6 +24,8 @@ def load_limits(root: Path) -> SafetyLimits:
         max_forward_w=d.get("max_forward_w", 350),
         max_reflected_w=d.get("max_reflected_w", 25.0),
         temperature_c_trip=d.get("temperature_c_trip", 70.0),
+        forward_caution_w=d.get("forward_caution_w", 400.0),
+        forward_danger_w=d.get("forward_danger_w", 500.0),
     )
 
 
@@ -35,6 +37,8 @@ def save_limits(root: Path, limits: SafetyLimits) -> None:
                 "max_forward_w": limits.max_forward_w,
                 "max_reflected_w": limits.max_reflected_w,
                 "temperature_c_trip": limits.temperature_c_trip,
+                "forward_caution_w": limits.forward_caution_w,
+                "forward_danger_w": limits.forward_danger_w,
             },
             indent=2,
         )

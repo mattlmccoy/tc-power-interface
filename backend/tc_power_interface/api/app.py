@@ -116,6 +116,8 @@ class SafetyLimitsBody(BaseModel):
     max_forward_w: float
     max_reflected_w: float
     temperature_c_trip: float
+    forward_caution_w: float = 400.0
+    forward_danger_w: float = 500.0
 
 
 class ThermalPlanBody(BaseModel):
@@ -345,7 +347,13 @@ def create_app(
             "max_forward_w": lim.max_forward_w,
             "max_reflected_w": lim.max_reflected_w,
             "temperature_c_trip": lim.temperature_c_trip,
-            "bounds": {k: [v[0], v[1]] for k, v in HARD_BOUNDS.items()},
+            "forward_caution_w": lim.forward_caution_w,
+            "forward_danger_w": lim.forward_danger_w,
+            "bounds": {
+                **{k: [v[0], v[1]] for k, v in HARD_BOUNDS.items()},
+                "forward_caution_w": [0, 600],
+                "forward_danger_w": [0, 600],
+            },
         }
 
     @app.get("/api/safety-limits")
@@ -358,6 +366,8 @@ def create_app(
             max_forward_w=body.max_forward_w,
             max_reflected_w=body.max_reflected_w,
             temperature_c_trip=body.temperature_c_trip,
+            forward_caution_w=body.forward_caution_w,
+            forward_danger_w=body.forward_danger_w,
         )
         _controller().set_limits(new)
         save_limits(experiments_root, new)

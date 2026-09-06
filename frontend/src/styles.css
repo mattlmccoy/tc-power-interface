@@ -92,6 +92,25 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .readout .value.rf-on { color: var(--live); text-shadow: var(--live-glow-dim); }
 .readout.zone-warn .value { color: var(--warn); }
 .readout.zone-trip .value { color: var(--err); }
+/* Generator panel: secondary readouts (DC probe, RF source, leveling, internal temp) are reference
+   info, not the primary telemetry — keep them well below the big 30px dashboard numbers. */
+.gen-panel .readout .value { font-size: 18px; }
+
+/* Startup-order modal — shown on every boot, dismissible. */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal { background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  max-width: 520px; width: 100%; padding: 20px 22px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; }
+.modal-head h2 { margin: 0; }
+.modal-close { background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer;
+  padding: 4px 8px; }
+.modal-close:hover { color: var(--fg); }
+.modal-lead { font-size: 14px; line-height: 1.5; color: var(--fg); margin: 10px 0 12px; }
+.modal-lead strong { color: var(--warn); }
+.modal-steps { margin: 0 0 16px; padding-left: 20px; font-size: 13px; line-height: 1.6;
+  color: var(--fg); }
+.modal-steps li { margin: 2px 0; }
 
 /* Reflected gauge */
 .gauge { position: relative; height: 14px; border-radius: 999px; background: var(--bg-deep);

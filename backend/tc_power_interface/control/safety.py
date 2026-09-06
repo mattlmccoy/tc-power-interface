@@ -39,6 +39,11 @@ class SafetyLimits:
     reflected_fraction_warn: float = 0.02
     #: Trip if the newest telemetry sample is older than this (must stay < 2 s control lease).
     telemetry_timeout_s: float = 1.5
+    #: DISPLAY-ONLY gauge zones (watts): forward power dials shade yellow from caution and red from
+    #: danger. These never affect protection or the setpoint clamp — they are visual reference bands
+    #: (the real forward ceiling is max_forward_w / HARD_BOUNDS). Clamped to the 0..600 dial.
+    forward_caution_w: float = 400.0
+    forward_danger_w: float = 500.0
 
     @classmethod
     def bounded(
@@ -49,6 +54,8 @@ class SafetyLimits:
         temperature_c_trip: float,
         reflected_fraction_warn: float = 0.02,
         telemetry_timeout_s: float = 1.5,
+        forward_caution_w: float = 400.0,
+        forward_danger_w: float = 500.0,
     ) -> SafetyLimits:
         """Build limits with each editable field clamped into its hard range."""
 
@@ -62,6 +69,8 @@ class SafetyLimits:
             temperature_c_trip=float(clamp("temperature_c_trip", temperature_c_trip)),
             reflected_fraction_warn=reflected_fraction_warn,
             telemetry_timeout_s=telemetry_timeout_s,
+            forward_caution_w=float(max(0.0, min(forward_caution_w, 600.0))),
+            forward_danger_w=float(max(0.0, min(forward_danger_w, 600.0))),
         )
 
     def clamp_setpoint(self, watts: int) -> int:

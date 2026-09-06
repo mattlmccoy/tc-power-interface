@@ -226,5 +226,7 @@ class Controller:
                 "max_reflected_w": self.limits.max_reflected_w,
                 "temperature_c_trip": self.limits.temperature_c_trip,
                 "reflected_fraction_warn": self.limits.reflected_fraction_warn,
+                "forward_caution_w": self.limits.forward_caution_w,
+                "forward_danger_w": self.limits.forward_danger_w,
             },
         }

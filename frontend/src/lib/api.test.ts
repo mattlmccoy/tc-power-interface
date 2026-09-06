@@ -25,7 +25,13 @@ function stubFetch(): Captured[] {
 
 test("saveSafetyLimits issues a PUT (not POST) to /api/safety-limits", async () => {
   const calls = stubFetch();
-  await api.saveSafetyLimits({ max_forward_w: 300, max_reflected_w: 20, temperature_c_trip: 60 });
+  await api.saveSafetyLimits({
+    max_forward_w: 300,
+    max_reflected_w: 20,
+    temperature_c_trip: 60,
+    forward_caution_w: 400,
+    forward_danger_w: 500,
+  });
   assert.equal(calls[0].method, "PUT");
   assert.match(calls[0].url, /\/api\/safety-limits$/);
 });

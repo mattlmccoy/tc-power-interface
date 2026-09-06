@@ -24,12 +24,16 @@ export interface Limits {
   max_reflected_w: number;
   temperature_c_trip: number;
   reflected_fraction_warn: number;
+  forward_caution_w: number;
+  forward_danger_w: number;
 }
 
 export interface SafetyLimitsForm {
   max_forward_w: number;
   max_reflected_w: number;
   temperature_c_trip: number;
+  forward_caution_w: number;
+  forward_danger_w: number;
 }
 
 export interface SafetyLimitsStatus extends SafetyLimitsForm {

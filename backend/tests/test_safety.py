@@ -53,6 +53,17 @@ class TestBounded:
         s = SafetyLimits.bounded(max_forward_w=300, max_reflected_w=40, temperature_c_trip=65)
         assert (s.max_forward_w, s.max_reflected_w, s.temperature_c_trip) == (300, 40.0, 65.0)
 
+    def test_gauge_zones_default_and_clamp_to_full_scale(self):
+        # Display-only gauge caution/danger bands: default 400/500, clamped to the 0..600 dial.
+        d = SafetyLimits.bounded(max_forward_w=350, max_reflected_w=25, temperature_c_trip=70)
+        assert (d.forward_caution_w, d.forward_danger_w) == (400.0, 500.0)
+        s = SafetyLimits.bounded(
+            max_forward_w=350, max_reflected_w=25, temperature_c_trip=70,
+            forward_caution_w=450, forward_danger_w=9999,
+        )
+        assert s.forward_caution_w == 450.0
+        assert s.forward_danger_w == 600.0  # clamped to full scale
+
 
 class TestClampSetpoint:
     def test_clamps_to_max_forward_w(self):
