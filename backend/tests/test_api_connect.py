@@ -65,6 +65,36 @@ def test_connect_then_disconnect_simulator(tmp_path):
         assert s["controller"]["telemetry"] is None
 
 
+def _connect_and_arm(c):
+    c.post("/api/connect", json={"backend": "simulated"})
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if c.get("/api/status").json()["controller"]["state"] == "connected":
+            break
+        time.sleep(0.05)
+    c.post("/api/arm")
+
+
+def test_disconnect_stops_running_features(tmp_path):
+    """A ramp left running must not survive a disconnect (else it is 'stuck on' with no device)."""
+    with _idle_client(tmp_path) as c:
+        _connect_and_arm(c)
+        c.post("/api/ramp/start")
+        assert c.get("/api/status").json()["ramp"]["running"] is True
+        c.post("/api/disconnect")
+        assert c.get("/api/status").json()["ramp"]["running"] is False
+
+
+def test_disarm_stops_running_features(tmp_path):
+    """Disarming drops control, so any running driver (ramp/pulse/…) stops too."""
+    with _idle_client(tmp_path) as c:
+        _connect_and_arm(c)
+        c.post("/api/ramp/start")
+        assert c.get("/api/status").json()["ramp"]["running"] is True
+        c.post("/api/disarm")
+        assert c.get("/api/status").json()["ramp"]["running"] is False
+
+
 def test_connect_is_disarmed_until_armed(tmp_path):
     """A runtime-connected device is read-only (disarmed) until the ARM button is pressed."""
     with _idle_client(tmp_path) as c:

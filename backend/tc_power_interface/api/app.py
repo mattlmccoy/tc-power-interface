@@ -368,6 +368,21 @@ def create_app(
     def _match_tuner() -> MatchTuner:
         return cast(MatchTuner, app.state.match_tuner)
 
+    def _stop_all_features() -> None:
+        """Halt every driver (ramp/pulse/timer/thermal/tuner). Used on disconnect, disarm and
+        E-STOP so a feature can never be left 'running' with no device or while read-only."""
+        for stop in (
+            _ramp().stop,
+            _pulse().stop,
+            _timer().stop,
+            _thermal().stop,
+            _match_tuner().stop,
+        ):
+            try:
+                stop()
+            except Exception:  # noqa: BLE001 - best-effort halt; never block disconnect/disarm
+                pass
+
     def _presets_payload() -> dict[str, Any]:
         return {
             "slots": {str(k): v for k, v in _presets().list().items()},
@@ -451,7 +466,9 @@ def create_app(
 
     @app.post("/api/disconnect")
     def disconnect() -> dict[str, Any]:
-        """Detach the current generator (RF off, lease released, port closed) and go idle."""
+        """Detach the current generator (RF off, lease released, port closed) and go idle. Halts
+        every driver first so nothing is left 'running' with no device attached."""
+        _stop_all_features()
         _controller().detach_device()
         app.state.backend = "none"
         app.state.connected_port = None
@@ -763,8 +780,11 @@ def create_app(
 
     @app.post("/api/disarm")
     def disarm() -> dict[str, Any]:
-        """Drop control: RF off and re-lock the control commands. Always allowed."""
+        """Drop control: RF off, halt every driver, and re-lock the control commands. Always
+        allowed. Stopping the drivers here is what keeps a ramp from being 'stuck on' when you
+        disarm (or disconnect) before turning it off."""
         _controller().disarm()
+        _stop_all_features()
         _record_event("disarmed")
         return _status_payload()
 
@@ -773,11 +793,7 @@ def create_app(
         """Emergency stop: RF off, setpoint 0, halt drivers (ramp/pulse/timer/thermal/tuner).
         Bypasses the arm gate and works in any state."""
         _controller().estop()
-        _ramp().stop()
-        _pulse().stop()
-        _timer().stop()
-        _thermal().stop()
-        _match_tuner().stop()
+        _stop_all_features()
         _record_event("estop")
         return {"ok": True, "rf": "off"}
 

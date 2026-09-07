@@ -8,6 +8,6 @@ The wire protocol is implemented from the documented CXN command set (see plan/n
 RF output defaults OFF and there is no automatic RF-enable in this prototype.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

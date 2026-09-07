@@ -39,6 +39,14 @@ export interface Discovery {
   connected: { backend: string; port: string | null } | null;
 }
 
+/** GET /api/health — the operator's app version and the API version it speaks. */
+export interface Health {
+  version: string;
+  api_version?: string;
+  backend?: string;
+  platform?: string;
+}
+
 /** Site mode: the UI is served from GitHub Pages and talks to a local operator. */
 export const SITE_MODE = import.meta.env?.VITE_SITE_MODE === "1";
 
@@ -92,6 +100,7 @@ export async function detail(res: Response): Promise<string> {
 
 export const api = {
   status: async (): Promise<Status> => (await fetch(apiUrl(BASE, "/api/status"))).json(),
+  health: async (): Promise<Health> => (await fetch(apiUrl(BASE, "/api/health"))).json(),
   discovery: async (): Promise<Discovery> => (await fetch(apiUrl(BASE, "/api/discovery"))).json(),
   connect: (backend: string, serial?: string) => post("/api/connect", { backend, serial }),
   disconnect: () => post("/api/disconnect"),
