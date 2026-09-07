@@ -49,6 +49,25 @@ export function App() {
       /* storage unavailable — keep in-memory only */
     }
   };
+  // Explanatory help text is hidden by default (instrument view stays uncluttered); toggle it on.
+  const [showHelp, setShowHelp] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("tcp.help") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleHelp = () => {
+    setShowHelp((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("tcp.help", next ? "1" : "0");
+      } catch {
+        /* storage unavailable — keep in-memory only */
+      }
+      return next;
+    });
+  };
   const [showStartup, setShowStartup] = useState(true); // startup-order popup, every boot
   const [setpointInput, setSetpointInput] = useState("100");
   const [rampForm, setRampForm] = useState({ init_w: "0", target_w: "200", rate_w_per_s: "10" });
@@ -491,7 +510,7 @@ export function App() {
   } as const;
 
   return (
-    <div className="app">
+    <div className={`app ${showHelp ? "" : "help-off"}`}>
       <header className="topbar">
         <span className="brand">
           T<span className="amp">&amp;</span>C Power Interface
@@ -515,6 +534,13 @@ export function App() {
             Experimental
           </button>
         </span>
+        <button
+          className={`help-toggle ${showHelp ? "on" : ""}`}
+          onClick={toggleHelp}
+          title={showHelp ? "Hide explanatory text" : "Show explanatory text"}
+        >
+          ? Help
+        </button>
         <span className={`pill ${pillState}`}>
           <span className="dot" />
           {pillState}
@@ -800,7 +826,8 @@ export function App() {
             <section className="panel">
               <h2>Matching network</h2>
               <div className="lock-badge">
-                🔒 Manual tuning — locked on. The built-in auto-tuner (ATUNE) is never engaged.
+                🔒 Manual tuning — locked on.
+                <span className="help-text"> The built-in auto-tuner (ATUNE) is never engaged.</span>
               </div>
               <div className="hint" style={{ marginTop: "6px" }}>
                 Tune / load cap positions (0.1% steps). Type a value, or use −/+ (hold to repeat) for
@@ -995,7 +1022,7 @@ export function App() {
 
             <section className="panel">
               <h2>Match tuner</h2>
-              <div className="banner experimental">
+              <div className="banner experimental help-text">
                 <strong>Experimental — untested on hardware.</strong> Perturb-and-observe on reverse
                 power: it trims the tune/load caps toward the local minimum as the load drifts. It
                 never enables RF and only drives caps in <em>auto</em> while armed and RF is on.
@@ -1370,7 +1397,7 @@ export function App() {
                 <div className="col">
                   <section className="panel">
                     <h2>Thermal control (closed loop)</h2>
-                    <div className="banner warn" style={{ margin: "0 0 12px" }}>
+                    <div className="banner warn help-text" style={{ margin: "0 0 12px" }}>
                       <strong>Experimental — untested.</strong> Not validated on hardware. It only
                       adjusts the RF setpoint (it never enables RF) and disarms on any fault — one of
                       the later things to test.
@@ -1487,7 +1514,7 @@ export function App() {
 
                   <section className="panel">
                     <h2>Pulse mode</h2>
-                    <div className="banner warn" style={{ margin: "0 0 12px" }}>
+                    <div className="banner warn help-text" style={{ margin: "0 0 12px" }}>
                       <strong>Experimental — simulator only.</strong> Models the generator's PULSE
                       waveform by gating the setpoint on/off; it never enables RF. The real unit's
                       PULSE serial command is unverified, so this is not wired to hardware yet.

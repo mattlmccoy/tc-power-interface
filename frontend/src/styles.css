@@ -319,3 +319,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .power-row > div:first-child { border-top: 0; padding-top: 0; }
   .gauge-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Help-text visibility: a topbar toggle hides all explanatory prose (non-status hints + the
+   experimental banners), keeping live status (.hint.mono), values, and safety indicators. */
+.help-toggle { background: transparent; color: var(--muted); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); padding: 4px 10px; font-size: 11px; font-family: var(--font-ui);
+  cursor: pointer; margin-right: calc(var(--space) * 2); }
+.help-toggle:hover { color: var(--fg); }
+.help-toggle.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.help-off .hint:not(.mono) { display: none; }
+.help-off .help-text { display: none; }
