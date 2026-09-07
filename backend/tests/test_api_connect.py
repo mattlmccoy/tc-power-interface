@@ -63,3 +63,28 @@ def test_connect_then_disconnect_simulator(tmp_path):
         s = c.get("/api/status").json()
         assert s["controller"]["state"] == "disconnected"
         assert s["controller"]["telemetry"] is None
+
+
+def test_connect_is_disarmed_until_armed(tmp_path):
+    """A runtime-connected device is read-only (disarmed) until the ARM button is pressed."""
+    with _idle_client(tmp_path) as c:
+        c.post("/api/connect", json={"backend": "simulated"})
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if c.get("/api/status").json()["controller"]["state"] == "connected":
+                break
+            time.sleep(0.05)
+        ctrl = c.get("/api/status").json()["controller"]
+        assert ctrl["state"] == "connected"
+        assert ctrl["armed"] is False  # read-only on connect
+        # Control is refused while disarmed (RF enable -> 409, setpoint -> 409).
+        assert c.post("/api/rf/enable").status_code == 409
+        assert c.post("/api/setpoint", json={"watts": 100}).status_code == 409
+        # ARM -> control allowed.
+        assert c.post("/api/arm").status_code == 200
+        assert c.get("/api/status").json()["controller"]["armed"] is True
+        assert c.post("/api/setpoint", json={"watts": 100}).status_code == 200
+        # DISARM -> read-only again.
+        assert c.post("/api/disarm").status_code == 200
+        assert c.get("/api/status").json()["controller"]["armed"] is False
+        c.post("/api/disconnect")

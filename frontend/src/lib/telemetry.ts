@@ -42,6 +42,7 @@ export interface SafetyLimitsStatus extends SafetyLimitsForm {
 
 export interface Snapshot {
   state: "disconnected" | "connected" | "fault" | "closed";
+  armed: boolean;
   fault_reasons: string[];
   warnings: string[];
   telemetry: Telemetry | null;

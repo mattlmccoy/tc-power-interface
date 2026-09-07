@@ -47,6 +47,11 @@ class Controller:
         #: Backend name ("simulated"/"serial"), set by the app; the thermal loop's arming gate
         #: allows auto-drive freely in sim but requires an explicit arm on real hardware.
         self.backend = "simulated"
+        #: Global control ARM gate. A runtime-connected device (attach_device) starts DISARMED —
+        #: read-only telemetry, all control commands refused — until arm() is called (the UI's ARM
+        #: button; replaces the read-only CLI probe). The boot/start() path stays armed so existing
+        #: flows and tests are unchanged. disarm() drops RF and re-locks control.
+        self.armed = True
 
         self.state = ControllerState.DISCONNECTED
         self.latest_telemetry: Telemetry | None = None
@@ -144,7 +149,46 @@ class Controller:
                 self.device = None
                 self.state = ControllerState.DISCONNECTED
             raise
+        self.armed = False  # runtime-connected devices are read-only until explicitly ARMED
         self._start_polling()
+
+    def arm(self) -> None:
+        """Take control of a connected device (enables the control commands). Only from CONNECTED —
+        clear any fault first. Never enables RF; it only unlocks the control path."""
+        if self.state is not ControllerState.CONNECTED:
+            raise RuntimeError(f"cannot arm in state {self.state.value}")
+        self.armed = True
+
+    def disarm(self) -> None:
+        """Drop control: force RF off and re-lock the control commands. Always allowed."""
+        self.armed = False
+        try:
+            with self._io_lock:
+                if self.device is not None:
+                    self.device.set_rf(False)
+        except Exception:  # noqa: BLE001 - best-effort RF-off on disarm
+            pass
+
+    def _require_armed(self) -> None:
+        if not self.armed:
+            raise RuntimeError("not armed — press ARM to take control of the device")
+
+    def estop(self) -> None:
+        """Emergency stop: force RF off and setpoint 0 on the device (BYPASSING the arm gate) and
+        disarm. Best-effort and safe in any state (no device / disarmed / faulted) — it must never
+        be blocked by a gate."""
+        with self._io_lock:
+            dev = self.device
+            if dev is not None:
+                try:
+                    dev.set_rf(False)
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    dev.set_setpoint(0)
+                except Exception:  # noqa: BLE001
+                    pass
+        self.armed = False
 
     def detach_device(self) -> None:
         """Stop polling, force RF off, release the lease, close the transport, and go DISCONNECTED
@@ -158,6 +202,7 @@ class Controller:
             pass
         with self._lock:
             self.device = None
+            self.armed = False
             self.state = ControllerState.DISCONNECTED
             self.latest_telemetry = None
             self.latest_decision = None
@@ -215,6 +260,7 @@ class Controller:
 
     # --- guarded commands ------------------------------------------------------------------
     def enable_rf(self) -> None:
+        self._require_armed()
         if self.state is ControllerState.FAULT:
             raise RuntimeError(f"cannot enable RF while faulted: {'; '.join(self.fault_reasons)}")
         if self.state is not ControllerState.CONNECTED:
@@ -229,6 +275,7 @@ class Controller:
 
     def set_setpoint(self, watts: int) -> int:
         self._require_device()
+        self._require_armed()
         clamped = self.limits.clamp_setpoint(watts)
         with self._io_lock:
             self.device.set_setpoint(clamped)
@@ -247,11 +294,13 @@ class Controller:
 
     def set_tune_capacity(self, percent: float) -> None:
         self._require_device()
+        self._require_armed()
         with self._io_lock:
             self.device.set_tune_capacity(percent)
 
     def set_load_capacity(self, percent: float) -> None:
         self._require_device()
+        self._require_armed()
         with self._io_lock:
             self.device.set_load_capacity(percent)
 
@@ -262,6 +311,7 @@ class Controller:
             d = self.latest_decision
         return {
             "state": self.state.value,
+            "armed": self.armed,
             "fault_reasons": list(self.fault_reasons),
             "telemetry": None
             if t is None
