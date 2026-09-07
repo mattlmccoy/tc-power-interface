@@ -73,9 +73,15 @@ class RampController:
     def stop(self) -> None:
         self.running = False
 
-    def tick(self, dt_s: float) -> None:
+    def tick(self, dt_s: float, *, rf_on: bool = False) -> None:
+        """Advance the ramp toward target — but ONLY while RF is energised. The switch may be armed
+        before RF-on; while RF is off the ramp HOLDS at its current output (it does not advance the
+        setpoint), matching the AG generator's native RAMP, which only ramps while RF is on. This is
+        also fail-safe: an unknown/absent RF state (default ``False``) holds rather than ramps."""
         if not self.running or self.done:
             return
+        if not rf_on:
+            return  # armed but holding — do not climb the setpoint until RF is on
         target = min(self.plan.target_w, self._max_forward())
         self.output_w = ramp_step(self.output_w, target, self.plan.rate_w_per_s, dt_s)
         self.output_w = max(0.0, min(self.output_w, self._max_forward()))

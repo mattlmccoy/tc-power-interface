@@ -39,7 +39,7 @@ def test_controller_ramps_to_target_and_drives_setpoint():
     rc.start()
     assert fake.last == 0  # init power applied on start
     for _ in range(10):
-        rc.tick(1.0)
+        rc.tick(1.0, rf_on=True)
     assert rc.output_w == 200
     assert fake.last == 200
     assert rc.done is True
@@ -50,7 +50,7 @@ def test_controller_never_exceeds_max_forward():
     rc = RampController(fake, plan=RampPlan(init_w=0, target_w=600, rate_w_per_s=50))
     rc.start()
     for _ in range(20):
-        rc.tick(1.0)
+        rc.tick(1.0, rf_on=True)
     assert fake.last is not None and fake.last <= 150
 
 
@@ -60,3 +60,23 @@ def test_stopped_ramp_does_not_drive():
     # never started
     rc.tick(1.0)
     assert fake.last is None
+
+
+def test_ramp_holds_until_rf_on():
+    """The switch may be armed before RF-on, but the ramp must NOT advance the setpoint until RF is
+    actually energised (matching the AG generator's native RAMP, which only ramps while RF is on)."""
+    fake = FakeController()
+    rc = RampController(fake, plan=RampPlan(init_w=0, target_w=200, rate_w_per_s=50))
+    rc.start()
+    assert fake.last == 0  # init power applied on start
+    # RF still OFF: ticking must hold at init, never climb the setpoint.
+    for _ in range(10):
+        rc.tick(1.0, rf_on=False)
+    assert rc.output_w == 0
+    assert fake.last == 0
+    assert rc.done is False
+    # RF ON: now the ramp advances to target.
+    for _ in range(10):
+        rc.tick(1.0, rf_on=True)
+    assert rc.output_w == 200
+    assert rc.done is True
