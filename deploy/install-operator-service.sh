@@ -5,8 +5,9 @@
 # reachable at http://127.0.0.1:8010 — so the web UI (local or GitHub Pages) always finds it and
 # settings always save. Reversible with ./uninstall-operator-service.sh.
 #
-# Runs the SIMULATOR by default (stable + always reachable). For the real generator, edit the plist
-# (see below) to add:  --backend serial --serial /dev/tty.usbserial-XXXX
+# Boots IDLE by default (no device): open the UI and use the connect popover to discover the serial
+# port and attach the real generator at runtime. (You can still pin a device at startup by editing
+# the plist's ProgramArguments to add:  --serial /dev/tty.usbserial-XXXX)
 set -euo pipefail
 
 LABEL="com.tcpower.operator"
@@ -64,5 +65,5 @@ launchctl bootstrap "$GUI" "$PLIST" 2>/dev/null || launchctl load "$PLIST"
 echo "Installed + started $LABEL"
 echo "  plist:  $PLIST"
 echo "  log:    $LOG"
-echo "  serves: http://127.0.0.1:$PORT  (simulator; edit the plist's ProgramArguments for --backend serial)"
+echo "  serves: http://127.0.0.1:$PORT  (boots idle — connect a generator from the UI's connect popover)"
 echo "Stop/remove it any time with: $SCRIPT_DIR/uninstall-operator-service.sh"
