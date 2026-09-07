@@ -187,10 +187,11 @@ class TestMatchCommandBuilders:
         assert codec.cmd_manual_mode() == b"TM\x00\x02\x00\x00"
 
     def test_capacity_commands(self):
-        # 0.1% resolution: value field is round(percent * 10) as a 2-byte big-endian int.
-        assert codec.cmd_load_capacity(55) == b"TC\x00\x01" + (550).to_bytes(2, "big")
-        assert codec.cmd_tune_capacity(42) == b"TC\x00\x02" + (420).to_bytes(2, "big")
-        assert codec.cmd_tune_capacity(42.5) == b"TC\x00\x02" + (425).to_bytes(2, "big")
+        # WHOLE percent (0-100) as a 2-byte big-endian int — verified on the real AG 0613 2026-09-07
+        # (percent*10 lands out of range and the AIT clamps to full scale).
+        assert codec.cmd_load_capacity(55) == b"TC\x00\x01" + (55).to_bytes(2, "big")
+        assert codec.cmd_tune_capacity(42) == b"TC\x00\x02" + (42).to_bytes(2, "big")
+        assert codec.cmd_tune_capacity(36.8) == b"TC\x00\x02" + (37).to_bytes(2, "big")  # rounds
 
     def test_capacity_rejects_out_of_range(self):
         with pytest.raises(ValueError):

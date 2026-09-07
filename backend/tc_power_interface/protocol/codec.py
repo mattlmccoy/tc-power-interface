@@ -257,14 +257,19 @@ def cmd_manual_mode() -> bytes:
 
 
 def cmd_load_capacity(percent: float) -> bytes:
-    """Command to set load-capacity percent (requires manual mode). 0.1% resolution."""
+    """Command to set load-capacity percent (requires manual mode).
+
+    The AG 0613 commands caps in WHOLE percent (0-100). Verified on the real unit 2026-09-07:
+    sending percent*10 lands out of range and the AIT clamps to full scale (the "drove to max" bug).
+    """
     if not 0 <= percent <= 100:
         raise ValueError(f"load capacity {percent}% out of range 0..100")
-    return b"TC\x00\x01" + round(percent * 10).to_bytes(2, "big")
+    return b"TC\x00\x01" + round(percent).to_bytes(2, "big")
 
 
 def cmd_tune_capacity(percent: float) -> bytes:
-    """Command to set tune-capacity percent (requires manual mode). 0.1% resolution."""
+    """Command to set tune-capacity percent (requires manual mode). WHOLE percent (0-100); see
+    :func:`cmd_load_capacity` for why (verified on the real AG 0613 2026-09-07)."""
     if not 0 <= percent <= 100:
         raise ValueError(f"tune capacity {percent}% out of range 0..100")
-    return b"TC\x00\x02" + round(percent * 10).to_bytes(2, "big")
+    return b"TC\x00\x02" + round(percent).to_bytes(2, "big")
