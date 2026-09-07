@@ -41,19 +41,15 @@ function polar(deg: number, r: number): [number, number] {
 export function Gauge({ label, value, max, unit = "W", caution = null, danger = null }: Props) {
   const v = value ?? 0;
   const ang = gaugeAngle(v, 0, max, -THETA, THETA);
-  const a = (ang * Math.PI) / 180;
-  const px = Math.cos(a);
-  const py = Math.sin(a); // perpendicular to the radial direction
   // Floating pointer: a short thick tapered needle just inside the arc (bottom truncated — it does
-  // not reach the off-screen pivot), with a small hub at its base.
-  const [tipx, tipy] = polar(ang, R - 3);
-  const [basex, basey] = polar(ang, R - 46);
+  // not reach the off-screen pivot), with a small hub at its base. It is drawn ONCE at the straight-
+  // up reference (ang = 0) and rotated to `ang` with a CSS transform around the virtual pivot
+  // (CX, CY), so the needle GLIDES between readings (CSS transition) instead of snapping.
   const bH = 3.4; // base half-width (thick)
   const tH = 0.9; // tip half-width (near a point)
-  const nb1 = `${(basex + bH * px).toFixed(1)},${(basey + bH * py).toFixed(1)}`;
-  const nb2 = `${(basex - bH * px).toFixed(1)},${(basey - bH * py).toFixed(1)}`;
-  const nt1 = `${(tipx + tH * px).toFixed(1)},${(tipy + tH * py).toFixed(1)}`;
-  const nt2 = `${(tipx - tH * px).toFixed(1)},${(tipy - tH * py).toFixed(1)}`;
+  const baseY = CY - (R - 46); // needle base y at ang = 0
+  const tipY = CY - (R - 3); // needle tip y at ang = 0
+  const needlePts = `${CX + bH},${baseY} ${CX + tH},${tipY} ${CX - tH},${tipY} ${CX - bH},${baseY}`;
 
   // Caution/danger zones (from Settings): a yellow band caution→danger and a red band danger→max.
   const arcAt = (a0: number, a1: number, r: number) => {
@@ -128,8 +124,17 @@ export function Gauge({ label, value, max, unit = "W", caution = null, danger = 
           <path d={arcAt(angW(dangerW as number), THETA, zoneR)} fill="none" stroke={RED} strokeWidth="5" />
         ) : null}
         {ticks}
-        <polygon points={`${nb1} ${nt1} ${nt2} ${nb2}`} fill={NEEDLE} />
-        <circle cx={basex.toFixed(1)} cy={basey.toFixed(1)} r="4" fill={NEEDLE} />
+        <g
+          className="gauge-needle"
+          style={{
+            transform: `rotate(${ang}deg)`,
+            transformOrigin: `${CX}px ${CY}px`,
+            transformBox: "view-box",
+          }}
+        >
+          <polygon points={needlePts} fill={NEEDLE} />
+          <circle cx={CX} cy={baseY} r="4" fill={NEEDLE} />
+        </g>
       </svg>
       <div className="gauge-readout">
         {value === null ? "—" : v.toFixed(0)} <span className="gauge-unit">{unit}</span>

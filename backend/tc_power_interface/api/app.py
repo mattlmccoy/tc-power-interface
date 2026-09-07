@@ -244,7 +244,11 @@ def create_app(
                 max_forward_w=active_limits.max_forward_w,
             ),
         )
-        controller.add_listener(lambda _snap: ramp.tick(poll_interval_s))
+        controller.add_listener(
+            lambda snap: ramp.tick(
+                poll_interval_s, rf_on=bool((snap.get("telemetry") or {}).get("rf_on"))
+            )
+        )
         app.state.ramp = ramp
 
         # Auto-shutoff timer (1-99 min -> RF off); ticks from the poll. Only ever disables RF.
