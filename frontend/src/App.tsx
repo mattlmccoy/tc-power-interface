@@ -5,6 +5,7 @@ import { Gauge } from "./components/Gauge.tsx";
 import { StatusLeds } from "./components/StatusLeds.tsx";
 import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
+import type { SerialPort } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
 import { capVolts, clampCap, generatorModes, LOAD_VOLTS, tempBar, TUNE_VOLTS } from "./lib/instrument.ts";
@@ -31,7 +32,10 @@ const REFLECT_PLOT_CEIL = 15; // history-plot reflected % y-scale
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
-  const [connected, setConnected] = useState(false);
+  // `reachable` = the operator's WebSocket is open (we can talk to it). `connected` (derived below)
+  // additionally requires a device to be attached — with idle boot the operator is reachable long
+  // before any generator is connected.
+  const [reachable, setReachable] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [view, setView] = useState<"dashboard" | "settings" | "experimental">("dashboard");
   const [showGauges, setShowGauges] = useState<boolean>(() => {
@@ -116,6 +120,51 @@ export function App() {
     setBaseInput(operatorBase());
   };
 
+  // Connect popover: operator address + runtime device discovery/connect (mirrors FLIR's setup).
+  const [showConnect, setShowConnect] = useState(false);
+  const [ports, setPorts] = useState<SerialPort[] | null>(null);
+  const [connectBusy, setConnectBusy] = useState<string | null>(null);
+  const [connectErr, setConnectErr] = useState<string | null>(null);
+  async function scanPorts() {
+    setConnectBusy("scanning");
+    setConnectErr(null);
+    try {
+      setPorts((await api.discovery()).ports);
+    } catch {
+      setConnectErr("could not reach the operator — check the address above");
+      setPorts(null);
+    } finally {
+      setConnectBusy(null);
+    }
+  }
+  async function connectPort(port: string) {
+    setConnectBusy(port);
+    setConnectErr(null);
+    try {
+      const res = await api.connect("serial", port);
+      if (res.ok) {
+        setShowConnect(false);
+      } else {
+        setConnectErr(await detail(res));
+      }
+    } catch {
+      setConnectErr("could not reach the operator — check the address above");
+    } finally {
+      setConnectBusy(null);
+    }
+  }
+  async function disconnectDevice() {
+    setConnectBusy("disconnect");
+    setConnectErr(null);
+    try {
+      await api.disconnect();
+    } catch {
+      /* operator unreachable — nothing to disconnect */
+    } finally {
+      setConnectBusy(null);
+    }
+  }
+
   const fillLimForm = (s: SafetyLimitsStatus) => {
     setLimitsStatus(s);
     setLimForm({
@@ -145,7 +194,7 @@ export function App() {
     let retry: ReturnType<typeof setTimeout> | undefined;
     const connect = () => {
       ws = new WebSocket(wsUrl(base, "/ws/telemetry"));
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => setReachable(true);
       ws.onmessage = (ev) => {
         const s = JSON.parse(ev.data) as Status;
         setStatus(s);
@@ -159,7 +208,7 @@ export function App() {
         }
       };
       ws.onclose = () => {
-        setConnected(false);
+        setReachable(false);
         if (!closed) retry = setTimeout(connect, 1000);
       };
       ws.onerror = () => ws?.close();
@@ -282,7 +331,14 @@ export function App() {
     f == null ? "—" : `${(f * 100).toFixed(1)}%`;
   const fmtDelta = (d: number): string => `${d >= 0 ? "+" : ""}${d.toFixed(1)}%`;
   const state = ctrl?.state ?? "disconnected";
-  const pillState = !connected ? "disconnected" : state === "fault" ? "fault" : "connected";
+  // A device is usable only when the operator is reachable AND a generator is attached (CONNECTED).
+  // FAULT still counts as connected (a device is there) so fault handling/controls behave.
+  const connected = reachable && (state === "connected" || state === "fault");
+  const pillState = !reachable || state === "disconnected"
+    ? "disconnected"
+    : state === "fault"
+      ? "fault"
+      : "connected";
   const faulted = state === "fault";
   const maxRefl = limits?.max_reflected_w ?? 25;
   const reflW = t?.reverse_w ?? 0;
@@ -541,10 +597,112 @@ export function App() {
         >
           ? Help
         </button>
-        <span className={`pill ${pillState}`}>
-          <span className="dot" />
-          {pillState}
-        </span>
+        <div className="connect-wrap">
+          <button
+            className={`pill ${pillState}`}
+            onClick={() => {
+              setShowConnect((v) => !v);
+              if (ports === null) void scanPorts();
+            }}
+            title="Connect a generator / set the operator address"
+          >
+            <span className="dot" />
+            {pillState}
+            <span className="pill-caret">▾</span>
+          </button>
+          {showConnect ? (
+            <div className="connect-pop">
+              <div className="connect-head">
+                <strong>Connection</strong>
+                <button className="pop-close" onClick={() => setShowConnect(false)}>
+                  ✕
+                </button>
+              </div>
+
+              {SITE_MODE ? (
+                <div className="connect-sec">
+                  <label className="field-label">Operator address</label>
+                  <div className="connect-row">
+                    <input
+                      value={baseInput}
+                      onChange={(e) => setBaseInput(e.target.value)}
+                      placeholder="http://localhost:8010"
+                      spellCheck={false}
+                    />
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        applyBase();
+                        setPorts(null);
+                        setConnectErr(null);
+                      }}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  <div className="hint help-text">
+                    The local operator that serves your generator. Default{" "}
+                    <code>http://localhost:8010</code>.
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="connect-sec">
+                <div className="connect-row connect-row-head">
+                  <label className="field-label">Device</label>
+                  <button className="btn" onClick={scanPorts} disabled={connectBusy === "scanning"}>
+                    {connectBusy === "scanning" ? "Scanning…" : "Scan"}
+                  </button>
+                </div>
+
+                {connected ? (
+                  <div className="connect-current">
+                    <span>
+                      Connected{device?.id ? ` — ${device.id}` : ""}
+                    </span>
+                    <button
+                      className="btn danger"
+                      onClick={disconnectDevice}
+                      disabled={connectBusy === "disconnect"}
+                    >
+                      {connectBusy === "disconnect" ? "…" : "Disconnect"}
+                    </button>
+                  </div>
+                ) : ports === null ? (
+                  <div className="hint">Scan to find the generator's serial port.</div>
+                ) : ports.length === 0 ? (
+                  <div className="errbox">
+                    No serial ports found. Plug in the generator's USB-serial cable and Scan again.
+                  </div>
+                ) : (
+                  <ul className="port-list">
+                    {ports.map((p) => (
+                      <li key={p.device}>
+                        <div className="port-info">
+                          <div className="port-name">{p.description || p.device}</div>
+                          <code>{p.device}</code>
+                        </div>
+                        <button
+                          className="btn accent"
+                          onClick={() => connectPort(p.device)}
+                          disabled={connectBusy !== null}
+                        >
+                          {connectBusy === p.device ? "Connecting…" : "Connect"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {connectErr ? <div className="errbox">{connectErr}</div> : null}
+                <div className="hint help-text">
+                  Connecting is read-only — RF stays off. Verify readings against the front panel
+                  before enabling RF (this unit's protocol is unconfirmed).
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </header>
 
       {faulted ? (

@@ -1,7 +1,9 @@
 """``tcp-serve`` entry point: run the FastAPI app with uvicorn.
 
-Defaults to the simulator on 127.0.0.1:8000. Pass ``--serial <port>`` to drive a real
-generator over its serial/USB port (opt-in; see the safety notes in the package docstring).
+Boots IDLE by default (no device): the UI's connect popover discovers serial ports and attaches a
+generator at runtime — mirroring the FLIR tool. Pass ``--serial <port>`` (or ``--backend serial``)
+to attach a real generator at startup, or ``--backend simulated`` for the in-process simulator. See
+the package docstring's safety notes; the real unit's protocol is unverified (probe read-only).
 """
 
 from __future__ import annotations
@@ -18,7 +20,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the T&C Power interface")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8010)  # 8000 is FLIR's; avoid the collision
-    parser.add_argument("--backend", default="simulated", choices=["simulated", "serial"])
+    parser.add_argument(
+        "--backend",
+        default="none",
+        choices=["none", "simulated", "serial"],
+        help="none = boot idle and connect via the UI (default); simulated; serial",
+    )
     parser.add_argument("--serial", default=None, help="serial port; implies --backend serial")
     parser.add_argument("--poll-interval", type=float, default=0.5)
     parser.add_argument("--experiments-root", default=None, type=Path)

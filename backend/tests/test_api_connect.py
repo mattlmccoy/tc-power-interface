@@ -29,13 +29,17 @@ def test_discovery_lists_ports(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "serial.tools.list_ports.comports",
-        lambda: [_P("/dev/tty.usbserial-A1", "USB Serial", "USB VID:PID=0403:6001")],
+        lambda: [
+            _P("/dev/tty.usbserial-A1", "USB Serial", "USB VID:PID=0403:6001"),
+            _P("/dev/cu.Bluetooth-Incoming-Port", "n/a", "n/a"),  # macOS noise -> filtered
+        ],
     )
     with _idle_client(tmp_path) as c:
         d = c.get("/api/discovery").json()
         assert d["connected"] is None  # nothing attached at idle boot
         ports = {p["device"] for p in d["ports"]}
         assert "/dev/tty.usbserial-A1" in ports
+        assert "/dev/cu.Bluetooth-Incoming-Port" not in ports  # noise filtered out
 
 
 def test_connect_then_disconnect_simulator(tmp_path):

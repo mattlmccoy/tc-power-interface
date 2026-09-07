@@ -410,9 +410,12 @@ def create_app(
         """List serial ports the operator can connect to, plus the current connection (if any)."""
         from serial.tools import list_ports
 
+        # Skip macOS pseudo-ports that are never a generator (keeps the popover uncluttered).
+        noise = ("Bluetooth-Incoming-Port", "debug-console", "wlan-debug")
         ports = [
             {"device": p.device, "description": p.description or "", "hwid": p.hwid or ""}
             for p in list_ports.comports()
+            if not any(n in p.device for n in noise)
         ]
         ctrl = _controller()
         connected = None

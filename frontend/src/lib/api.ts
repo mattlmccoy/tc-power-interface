@@ -26,6 +26,19 @@ export interface FlirLink {
   last_result: FlirLinkResult;
 }
 
+/** A serial port the operator can connect to (from GET /api/discovery). */
+export interface SerialPort {
+  device: string;
+  description: string;
+  hwid: string;
+}
+
+/** GET /api/discovery — available ports plus the current connection (null when idle). */
+export interface Discovery {
+  ports: SerialPort[];
+  connected: { backend: string; port: string | null } | null;
+}
+
 /** Site mode: the UI is served from GitHub Pages and talks to a local operator. */
 export const SITE_MODE = import.meta.env?.VITE_SITE_MODE === "1";
 
@@ -79,6 +92,9 @@ export async function detail(res: Response): Promise<string> {
 
 export const api = {
   status: async (): Promise<Status> => (await fetch(apiUrl(BASE, "/api/status"))).json(),
+  discovery: async (): Promise<Discovery> => (await fetch(apiUrl(BASE, "/api/discovery"))).json(),
+  connect: (backend: string, serial?: string) => post("/api/connect", { backend, serial }),
+  disconnect: () => post("/api/disconnect"),
   setSetpoint: (watts: number) => post("/api/setpoint", { watts }),
   rfEnable: () => post("/api/rf/enable"),
   rfDisable: () => post("/api/rf/disable"),
