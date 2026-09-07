@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
 
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Gauge } from "./components/Gauge.tsx";
@@ -8,7 +8,7 @@ import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api
 import type { SerialPort, Health } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
-import { capVolts, capPercentForVolts, clampCap, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
+import { approachFromBelow, capPercentForVolts, capSettled, capVolts, clampCap, generatorModes, LOAD_CAL, stepSetpoint, tempBar, TUNE_CAL } from "./lib/instrument.ts";
 import { checkHandshake, UI_API_VERSION, UI_VERSION, wsUrl } from "./lib/operator.ts";
 import {
   LIMITS_KEY,
@@ -29,6 +29,8 @@ import type {
 
 const FLIR_POLL_MS = 3000;
 const REFLECT_PLOT_CEIL = 15; // history-plot reflected % y-scale
+const SP_FINE = 5; // live power nudge: fine step (W) — ↑/↓ and the ±5 buttons
+const SP_COARSE = 25; // live power nudge: coarse step (W) — Shift+↑/↓ and the ±25 buttons
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -75,6 +77,10 @@ export function App() {
   };
   const [showStartup, setShowStartup] = useState(true); // startup-order popup, every boot
   const [setpointInput, setSetpointInput] = useState("100");
+  // The commanded setpoint as a SYNCHRONOUS number (React state lags a render, so back-to-back live
+  // nudges would read a stale value and under-count). nudge reads/writes this ref; it tracks typing
+  // and the server's clamp so every source stays in sync.
+  const setpointRef = useRef(100);
   const [rampForm, setRampForm] = useState({ init_w: "0", target_w: "200", rate_w_per_s: "10" });
   const [timerMin, setTimerMin] = useState("30");
   const [saveSlot, setSaveSlot] = useState("1");
@@ -86,6 +92,12 @@ export function App() {
   // value; otherwise the input/slider MIRROR the device's actual cap position (the AIT is tuned
   // physically/analog, so the readback is the truth — the UI must show where the caps really are).
   const capsTouchedAt = useRef(0);
+  // Live cap readback (kept in a ref so the backlash-comp Set can POLL the freshest device position
+  // from inside an async handler — React state is a stale snapshot inside a closure).
+  const capReadRef = useRef<{ tune: number | null; load: number | null }>({ tune: null, load: null });
+  // Which cap (if any) is mid backlash-compensated Set — gates the Set buttons/inputs so a second
+  // press can't interleave with the two-step motion on a live matching network.
+  const [capBusy, setCapBusy] = useState<null | "tune" | "load">(null);
   const [runName, setRunName] = useState("");
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [autoLog, setAutoLog] = useState(true);
@@ -215,6 +227,7 @@ export function App() {
         if (s.recording?.run) setLastRun(s.recording.run);
         const tel = s.controller.telemetry;
         if (tel) {
+          capReadRef.current = { tune: tel.tune_cap_percent ?? null, load: tel.load_cap_percent ?? null };
           const ts = tel.host_timestamp_ns / 1e9;
           fwdBuf.current.push(ts, tel.forward_w);
           reflBuf.current.push(ts, tel.reflected_fraction * 100);
@@ -410,15 +423,48 @@ export function App() {
     await api.estop();
     flash("E-STOP — RF off, setpoint 0, all drivers halted", "warn");
   }
+  // Send a forward-power setpoint and reflect what the server actually applied. The input jumps to
+  // the requested value immediately (so the live −/+ feels responsive), then corrects to applied_w
+  // only if the server clamped. `announce` gives the explicit Apply a confirmation toast; the live
+  // nudges stay quiet on success (a toast per click would be noise) but still warn on a clamp/error.
+  async function sendSetpoint(watts: number, announce: boolean) {
+    setpointRef.current = watts; // synchronous, so a fast follow-up nudge reads this, not stale state
+    setSetpointInput(String(watts));
+    const res = await api.setSetpoint(watts);
+    if (!res.ok) {
+      flash(await detail(res));
+      return;
+    }
+    const j = await res.json();
+    if (j.applied_w !== watts) {
+      setpointRef.current = j.applied_w;
+      setSetpointInput(String(j.applied_w));
+      flash(`setpoint clamped to ${j.applied_w} W`, "warn");
+    } else if (announce) {
+      flash(`setpoint applied: ${j.applied_w} W`, "ok");
+    }
+  }
   async function applySetpoint() {
     const watts = Number(setpointInput);
     if (Number.isNaN(watts)) return flash("setpoint must be a number");
-    const res = await api.setSetpoint(watts);
-    if (res.ok) {
-      const j = await res.json();
-      flash(`setpoint applied: ${j.applied_w} W${j.applied_w !== watts ? " (clamped)" : ""}`, "ok");
-    } else {
-      flash(await detail(res));
+    await sendSetpoint(Math.round(watts), true);
+  }
+  // Live power nudge: no Apply — each press sends instantly, clamped to the forward-power ceiling.
+  // Only when controllable (armed + connected). SP_FINE/SP_COARSE are the fine/coarse step sizes.
+  function nudgeSetpoint(delta: number) {
+    if (!controllable) return;
+    const next = stepSetpoint(setpointRef.current, delta, limits?.max_forward_w ?? Number.NaN);
+    void sendSetpoint(next, false);
+  }
+  // Keyboard on the setpoint field: ↑/↓ nudge by the fine step, Shift+↑/↓ by the coarse step, Enter
+  // applies. preventDefault stops the number input's native ±1 step (which would bypass the send).
+  function onSetpointKey(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const step = e.shiftKey ? SP_COARSE : SP_FINE;
+      nudgeSetpoint(e.key === "ArrowUp" ? step : -step);
+    } else if (e.key === "Enter") {
+      void applySetpoint();
     }
   }
   async function startRamp() {
@@ -502,21 +548,51 @@ export function App() {
   const bumpActive = (d: number) => (activeCap === "tune" ? bumpTune(d) : bumpLoad(d));
 
   // Voltage-driven cap tuning: type the target control voltage from the VNA, snap to the nearest
-  // whole percent (the generator's real resolution), send it. Cleared after apply.
+  // whole percent (the generator's real resolution). Cleared after apply.
   const [tuneVIn, setTuneVIn] = useState("");
   const [loadVIn, setLoadVIn] = useState("");
-  function applyTuneVolts() {
-    const v = Number(tuneVIn);
-    if (Number.isNaN(v) || tuneVIn.trim() === "") return flash("enter a tune voltage");
-    void sendTune(capPercentForVolts(v, TUNE_CAL));
-    setTuneVIn("");
+  // Poll the LIVE device readback (via capReadRef) until the named cap has reached `target` within
+  // `tol` whole percent, or `timeoutMs` elapses. The AIT motor is slow — this waits it out between
+  // the two steps of an approach-from-below so the final motion is genuinely upward.
+  function waitCapSettle(which: "tune" | "load", target: number, tol = 2, timeoutMs = 12000): Promise<void> {
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const tick = () => {
+        if (capSettled(capReadRef.current[which], target, tol) || Date.now() - t0 >= timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 250);
+      };
+      tick();
+    });
   }
-  function applyLoadVolts() {
-    const v = Number(loadVIn);
-    if (Number.isNaN(v) || loadVIn.trim() === "") return flash("enter a load voltage");
-    void sendLoad(capPercentForVolts(v, LOAD_CAL));
-    setLoadVIn("");
+  // Backlash-compensated Set: land the cap on the target from BELOW. The AIT has mechanical backlash,
+  // so the %↔V map is a hysteresis loop — approaching from above vs below lands at a slightly
+  // different voltage (measured ~+0.8% vs +0.2% off). Matt swept the calibration going UP, so we
+  // finish going UP: overshoot to target−margin, wait for the motor to reach it, then step up to the
+  // target. capBusy gates re-entry so a second press can't interleave with the motion.
+  async function applyCapVolts(which: "tune" | "load", vin: string, cal: typeof TUNE_CAL): Promise<void> {
+    const v = Number(vin);
+    if (Number.isNaN(v) || vin.trim() === "") return flash(`enter a ${which} voltage`);
+    if (capBusy) return; // a Set is already in flight
+    const send = which === "tune" ? sendTune : sendLoad;
+    const setVin = which === "tune" ? setTuneVIn : setLoadVIn;
+    const [pre, target] = approachFromBelow(capPercentForVolts(v, cal));
+    setVin("");
+    setCapBusy(which);
+    try {
+      await send(pre); // step 1: drop below the target (takes up backlash in the down direction)
+      await waitCapSettle(which, pre); // wait out the slow motor
+      await send(target); // step 2: finish UP onto the target
+    } catch {
+      flash(`${which} cap set failed`);
+    } finally {
+      setCapBusy(null);
+    }
   }
+  const applyTuneVolts = () => void applyCapVolts("tune", tuneVIn, TUNE_CAL);
+  const applyLoadVolts = () => void applyCapVolts("load", loadVIn, LOAD_CAL);
   async function applyFlirLink(url: string, enabled: boolean) {
     try {
       const res = await api.setFlirLink(url.trim(), enabled);
@@ -941,15 +1017,38 @@ export function App() {
                       type="number"
                       min={0}
                       value={setpointInput}
-                      onChange={(e) => setSetpointInput(e.target.value)}
+                      onChange={(e) => {
+                        setSetpointInput(e.target.value);
+                        const n = Number(e.target.value);
+                        if (e.target.value.trim() !== "" && !Number.isNaN(n)) setpointRef.current = n;
+                      }}
+                      onKeyDown={onSetpointKey}
                     />
                     <span className="setpoint-unit">W</span>
                     <button className="btn accent" onClick={applySetpoint} disabled={!controllable}>
                       Apply
                     </button>
                   </div>
+                  {/* Live power nudge — each press sends instantly (no Apply), clamped to the ceiling.
+                      Single-click only (no auto-repeat), like the cap steppers. ↑/↓ = ±fine on the
+                      field, Shift+↑/↓ = ±coarse. */}
+                  <div className="setpoint-nudge">
+                    <button className="btn step-btn" onClick={() => nudgeSetpoint(-SP_COARSE)} disabled={!controllable}>
+                      −{SP_COARSE}
+                    </button>
+                    <button className="btn step-btn" onClick={() => nudgeSetpoint(-SP_FINE)} disabled={!controllable}>
+                      −{SP_FINE}
+                    </button>
+                    <button className="btn step-btn" onClick={() => nudgeSetpoint(SP_FINE)} disabled={!controllable}>
+                      +{SP_FINE}
+                    </button>
+                    <button className="btn step-btn" onClick={() => nudgeSetpoint(SP_COARSE)} disabled={!controllable}>
+                      +{SP_COARSE}
+                    </button>
+                  </div>
                   <div className="hint">
-                    Ceiling {limits?.max_forward_w ?? "—"} W (clamped). Edit in Settings.
+                    Live −/+ sends at once (no Apply) · ↑/↓ ±{SP_FINE}, Shift ±{SP_COARSE} W · ceiling{" "}
+                    {limits?.max_forward_w ?? "—"} W (clamped). Edit in Settings.
                   </div>
                   <div className="setpoint-ramp">
                     <label className="switch" title="Ramp 0 → setpoint at the set rate">
@@ -1089,7 +1188,8 @@ export function App() {
               </div>
               <div className="hint" style={{ marginTop: "6px" }}>
                 Set a cap to a target VNA voltage (snaps to the nearest whole percent — the
-                generator's 1% resolution), or nudge % with −/+.
+                generator's 1% resolution). Set always lands from below to cancel the AIT's
+                backlash, so it takes a few seconds. Or nudge % with −/+.
               </div>
 
               {/* Tune cap: voltage-primary, whole-percent steppers */}
@@ -1112,20 +1212,20 @@ export function App() {
                   step={0.01}
                   placeholder="target"
                   value={tuneVIn}
-                  disabled={!controllable}
+                  disabled={!controllable || capBusy === "tune"}
                   onChange={(e) => setTuneVIn(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && applyTuneVolts()}
                 />
                 <span className="cap-vunit">V</span>
-                <button className="btn" onClick={applyTuneVolts} disabled={!controllable}>
-                  Set
+                <button className="btn" onClick={applyTuneVolts} disabled={!controllable || capBusy === "tune"}>
+                  {capBusy === "tune" ? "Set…" : "Set"}
                 </button>
                 <span className="cap-ctl-gap" />
-                <button className="btn step-btn" onClick={() => bumpTune(-1)} disabled={!controllable}>
+                <button className="btn step-btn" onClick={() => bumpTune(-1)} disabled={!controllable || capBusy === "tune"}>
                   −
                 </button>
                 <span className="cap-pct">{tune}%</span>
-                <button className="btn step-btn" onClick={() => bumpTune(1)} disabled={!controllable}>
+                <button className="btn step-btn" onClick={() => bumpTune(1)} disabled={!controllable || capBusy === "tune"}>
                   +
                 </button>
               </div>
@@ -1135,7 +1235,7 @@ export function App() {
                 max={100}
                 step={1}
                 value={tune}
-                disabled={!controllable}
+                disabled={!controllable || capBusy === "tune"}
                 onChange={(e) => sendTune(Number(e.target.value))}
               />
 
@@ -1159,20 +1259,20 @@ export function App() {
                   step={0.01}
                   placeholder="target"
                   value={loadVIn}
-                  disabled={!controllable}
+                  disabled={!controllable || capBusy === "load"}
                   onChange={(e) => setLoadVIn(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && applyLoadVolts()}
                 />
                 <span className="cap-vunit">V</span>
-                <button className="btn" onClick={applyLoadVolts} disabled={!controllable}>
-                  Set
+                <button className="btn" onClick={applyLoadVolts} disabled={!controllable || capBusy === "load"}>
+                  {capBusy === "load" ? "Set…" : "Set"}
                 </button>
                 <span className="cap-ctl-gap" />
-                <button className="btn step-btn" onClick={() => bumpLoad(-1)} disabled={!controllable}>
+                <button className="btn step-btn" onClick={() => bumpLoad(-1)} disabled={!controllable || capBusy === "load"}>
                   −
                 </button>
                 <span className="cap-pct">{load}%</span>
-                <button className="btn step-btn" onClick={() => bumpLoad(1)} disabled={!controllable}>
+                <button className="btn step-btn" onClick={() => bumpLoad(1)} disabled={!controllable || capBusy === "load"}>
                   +
                 </button>
               </div>
@@ -1182,7 +1282,7 @@ export function App() {
                 max={100}
                 step={1}
                 value={load}
-                disabled={!controllable}
+                disabled={!controllable || capBusy === "load"}
                 onChange={(e) => sendLoad(Number(e.target.value))}
               />
 

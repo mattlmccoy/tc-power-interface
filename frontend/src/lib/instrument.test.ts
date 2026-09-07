@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  approachFromBelow,
+  capSettled,
   capVolts,
   capPercentForVolts,
   clampCap,
@@ -10,9 +12,22 @@ import {
   generatorModes,
   LOAD_CAL,
   statusLeds,
+  stepSetpoint,
   tempBar,
   TUNE_CAL,
 } from "./instrument.ts";
+
+test("stepSetpoint nudges by delta, rounds to whole watts, clamps to [0,max]", () => {
+  assert.equal(stepSetpoint(120, 5, 250), 125);
+  assert.equal(stepSetpoint(120, -5, 250), 115);
+  assert.equal(stepSetpoint(120, 25, 250), 145);
+  assert.equal(stepSetpoint(240, 25, 250), 250); // clamps to ceiling
+  assert.equal(stepSetpoint(3, -5, 250), 0); // clamps to floor
+  assert.equal(stepSetpoint(120.4, 5, 250), 125); // rounds the result to whole watts
+  assert.equal(stepSetpoint(Number.NaN, 5, 250), 5); // empty/NaN input -> base 0
+  assert.equal(stepSetpoint(Number.NaN, -5, 250), 0); // 0-5 -> clamped to 0
+  assert.equal(stepSetpoint(100, 5, Number.NaN), 105); // no finite ceiling -> no upper clamp
+});
 
 test("capVolts interpolates the measured %->V calibration (2026-09-07 rematch)", () => {
   // exact table points
@@ -26,6 +41,24 @@ test("capVolts interpolates the measured %->V calibration (2026-09-07 rematch)",
   assert.equal(capVolts(100, TUNE_CAL), 4.89);
   assert.equal(capVolts(-5, TUNE_CAL), 0.12);
   assert.equal(capVolts(150, TUNE_CAL), 4.89);
+});
+
+test("approachFromBelow returns [target-margin, target], clamped, whole percent", () => {
+  assert.deepEqual(approachFromBelow(55), [52, 55]);
+  assert.deepEqual(approachFromBelow(2), [0, 2]); // margin clamps to 0
+  assert.deepEqual(approachFromBelow(100), [97, 100]);
+  assert.deepEqual(approachFromBelow(35.6), [33, 36]); // target rounds to whole percent first
+  assert.deepEqual(approachFromBelow(50, 5), [45, 50]);
+});
+
+test("capSettled: readback is within tolerance of target (inclusive), null read never settled", () => {
+  assert.equal(capSettled(52, 52), true); // exact
+  assert.equal(capSettled(53.9, 52, 2), true); // 1.9 <= 2
+  assert.equal(capSettled(50.1, 52, 2), true); // 1.9 <= 2 (from below)
+  assert.equal(capSettled(54, 52, 2), true); // boundary 2 <= 2 inclusive
+  assert.equal(capSettled(55, 52, 2), false); // 3 > 2
+  assert.equal(capSettled(null, 52, 2), false); // no readback -> not settled
+  assert.equal(capSettled(Number.NaN, 52, 2), false); // NaN -> not settled
 });
 
 test("capPercentForVolts inverts the calibration to a whole percent (generator is 1% steps)", () => {

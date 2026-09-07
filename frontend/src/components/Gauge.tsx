@@ -137,7 +137,9 @@ export function Gauge({ label, value, max, unit = "W", caution = null, danger = 
         </g>
       </svg>
       <div className="gauge-readout">
-        {value === null ? "—" : v.toFixed(0)} <span className="gauge-unit">{unit}</span>
+        {/* 1 decimal = the real value the generator reports (it delivers e.g. 120.5 W at a 120 W
+            setpoint); rounding to a whole number showed a phantom +1 W vs the front panel. */}
+        {value === null ? "—" : v.toFixed(1)} <span className="gauge-unit">{unit}</span>
       </div>
     </div>
   );

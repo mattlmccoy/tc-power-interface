@@ -61,6 +61,22 @@ export function capVolts(percent: number, cal: CapCal): number {
   return hi[1];
 }
 
+/** Two whole-percent steps to land a cap on ``target`` from BELOW — cancels the AIT's mechanical
+ *  backlash and matches the increasing-% direction the calibration was swept in: overshoot to
+ *  ``target - margin`` (clamped >= 0), then finish going UP to target. Returns [pre, target]. */
+export function approachFromBelow(target: number, margin = 3): [number, number] {
+  const t = clampCap(target);
+  return [Math.max(0, t - Math.max(1, Math.round(margin))), t];
+}
+
+/** True when the device's cap readback has reached ``target`` within ``tol`` whole percent (inclusive).
+ *  A null/NaN readback (no telemetry yet) is never "settled". Used to wait out the SLOW AIT motor
+ *  between the two steps of a backlash-compensated approach so the final move is genuinely upward. */
+export function capSettled(read: number | null, target: number, tol = 2): boolean {
+  if (read == null || Number.isNaN(read)) return false;
+  return Math.abs(read - target) <= tol;
+}
+
 /** Inverse: the whole percent whose control voltage is nearest ``volts`` (the generator commands in
  *  1% steps, so we round; clamped to the curve's voltage range). For voltage-driven cap tuning. */
 export function capPercentForVolts(volts: number, cal: CapCal): number {
@@ -76,6 +92,16 @@ export function capPercentForVolts(volts: number, cal: CapCal): number {
     }
   }
   return hi[0];
+}
+
+/** Nudge a forward-power setpoint by ``delta`` watts and clamp to [0, ``max``], rounded to whole
+ *  watts (the generator commands integer watts). A NaN/empty ``current`` starts from 0; a non-finite
+ *  ``max`` (e.g. the limit hasn't loaded) applies no upper clamp. Used by the live −/+ power steppers
+ *  and keyboard ↑/↓, which send instantly with no Apply. The server clamps again as the real guard. */
+export function stepSetpoint(current: number, delta: number, max: number): number {
+  const base = Number.isNaN(current) ? 0 : current;
+  const hi = Number.isFinite(max) ? max : Infinity;
+  return Math.max(0, Math.min(hi, Math.round(base + delta)));
 }
 
 export type LedTone = "ok" | "warn" | "off";

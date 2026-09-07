@@ -170,6 +170,10 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .setpoint-unit { font-family: var(--font-mono); font-size: 14px; color: var(--muted); }
 .setpoint-box .btn.accent { padding: 10px 20px; }
 .setpoint-box .hint { margin: 6px 0 0; }
+/* Live power nudge: four equal-width buttons under the setpoint entry (wider than the cap steppers
+   because the labels are ±5 / ±25, not a single glyph). */
+.setpoint-nudge { display: flex; gap: 6px; margin-top: 8px; }
+.setpoint-nudge .step-btn { flex: 1 1 0; width: auto; min-width: 46px; font-size: 15px; padding: 8px 0; }
 .setpoint-ramp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: auto;
   padding-top: 14px; }
 .setpoint-ramp input[type="number"] { width: 52px; text-align: right; }
