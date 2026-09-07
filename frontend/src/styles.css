@@ -125,7 +125,7 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .power-row { display: grid; align-items: stretch;
   grid-template-columns: minmax(180px, 0.85fr) minmax(240px, 1.1fr) minmax(190px, 1fr); }
 .power-row > div { display: flex; flex-direction: column; min-width: 0; padding: 0 20px;
-  border-left: 1px solid var(--line); }
+  border-left: 1px solid var(--line-strong); }
 .power-row > div:first-child { padding-left: 0; border-left: 0; }
 .power-row > div:last-child { padding-right: 0; }
 .power-row .field-label { margin-bottom: 8px; }
@@ -159,8 +159,9 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
   background: var(--accent); border-radius: 999px; padding: 3px 10px; letter-spacing: 0.03em;
   animation: tcp-blink 1.4s infinite; }
 
-/* Reverse-power column: a vertical block (big value, full-width bar, warn/trip) filling the height. */
-.revmeter-box { justify-content: center; }
+/* Reverse-power column: a vertical block (big value, full-width bar, warn/trip), top-aligned so its
+   label lines up with the RF-control and setpoint labels across the strip. */
+.revmeter-box { justify-content: flex-start; }
 .revmeter { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
 .revmeter-value { font-family: var(--font-mono); font-size: 30px; font-weight: 700; color: var(--fg);
   line-height: 1; }
@@ -306,3 +307,14 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .preset-clear:hover:not(:disabled) { color: var(--err); }
 .preset-save { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
 .preset-save select { padding: 5px 6px; }
+
+/* Responsive fallback — MUST be at the end so it overrides the base grid rules (media queries add
+   no specificity, so a later base rule would otherwise win). Narrow windows/laptops: stack the two
+   main columns, stack the control strip, 2-up the gauges. Primary target remains a lab desktop. */
+@media (max-width: 1080px) {
+  .main { grid-template-columns: 1fr; }
+  .power-row { grid-template-columns: 1fr; }
+  .power-row > div { border-left: 0; border-top: 1px solid var(--line-strong); padding: 14px 0 0; }
+  .power-row > div:first-child { border-top: 0; padding-top: 0; }
+  .gauge-grid { grid-template-columns: repeat(2, 1fr); }
+}
