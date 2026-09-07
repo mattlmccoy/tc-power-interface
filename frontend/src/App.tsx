@@ -575,18 +575,18 @@ export function App() {
                     danger={fwdDanger}
                   />
                   <Gauge
-                    label="Reverse"
-                    value={t ? t.reverse_w : null}
-                    max={powerCeil}
-                    caution={maxRefl * 0.5}
-                    danger={maxRefl}
-                  />
-                  <Gauge
                     label="Load"
                     value={t ? t.load_w : null}
                     max={powerCeil}
                     caution={fwdCaution}
                     danger={fwdDanger}
+                  />
+                  <Gauge
+                    label="Reverse"
+                    value={t ? t.reverse_w : null}
+                    max={maxRefl}
+                    caution={maxRefl * 0.5}
+                    danger={maxRefl * 0.8}
                   />
                 </div>
               ) : (
@@ -601,13 +601,13 @@ export function App() {
                       {t ? fmtWatts(t.forward_w) : "—"}
                     </div>
                   </div>
-                  <div className={`readout zone-${zone}`}>
-                    <div className="label">Reverse power</div>
-                    <div className="value">{t ? fmtWatts(t.reverse_w) : "—"}</div>
-                  </div>
                   <div className="readout">
                     <div className="label">Load power</div>
                     <div className="value">{t ? fmtWatts(t.load_w) : "—"}</div>
+                  </div>
+                  <div className={`readout zone-${zone}`}>
+                    <div className="label">Reverse power</div>
+                    <div className="value">{t ? fmtWatts(t.reverse_w) : "—"}</div>
                   </div>
                 </div>
               )}
