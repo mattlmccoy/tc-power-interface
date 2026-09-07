@@ -1,59 +1,37 @@
-# Task Plan: T&C Power RF Generator Control Interface (`tc_power_interface`)
+# Fix pass: ramp/RF gate, layout shift, cap cutoff, gauge smoothing, serving
 
-## Goal
-Build a working prototype control tool for the T&C Power Conversion AG-series RF generator
-(native USB / CXN serial dialect), mirroring the FLIR Research Interface architecture, with a
-simulator-first, safety-first design that can eventually consume the FLIR thermal stream for
-in-situ closed-loop control.
+Branch: `fix/ramp-caps-gauge`. From user report (2026-09-07).
 
-## Guiding constraints (non-negotiable)
-- **Simulator-first.** Everything must run and be tested with NO hardware attached.
-- **Safety-first.** RF defaults OFF. No automatic RF-enable in this prototype. A protection
-  layer commands RF off on fault/timeout. Real serial is behind an explicit opt-in.
-- **Documented protocol only.** Implement the CXN protocol exactly as documented in the
-  PyMeasure `tccxn.py` reference (MIT). Mark every byte-layout detail not yet confirmed on THIS
-  physical unit as unverified (see [[notes.md]] "Data-contract status").
-- **TDD.** Every codec function and state-machine transition gets a failing test first.
-- **Mirror FLIR.** Same stack, layout, naming, and conventions so it reads as the same family.
+## Root causes (investigated, evidence-backed)
 
-## Phases
-- [x] Phase 0: Recon — FLIR architecture + exact CXN protocol spec (captured in notes.md)
-- [x] Phase 1: Project scaffold (uv package, pyproject, ruff/mypy/pytest, dir layout, git)
-- [x] Phase 2: Protocol codec (TDD) — 29 tests green (framing, checksum, builders, parsers, Status)
-- [x] Phase 3: Device backend abstraction + byte-level simulator (TDD) — 11 tests green
-- [x] Phase 4: Controller with control-lease keepalive (poll <2 s) — 10 tests green
-- [x] Phase 5: Safety / protection evaluator (TDD) — 11 tests green; wired into controller (RF off on trip)
-- [x] Phase 6: FastAPI backend + WebSocket telemetry + REST + run recording — 7 tests green; live-verified
-- [x] Phase 7: Frontend (Vite/React/TS, FLIR theme) — 9 lib tests green; built + browser-verified live
-- [x] Phase 8: FLIR-integration foundation — advisory thermal evaluator + FLIR frame-header parser (6 tests)
-- [x] Phase 9: Verify (backend 81 + frontend 9 green, live browser run), README + docs written
+| # | Symptom | Root cause | Fix kind |
+|---|---------|-----------|----------|
+| 6 | Ramp counter starts before RF engaged | `RampController.tick()` advances on `running` alone; never checks `rf_on` (contradicts its own docstring). Listener app.py:247 ignores snapshot `rf_on`. | Backend logic (TDD) |
+| 3 | Ramp status text appears → shifts toggle up | Status `<div class="hint mono">` is conditionally **mounted** after `.setpoint-ramp` (which has `margin-top:auto`) → reflow. | Frontend DOM/CSS (reserve space) |
+| 4 | Text cut off in cap entries ("50.8"→"50.") | Native number spinner (~15px) + 20px padding on 62px box → ~27px usable < 32px ("50.8"). scrollW 75 vs clientW 62 for "100.0". | CSS |
+| 5 | Analog gauges jump between readings | Needle polygon recomputed each render (no interpolation). | Gauge.tsx transform+transition (visual) |
+| 1/2 | "Never serves to actual website"; settings won't save on the website | Architectural: Pages site IS live+current, but public https → http://localhost:8010 is client-blocked (`ERR_BLOCKED_BY_CLIENT`). `:8010` same-origin works (PUT→200; LaunchAgent running). | Explanation + recommend :8010 (no code bug) |
 
-## Key Questions
-1. Is the physical unit's byte layout identical to the CXN reference? (UNVERIFIED — needs a
-   read-only hardware capture before trusting on real RF.)
-2. setpoint write unit ambiguity: read divides by 10, write sends raw int (see notes). Confirm on hw.
-3. What COM port / USB descriptor does the unit enumerate as? (For the real-serial adapter.)
+Principle from user: **anything added must not move anything from its original place** — reserve space, never mount-and-reflow. Applies beyond the ramp line.
 
-## Decisions Made
-- Package name `tc_power_interface`, distribution `tc-power-interface`, script prefix `tcp-`
-  (tcp = T&C Power; e.g. `tcp-serve`, `tcp-probe`, `tcp-monitor`). Mirrors `flir_research_interface`/`fri-`.
-- No runtime dependency on PyMeasure (heavy: numpy/pandas/pyvisa; Python-3.14 wheel risk). Own clean
-  codec, grounded in the documented spec. PyMeasure `tccxn.py` kept only as an offline reference.
-- Python pin `>=3.11,<3.14` (uv-managed). Runtime deps: fastapi, uvicorn[standard], websockets, pyserial.
-- Real hardware access is opt-in (`--serial <port>`); default backend is the simulator.
+## Tasks (ONE change at a time; verify before next)
 
-## Errors Encountered
-- (none yet)
+- [x] **T6 (P0)** Gate ramp on RF. `tick(dt, *, rf_on=False)` holds while RF off; listener passes `rf_on`. +2 tests. **Backend 225 passed.** Verified LIVE at :8010: armed w/ RF off → output_w=0 (was climbing to 10).
+- [x] **T3 (P0)** Ramp status line always in layout (blank when idle); `.ramp-badge` line-height:1 so it never grows the header. Verified: toggling shifts header 0px, content-below 0px.
+- [x] **T4 (P1)** Killed native cap spinners + trimmed padding. Verified: overflow 0 for "50.8"/"100.0"/"48" (was 13px).
+- [x] **T5 (P1)** Needle = rotated `<g>` + CSS transition (0.24s, respects reduced-motion). tsc clean; 41 frontend tests pass; needle angles correct.
+- [x] **Rebuild** dist (index-VtNcevXm.js) + **restarted operator** (was running pre-fix code). Serves fresh dist; new backend live.
+- [x] **Ship** merged to main (--no-ff), pushed 878b4f7..c11165c, branch deleted. Pages redeploy in progress.
+- [x] **Explain** serving (1/2): see below — :8010 is the correct URL; Pages→localhost is client-blocked (ERR_BLOCKED_BY_CLIENT), not fixable server-side.
 
-## Status
-**All 9 phases complete — working prototype.** Backend 81 pytest + frontend 9 node --test all green;
-ruff + mypy --strict clean; frontend builds; live browser run verified (setpoint clamp, RF on/off,
-recording, WS telemetry, plot). Simulator-first, safety-first, mirrors FLIR.
+## Serving conclusion (issues 1 & 2)
+- Pages site https://mattlmccoy.github.io/tc-power-interface/ IS live + current; repo public; Pages enabled; workflow green.
+- Operator answers CORS + Private-Network-Access preflights for the Pages origin (verified via curl).
+- BUT a public https page fetching http://localhost:8010 is blocked CLIENT-side (net::ERR_BLOCKED_BY_CLIENT) — mixed-content / PNA / privacy-extension territory. No server config fixes this; varies by browser.
+- The operator already serves the identical UI SAME-ORIGIN at http://127.0.0.1:8010 (no CORS, no mixed content, no blockers; save = PUT 200). The always-on LaunchAgent IS running.
+- **Recommendation:** use http://127.0.0.1:8010 as the real URL. For another device (lab tablet), bind operator to 0.0.0.0 and use http://<mac-LAN-ip>:8010 — still same-origin, still robust. GitHub Pages adds only fragility for a tool that needs the local operator anyway.
 
-**Published 2026-09-05:** github.com/mattlmccoy/tc-power-interface (public, `main`), CI + Pages
-green, hosted UI live at https://mattlmccoy.github.io/tc-power-interface/ (FLIR-style site mode +
-CORS/X-TCP-Client guard). 97 tests (85 backend + 12 frontend).
-
-Next candidates (not started): (a) read-only hardware probe on the real unit to confirm the CXN
-dialect; (b) local match-tracking loop; (c) wire the advisory thermal loop to FLIR + accepted-power
-control after true-power commissioning.
+## Verification gates
+- Backend: `uv run pytest` (was 223 green).
+- Frontend lib: `npm test` (was 41 green).
+- Browser: measured checks at 1440px on dev server; then confirm at :8010 after dist rebuild.

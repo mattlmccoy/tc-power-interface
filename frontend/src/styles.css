@@ -49,6 +49,36 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .pill.fault { color: var(--err); border-color: var(--err); }
 .pill.fault .dot { background: var(--err); animation: tcp-blink 1s infinite; }
 
+/* The status pill doubles as the connect-popover trigger. */
+.pill { background: transparent; cursor: pointer; }
+.pill:hover { border-color: var(--line-control); }
+.pill-caret { font-size: 9px; opacity: 0.7; margin-left: 2px; }
+.connect-wrap { position: relative; display: inline-flex; }
+.connect-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 50; width: 330px;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px;
+  box-shadow: var(--shadow); padding: 12px; display: flex; flex-direction: column; gap: 14px;
+  text-transform: none; letter-spacing: normal; font-size: 13px;
+}
+.connect-head { display: flex; justify-content: space-between; align-items: center; }
+.pop-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+.connect-sec { display: flex; flex-direction: column; gap: 6px; }
+.connect-sec .field-label { margin: 0 0 2px; }
+.connect-row { display: flex; gap: 6px; align-items: center; }
+.connect-row > input { flex: 1; min-width: 0; }
+.connect-row-head { justify-content: space-between; }
+.connect-current { display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--font-mono); font-size: 12px; color: var(--live); }
+.port-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.port-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; }
+.port-info { min-width: 0; }
+.port-name { font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.port-info code { font-size: 11px; color: var(--muted); }
+.errbox { font-size: 12px; color: var(--err); border: 1px solid var(--err); border-radius: 4px;
+  padding: 6px 8px; background: var(--err-bg); }
+
 /* Banner */
 .banner { padding: calc(var(--space) * 2) calc(var(--space) * 4); font-size: 13px; }
 .banner.fault { background: var(--err-bg); color: var(--err); border-bottom: 1px solid var(--err); }

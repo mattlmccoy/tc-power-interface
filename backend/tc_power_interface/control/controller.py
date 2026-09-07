@@ -89,26 +89,84 @@ class Controller:
         with self._io_lock:
             return dict(self.device.identify())
 
-    def start(self) -> None:
-        """Acquire control and begin background telemetry polling."""
-        self.connect()
+    def _start_polling(self) -> None:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="tcp-controller", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
-        """Stop polling, force RF off, and release control."""
+    def _stop_polling(self) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+
+    def _safe_shutdown_device(self) -> None:
+        """Best-effort: command RF off and release the control lease on the current device."""
         try:
             with self._io_lock:
-                self.device.set_rf(False)
-                self.device.release_control()
+                if self.device is not None:
+                    self.device.set_rf(False)
+                    self.device.release_control()
         except Exception:  # noqa: BLE001 - best-effort safe shutdown
             pass
+
+    def start(self) -> None:
+        """Acquire control and begin background telemetry polling."""
+        self.connect()
+        self._start_polling()
+
+    def stop(self) -> None:
+        """Stop polling, force RF off, and release control."""
+        self._stop_polling()
+        self._safe_shutdown_device()
         self.state = ControllerState.CLOSED
+
+    # --- runtime device attach/detach (connect UI) -----------------------------------------
+    def attach_device(self, device: Any, backend: str | None = None) -> None:
+        """Attach a device at runtime and begin polling. Used by the connect UI; the operator can
+        boot idle (device=None) and attach a real generator (or the simulator) on demand. Detaches
+        any current device first so re-connecting is safe. Never enables RF."""
+        if self.device is not None:
+            self.detach_device()
+        if backend is not None:
+            self.backend = backend
+        self.device = device
+        try:
+            self.connect()  # request control + force MANUAL (never ATUNE) -> CONNECTED
+        except Exception:
+            # Connect failed (denied control, dead port): close the just-opened device and return to
+            # idle so a serial port is freed and the operator keeps serving. Re-raise to the caller.
+            try:
+                self.device.close()
+            except Exception:  # noqa: BLE001
+                pass
+            with self._lock:
+                self.device = None
+                self.state = ControllerState.DISCONNECTED
+            raise
+        self._start_polling()
+
+    def detach_device(self) -> None:
+        """Stop polling, force RF off, release the lease, close the transport, and go DISCONNECTED
+        (re-attachable — unlike ``stop()`` which is terminal). Safe to call when already idle."""
+        self._stop_polling()
+        self._safe_shutdown_device()
+        try:
+            if self.device is not None:
+                self.device.close()
+        except Exception:  # noqa: BLE001 - best-effort close; frees a serial port for reconnect
+            pass
+        with self._lock:
+            self.device = None
+            self.state = ControllerState.DISCONNECTED
+            self.latest_telemetry = None
+            self.latest_decision = None
+            self.fault_reasons = ()
+        self._last_sample_monotonic = None
+
+    def _require_device(self) -> None:
+        if self.device is None:
+            raise RuntimeError("no device connected")
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -165,10 +223,12 @@ class Controller:
             self.device.set_rf(True)
 
     def disable_rf(self) -> None:
+        self._require_device()
         with self._io_lock:
             self.device.set_rf(False)
 
     def set_setpoint(self, watts: int) -> int:
+        self._require_device()
         clamped = self.limits.clamp_setpoint(watts)
         with self._io_lock:
             self.device.set_setpoint(clamped)
@@ -186,10 +246,12 @@ class Controller:
             self.device.force_manual_mode()
 
     def set_tune_capacity(self, percent: float) -> None:
+        self._require_device()
         with self._io_lock:
             self.device.set_tune_capacity(percent)
 
     def set_load_capacity(self, percent: float) -> None:
+        self._require_device()
         with self._io_lock:
             self.device.set_load_capacity(percent)
 
