@@ -24,7 +24,11 @@
   --warn-bg: rgba(255, 180, 84, 0.10);
   --err: #ff5f56;
   --err-bg: rgba(255, 95, 86, 0.12);
-  --rec: var(--err);
+  /* Filled danger buttons (E-STOP, RF-ON hover, recording): a deeper red so WHITE text clears WCAG
+     AA (white on #cf3b2e = 4.86:1; on the lighter --err it was only 2.99:1). --err stays the text/
+     border red (which already passes on the dark panels). */
+  --err-btn: #cf3b2e;
+  --rec: var(--err-btn);
   --trace-fwd: #ffb454;
   --trace-refl: #6ec3ff;
   --image-bg: #000;

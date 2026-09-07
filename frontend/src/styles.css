@@ -63,9 +63,9 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .lock-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
   color: var(--fg); background: var(--bg-deep); border: 1px solid var(--line-control);
   border-radius: var(--radius); padding: 6px 10px; }
-.btn.estop { background: var(--err); border-color: var(--err); color: #fff; font-weight: 800;
+.btn.estop { background: var(--err-btn); border-color: var(--err-btn); color: #fff; font-weight: 800;
   font-size: 17px; letter-spacing: 0.08em; padding: 13px 0; }
-.btn.estop:hover:not(:disabled) { filter: brightness(1.12); }
+.btn.estop:hover:not(:disabled) { filter: brightness(1.1); }
 
 /* Main split */
 .main { display: grid; grid-template-columns: 1fr 340px; gap: calc(var(--space) * 4);
@@ -211,7 +211,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .btn.accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 /* RF ON: a red OUTLINE so the solid-red E-STOP stays the dominant control; fills on hover. */
 .btn.danger { background: transparent; color: var(--err); border-color: var(--err); font-weight: 700; }
-.btn.danger:hover:not(:disabled) { background: var(--err); color: var(--danger-ink); }
+.btn.danger:hover:not(:disabled) { background: var(--err-btn); border-color: var(--err-btn);
+  color: var(--danger-ink); }
 .btn.rec { background: var(--rec); color: var(--danger-ink); border-color: var(--rec); }
 .btn.full { width: 100%; }
 
