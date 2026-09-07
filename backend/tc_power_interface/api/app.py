@@ -147,6 +147,11 @@ class AutoLogBody(BaseModel):
     enabled: bool
 
 
+class ConnectBody(BaseModel):
+    backend: str = "serial"
+    serial: str | None = None  # required for backend="serial": the port device path
+
+
 class RampBody(BaseModel):
     init_w: float
     target_w: float
@@ -193,10 +198,16 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        transport = create_transport(backend, **(transport_kwargs or {}))
-        controller = Controller(
-            CxnDevice(transport), limits=active_limits, poll_interval_s=poll_interval_s
-        )
+        # backend="none" boots IDLE (no device): the operator serves, and the user attaches a
+        # generator at runtime via the connect popover (POST /api/connect). Any other backend
+        # auto-connects at boot (tests/dev use "simulated").
+        if backend == "none":
+            controller = Controller(None, limits=active_limits, poll_interval_s=poll_interval_s)
+        else:
+            transport = create_transport(backend, **(transport_kwargs or {}))
+            controller = Controller(
+                CxnDevice(transport), limits=active_limits, poll_interval_s=poll_interval_s
+            )
         recorder = TelemetryRecorder(experiments_root)
         flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
         controller.add_listener(RfLinkNotifier(flir_link).on_snapshot)
@@ -295,16 +306,20 @@ def create_app(
         # Start polling, but tolerate a device that won't connect (generator off / not plugged in):
         # keep serving so limits/plan can be configured before the hardware is attached. The
         # controller simply stays DISCONNECTED; settings routes don't touch the device.
-        try:
-            controller.start()
-            device_info = controller.identify()
-        except Exception:  # noqa: BLE001 - device may be absent; serve anyway
-            device_info = {}
+        if backend == "none":
+            device_info = {}  # idle boot: no device until the user connects
+        else:
+            try:
+                controller.start()
+                device_info = controller.identify()
+            except Exception:  # noqa: BLE001 - device may be absent; serve anyway
+                device_info = {}
 
         app.state.controller = controller
         app.state.recorder = recorder
         app.state.device_info = device_info
         app.state.backend = backend
+        app.state.connected_port = None
         app.state.current_run = None
         app.state.flir_link = flir_link
         try:
@@ -388,6 +403,56 @@ def create_app(
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
+        return _status_payload()
+
+    @app.get("/api/discovery")
+    def discovery() -> dict[str, Any]:
+        """List serial ports the operator can connect to, plus the current connection (if any)."""
+        from serial.tools import list_ports
+
+        ports = [
+            {"device": p.device, "description": p.description or "", "hwid": p.hwid or ""}
+            for p in list_ports.comports()
+        ]
+        ctrl = _controller()
+        connected = None
+        if getattr(app.state, "backend", "none") != "none" and ctrl.device is not None:
+            connected = {
+                "backend": app.state.backend,
+                "port": getattr(app.state, "connected_port", None),
+            }
+        return {"ports": ports, "connected": connected}
+
+    @app.post("/api/connect")
+    def connect(req: ConnectBody) -> dict[str, Any]:
+        """Attach a generator at runtime. Never enables RF (read-only until the operator turns RF
+        on; the built-in auto-tuner is never engaged). Returns the fresh status snapshot."""
+        try:
+            if req.backend == "serial":
+                if not req.serial:
+                    raise HTTPException(400, "a serial port is required to connect over serial")
+                device = CxnDevice(create_transport("serial", port=req.serial))
+            elif req.backend == "simulated":
+                device = CxnDevice(create_transport("simulated"))
+            else:
+                raise HTTPException(400, f"unknown backend {req.backend!r}")
+            _controller().attach_device(device, backend=req.backend)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - surface a clean error to the popover
+            raise HTTPException(503, f"could not connect: {exc}") from exc
+        app.state.backend = req.backend
+        app.state.connected_port = req.serial if req.backend == "serial" else None
+        app.state.device_info = _controller().identify()
+        return _status_payload()
+
+    @app.post("/api/disconnect")
+    def disconnect() -> dict[str, Any]:
+        """Detach the current generator (RF off, lease released, port closed) and go idle."""
+        _controller().detach_device()
+        app.state.backend = "none"
+        app.state.connected_port = None
+        app.state.device_info = {}
         return _status_payload()
 
     @app.post("/api/setpoint")

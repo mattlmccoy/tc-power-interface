@@ -167,3 +167,58 @@ class TestLifecycle:
             c.stop()
         assert c.state is ControllerState.CLOSED
         assert transport.control_granted is False  # released
+
+
+class TestRuntimeAttachDetach:
+    """The operator can boot with NO device (idle) and attach/detach one at runtime (connect UI)."""
+
+    def test_idle_controller_is_disconnected_with_no_device(self):
+        c = Controller(device=None, poll_interval_s=0.01)
+        assert c.device is None
+        assert c.state is ControllerState.DISCONNECTED
+        assert c.snapshot()["telemetry"] is None  # no crash with no device
+
+    def test_command_without_device_raises(self):
+        c = Controller(device=None, poll_interval_s=0.01)
+        with pytest.raises(RuntimeError):
+            c.set_setpoint(100)
+        with pytest.raises(RuntimeError):
+            c.enable_rf()
+
+    def test_attach_device_connects_and_polls(self):
+        c = Controller(device=None, poll_interval_s=0.01)
+        dev = CxnDevice(SimulatedCxnTransport())
+        c.attach_device(dev, backend="serial")
+        try:
+            assert c.state is ControllerState.CONNECTED
+            assert c.device is dev
+            assert c.backend == "serial"
+            deadline = time.monotonic() + 2.0
+            while c.latest_telemetry is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert c.latest_telemetry is not None
+        finally:
+            c.detach_device()
+
+    def test_detach_forces_rf_off_and_returns_to_disconnected(self):
+        transport = SimulatedCxnTransport()
+        dev = CxnDevice(transport)
+        c = Controller(device=None, poll_interval_s=0.01)
+        c.attach_device(dev)
+        c.set_setpoint(150)
+        c.enable_rf()
+        c.detach_device()
+        assert c.state is ControllerState.DISCONNECTED
+        assert c.device is None
+        assert transport.control_granted is False  # released
+        assert dev.read_telemetry().rf_on is False  # RF commanded off on detach
+
+    def test_reattach_after_detach_works(self):
+        c = Controller(device=None, poll_interval_s=0.01)
+        c.attach_device(CxnDevice(SimulatedCxnTransport()))
+        c.detach_device()
+        c.attach_device(CxnDevice(SimulatedCxnTransport()))  # second attach must not raise
+        try:
+            assert c.state is ControllerState.CONNECTED
+        finally:
+            c.detach_device()
