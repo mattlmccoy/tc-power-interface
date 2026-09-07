@@ -324,6 +324,21 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   white-space: nowrap; }
 .step-btn { width: 30px; padding: 6px 0; font-family: var(--font-mono); font-size: 14px; line-height: 1; }
 
+/* Voltage-primary cap control: a header (current %·V + actual) over a V-target + %-stepper row. */
+.cap-head { align-items: baseline; }
+.cap-now { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--accent);
+  white-space: nowrap; }
+.cap-head .cap-readback { margin-left: auto; }
+.cap-ctl { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.cap-v-input { width: 72px; text-align: right; padding: 6px 8px; -moz-appearance: textfield;
+  appearance: textfield; }
+.cap-v-input::-webkit-outer-spin-button, .cap-v-input::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0; }
+.cap-vunit { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.cap-ctl-gap { flex: 1; }
+.cap-pct { font-family: var(--font-mono); font-size: 13px; color: var(--fg); min-width: 44px;
+  text-align: center; }
+
 /* Power-ramp form: three aligned labelled fields, then a normal button + inline status. */
 .ramp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 6px 0 10px; }
 .ramp-field { display: flex; flex-direction: column; gap: 3px; }

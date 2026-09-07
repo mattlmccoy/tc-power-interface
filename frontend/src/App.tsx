@@ -8,7 +8,7 @@ import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api
 import type { SerialPort, Health } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
-import { capVolts, clampCap, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
+import { capVolts, capPercentForVolts, clampCap, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
 import { checkHandshake, UI_API_VERSION, UI_VERSION, wsUrl } from "./lib/operator.ts";
 import {
   LIMITS_KEY,
@@ -495,22 +495,28 @@ export function App() {
     setLoad(v);
     await api.load(v);
   }
-  // Fine-adjust steppers: click bumps by 1%, hold auto-repeats.
-  const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stopRepeat = () => {
-    if (repeatRef.current) {
-      clearInterval(repeatRef.current);
-      repeatRef.current = null;
-    }
-  };
-  const holdStep = (fn: () => void) => {
-    fn();
-    stopRepeat();
-    repeatRef.current = setInterval(fn, 140);
-  };
+  // Cap steppers are single-click, 1% each (the generator's real resolution). No hold-to-repeat:
+  // an auto-repeating cap stepper is a hazard on a live matching network.
   const bumpTune = (d: number) => sendTune(clampCap(tune + d));
   const bumpLoad = (d: number) => sendLoad(clampCap(load + d));
   const bumpActive = (d: number) => (activeCap === "tune" ? bumpTune(d) : bumpLoad(d));
+
+  // Voltage-driven cap tuning: type the target control voltage from the VNA, snap to the nearest
+  // whole percent (the generator's real resolution), send it. Cleared after apply.
+  const [tuneVIn, setTuneVIn] = useState("");
+  const [loadVIn, setLoadVIn] = useState("");
+  function applyTuneVolts() {
+    const v = Number(tuneVIn);
+    if (Number.isNaN(v) || tuneVIn.trim() === "") return flash("enter a tune voltage");
+    void sendTune(capPercentForVolts(v, TUNE_CAL));
+    setTuneVIn("");
+  }
+  function applyLoadVolts() {
+    const v = Number(loadVIn);
+    if (Number.isNaN(v) || loadVIn.trim() === "") return flash("enter a load voltage");
+    void sendLoad(capPercentForVolts(v, LOAD_CAL));
+    setLoadVIn("");
+  }
   async function applyFlirLink(url: string, enabled: boolean) {
     try {
       const res = await api.setFlirLink(url.trim(), enabled);
@@ -1082,91 +1088,99 @@ export function App() {
                 <span className="help-text"> The built-in auto-tuner (ATUNE) is never engaged.</span>
               </div>
               <div className="hint" style={{ marginTop: "6px" }}>
-                Tune / load cap positions (0.1% steps). Type a value, or use −/+ (hold to repeat) for
-                fine adjustment.
+                Set a cap to a target VNA voltage (snaps to the nearest whole percent — the
+                generator's 1% resolution), or nudge % with −/+.
               </div>
-              <div className="cap-row" style={{ marginTop: "10px" }}>
+
+              {/* Tune cap: voltage-primary, whole-percent steppers */}
+              <div className="cap-row cap-head" style={{ marginTop: "10px" }}>
                 <span className="cap-name">Tune cap</span>
-                <button
-                  className="btn step-btn"
-                  disabled={!controllable}
-                  onMouseDown={() => holdStep(() => bumpTune(-0.1))}
-                  onMouseUp={stopRepeat}
-                  onMouseLeave={stopRepeat}
-                >
-                  −
-                </button>
+                <span className="cap-now">
+                  {tune}% · {capVolts(tune, TUNE_CAL).toFixed(2)} V
+                </span>
+                <span className="cap-readback">
+                  act{" "}
+                  {t?.tune_cap_percent != null
+                    ? `${t.tune_cap_percent.toFixed(1)}% · ${capVolts(t.tune_cap_percent, TUNE_CAL).toFixed(2)} V`
+                    : "—"}
+                </span>
+              </div>
+              <div className="cap-ctl">
                 <input
                   type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  value={tune}
+                  className="cap-v-input"
+                  step={0.01}
+                  placeholder="target"
+                  value={tuneVIn}
                   disabled={!controllable}
-                  onChange={(e) => sendTune(clampCap(Number(e.target.value)))}
+                  onChange={(e) => setTuneVIn(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && applyTuneVolts()}
                 />
-                <button
-                  className="btn step-btn"
-                  disabled={!controllable}
-                  onMouseDown={() => holdStep(() => bumpTune(0.1))}
-                  onMouseUp={stopRepeat}
-                  onMouseLeave={stopRepeat}
-                >
+                <span className="cap-vunit">V</span>
+                <button className="btn" onClick={applyTuneVolts} disabled={!controllable}>
+                  Set
+                </button>
+                <span className="cap-ctl-gap" />
+                <button className="btn step-btn" onClick={() => bumpTune(-1)} disabled={!controllable}>
+                  −
+                </button>
+                <span className="cap-pct">{tune}%</span>
+                <button className="btn step-btn" onClick={() => bumpTune(1)} disabled={!controllable}>
                   +
                 </button>
-                <span className="cap-live-v">% · {capVolts(tune, TUNE_CAL).toFixed(2)} V</span>
-                <span className="cap-readback">
-                  act {t?.tune_cap_percent != null ? `${t.tune_cap_percent.toFixed(1)}%` : "—"}
-                </span>
               </div>
               <input
                 type="range"
                 min={0}
                 max={100}
-                step={0.1}
+                step={1}
                 value={tune}
                 disabled={!controllable}
                 onChange={(e) => sendTune(Number(e.target.value))}
               />
-              <div className="cap-row" style={{ marginTop: "10px" }}>
+
+              {/* Load cap */}
+              <div className="cap-row cap-head" style={{ marginTop: "14px" }}>
                 <span className="cap-name">Load cap</span>
-                <button
-                  className="btn step-btn"
-                  disabled={!controllable}
-                  onMouseDown={() => holdStep(() => bumpLoad(-0.1))}
-                  onMouseUp={stopRepeat}
-                  onMouseLeave={stopRepeat}
-                >
-                  −
-                </button>
+                <span className="cap-now">
+                  {load}% · {capVolts(load, LOAD_CAL).toFixed(2)} V
+                </span>
+                <span className="cap-readback">
+                  act{" "}
+                  {t?.load_cap_percent != null
+                    ? `${t.load_cap_percent.toFixed(1)}% · ${capVolts(t.load_cap_percent, LOAD_CAL).toFixed(2)} V`
+                    : "—"}
+                </span>
+              </div>
+              <div className="cap-ctl">
                 <input
                   type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  value={load}
+                  className="cap-v-input"
+                  step={0.01}
+                  placeholder="target"
+                  value={loadVIn}
                   disabled={!controllable}
-                  onChange={(e) => sendLoad(clampCap(Number(e.target.value)))}
+                  onChange={(e) => setLoadVIn(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && applyLoadVolts()}
                 />
-                <button
-                  className="btn step-btn"
-                  disabled={!controllable}
-                  onMouseDown={() => holdStep(() => bumpLoad(0.1))}
-                  onMouseUp={stopRepeat}
-                  onMouseLeave={stopRepeat}
-                >
+                <span className="cap-vunit">V</span>
+                <button className="btn" onClick={applyLoadVolts} disabled={!controllable}>
+                  Set
+                </button>
+                <span className="cap-ctl-gap" />
+                <button className="btn step-btn" onClick={() => bumpLoad(-1)} disabled={!controllable}>
+                  −
+                </button>
+                <span className="cap-pct">{load}%</span>
+                <button className="btn step-btn" onClick={() => bumpLoad(1)} disabled={!controllable}>
                   +
                 </button>
-                <span className="cap-live-v">% · {capVolts(load, LOAD_CAL).toFixed(2)} V</span>
-                <span className="cap-readback">
-                  act {t?.load_cap_percent != null ? `${t.load_cap_percent.toFixed(1)}%` : "—"}
-                </span>
               </div>
               <input
                 type="range"
                 min={0}
                 max={100}
-                step={0.1}
+                step={1}
                 value={load}
                 disabled={!controllable}
                 onChange={(e) => sendLoad(Number(e.target.value))}
@@ -1195,18 +1209,14 @@ export function App() {
                 <button
                   className="btn step-btn"
                   disabled={!controllable}
-                  onMouseDown={() => holdStep(() => bumpActive(-0.1))}
-                  onMouseUp={stopRepeat}
-                  onMouseLeave={stopRepeat}
+                  onClick={() => bumpActive(-1)}
                 >
                   −
                 </button>
                 <button
                   className="btn step-btn"
                   disabled={!controllable}
-                  onMouseDown={() => holdStep(() => bumpActive(0.1))}
-                  onMouseUp={stopRepeat}
-                  onMouseLeave={stopRepeat}
+                  onClick={() => bumpActive(1)}
                 >
                   +
                 </button>

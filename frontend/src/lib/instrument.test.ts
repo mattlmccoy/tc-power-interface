@@ -71,9 +71,9 @@ test("gaugeAngle handles a degenerate range without dividing by zero", () => {
   assert.equal(gaugeAngle(5, 10, 10, -120, 120), -120);
 });
 
-test("clampCap clamps to 0..100 at 0.1% resolution; NaN -> 0", () => {
-  assert.equal(clampCap(42.54), 42.5);
-  assert.equal(clampCap(42.55), 42.6);
+test("clampCap clamps to 0..100 at WHOLE-percent resolution; NaN -> 0", () => {
+  assert.equal(clampCap(42.4), 42);
+  assert.equal(clampCap(42.6), 43);
   assert.equal(clampCap(-3), 0);
   assert.equal(clampCap(140), 100);
   assert.equal(clampCap(Number.NaN), 0);

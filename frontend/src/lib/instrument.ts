@@ -19,10 +19,11 @@ export function clampPercent(v: number): number {
   return Math.max(0, Math.min(100, Math.round(v)));
 }
 
-/** Clamp a cap percentage to 0..100 at 0.1% resolution (the CXN tuner's granularity; NaN -> 0). */
+/** Clamp a cap percentage to a WHOLE percent in 0..100 (the AG 0613 commands caps in 1% steps,
+ *  verified on hardware 2026-09-07; NaN -> 0). */
 export function clampCap(v: number): number {
   if (Number.isNaN(v)) return 0;
-  return Math.max(0, Math.min(100, Math.round(v * 10) / 10));
+  return Math.max(0, Math.min(100, Math.round(v)));
 }
 
 // Measured AIT-600 cap %->V transfer curves (2026-09-07 rematch bench data; see
