@@ -142,6 +142,10 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
   padding-top: 14px; }
 .setpoint-ramp input[type="number"] { width: 52px; text-align: right; }
 .setpoint-ramp .cap-name { width: auto; }
+/* The ramp status line is ALWAYS in the layout (blank when idle) with a fixed one-line height, so
+   toggling the ramp on/off never shifts the row above it. Never wraps to a second line. */
+.ramp-status { min-height: 1.2em; margin-top: 6px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
 
 /* On/off toggle switch (the power ramp — enabled or not). */
 .switch { position: relative; display: inline-flex; width: 40px; height: 22px; flex: 0 0 auto; }
@@ -156,8 +160,10 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 
 /* Ramp-active badge on the dashboard (the AG manual's "R" main-screen marker). */
 .ramp-badge { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: #10131a;
-  background: var(--accent); border-radius: 999px; padding: 3px 10px; letter-spacing: 0.03em;
-  animation: tcp-blink 1.4s infinite; }
+  background: var(--accent); border-radius: 999px; padding: 2px 10px; letter-spacing: 0.03em;
+  /* line-height 1 keeps the pill no taller than the always-present <h2> beside it, so the badge
+     appearing while ramping never grows the header row (nothing below it shifts). */
+  line-height: 1; align-self: center; animation: tcp-blink 1.4s infinite; }
 
 /* Reverse-power column: a vertical block (big value, full-width bar, warn/trip), top-aligned so its
    label lines up with the RF-control and setpoint labels across the strip. */

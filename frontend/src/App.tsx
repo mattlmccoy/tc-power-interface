@@ -718,11 +718,13 @@ export function App() {
                     />
                     <span className="cap-name">W/s</span>
                   </div>
-                  {ramp?.running ? (
-                    <div className="hint mono">
-                      ▲ ramping {ramp.output_w} → {ramp.target_w} W{ramp.done ? " · reached" : ""}
-                    </div>
-                  ) : null}
+                  {/* Always rendered (space reserved) so toggling the ramp never shifts the row
+                      above it — the line is blank when idle. */}
+                  <div className="ramp-status hint mono" aria-hidden={!ramp?.running}>
+                    {ramp?.running
+                      ? `▲ ramping ${ramp.output_w} → ${ramp.target_w} W${ramp.done ? " · reached" : ""}`
+                      : " "}
+                  </div>
                 </div>
                 <div className="revmeter-box">
                   <div className="field-label">Reverse power</div>
