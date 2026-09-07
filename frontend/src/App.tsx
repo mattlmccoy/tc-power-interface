@@ -8,7 +8,7 @@ import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api
 import type { SerialPort, Health } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
-import { capVolts, clampCap, generatorModes, LOAD_VOLTS, tempBar, TUNE_VOLTS } from "./lib/instrument.ts";
+import { capVolts, clampCap, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
 import { checkHandshake, UI_API_VERSION, UI_VERSION, wsUrl } from "./lib/operator.ts";
 import {
   LIMITS_KEY,
@@ -1114,7 +1114,7 @@ export function App() {
                 >
                   +
                 </button>
-                <span className="cap-live-v">% · {capVolts(tune, TUNE_VOLTS).toFixed(2)} V</span>
+                <span className="cap-live-v">% · {capVolts(tune, TUNE_CAL).toFixed(2)} V</span>
                 <span className="cap-readback">
                   act {t?.tune_cap_percent != null ? `${t.tune_cap_percent.toFixed(1)}%` : "—"}
                 </span>
@@ -1157,7 +1157,7 @@ export function App() {
                 >
                   +
                 </button>
-                <span className="cap-live-v">% · {capVolts(load, LOAD_VOLTS).toFixed(2)} V</span>
+                <span className="cap-live-v">% · {capVolts(load, LOAD_CAL).toFixed(2)} V</span>
                 <span className="cap-readback">
                   act {t?.load_cap_percent != null ? `${t.load_cap_percent.toFixed(1)}%` : "—"}
                 </span>

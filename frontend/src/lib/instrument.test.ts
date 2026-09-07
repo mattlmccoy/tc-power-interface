@@ -3,25 +3,38 @@ import test from "node:test";
 
 import {
   capVolts,
+  capPercentForVolts,
   clampCap,
   clampPercent,
   gaugeAngle,
   generatorModes,
-  LOAD_VOLTS,
+  LOAD_CAL,
   statusLeds,
   tempBar,
-  TUNE_VOLTS,
+  TUNE_CAL,
 } from "./instrument.ts";
 
-test("capVolts maps cap % to control voltage (validated: TC 36%->1.85V, LC 49%->~2.47V)", () => {
-  // Bench match 2026-09-04 (S1P title T1.85/L2.46 at generator TC=36%, LC=49%).
-  assert.ok(Math.abs(capVolts(36, TUNE_VOLTS) - 1.85) < 0.01);
-  assert.ok(Math.abs(capVolts(49, LOAD_VOLTS) - 2.47) < 0.01);
-  assert.equal(capVolts(0, TUNE_VOLTS), 0.12);
-  assert.equal(capVolts(100, LOAD_VOLTS), 4.93);
-  // clamps out-of-range
-  assert.equal(capVolts(-10, TUNE_VOLTS), 0.12);
-  assert.equal(capVolts(150, TUNE_VOLTS), 4.92);
+test("capVolts interpolates the measured %->V calibration (2026-09-07 rematch)", () => {
+  // exact table points
+  assert.equal(capVolts(50, TUNE_CAL), 2.5);
+  assert.equal(capVolts(35, TUNE_CAL), 1.79);
+  assert.equal(capVolts(50, LOAD_CAL), 2.51);
+  // piecewise interpolation between points (50->2.50, 55->2.77 => 52.5 ~ 2.635)
+  assert.ok(Math.abs(capVolts(52.5, TUNE_CAL) - 2.635) < 1e-6);
+  // clamped to the table ends
+  assert.equal(capVolts(0, TUNE_CAL), 0.12);
+  assert.equal(capVolts(100, TUNE_CAL), 4.89);
+  assert.equal(capVolts(-5, TUNE_CAL), 0.12);
+  assert.equal(capVolts(150, TUNE_CAL), 4.89);
+});
+
+test("capPercentForVolts inverts the calibration to a whole percent (generator is 1% steps)", () => {
+  assert.equal(capPercentForVolts(2.5, TUNE_CAL), 50);
+  assert.equal(capPercentForVolts(1.82, TUNE_CAL), 36); // last match T 1.82 V -> 36%
+  assert.equal(capPercentForVolts(3.24, LOAD_CAL), 65); // last match L 3.24 V -> 65%
+  // clamped to range
+  assert.equal(capPercentForVolts(0.0, TUNE_CAL), 0);
+  assert.equal(capPercentForVolts(9.9, TUNE_CAL), 100);
 });
 
 test("tempBar: fraction from room->max, green at bottom to red at top, clamped", () => {
