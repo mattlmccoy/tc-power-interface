@@ -5,11 +5,11 @@ import { Gauge } from "./components/Gauge.tsx";
 import { StatusLeds } from "./components/StatusLeds.tsx";
 import { TimePlot } from "./components/TimePlot.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
-import type { SerialPort } from "./lib/api.ts";
+import type { SerialPort, Health } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts, reflectedZone } from "./lib/format.ts";
 import { capVolts, clampCap, generatorModes, LOAD_VOLTS, tempBar, TUNE_VOLTS } from "./lib/instrument.ts";
-import { wsUrl } from "./lib/operator.ts";
+import { checkHandshake, UI_API_VERSION, UI_VERSION, wsUrl } from "./lib/operator.ts";
 import {
   LIMITS_KEY,
   loadSettings,
@@ -36,6 +36,7 @@ export function App() {
   // additionally requires a device to be attached — with idle boot the operator is reachable long
   // before any generator is connected.
   const [reachable, setReachable] = useState(false);
+  const [health, setHealth] = useState<Health | null>(null);
   const [toast, setToast] = useState<{ msg: string; tone: "ok" | "err" | "warn" } | null>(null);
   const [view, setView] = useState<"dashboard" | "settings" | "experimental">("dashboard");
   const [showGauges, setShowGauges] = useState<boolean>(() => {
@@ -230,6 +231,22 @@ export function App() {
     };
   }, [base]);
 
+  // Fetch the operator's version/API each time it becomes reachable (for the handshake + display).
+  useEffect(() => {
+    if (!reachable) {
+      setHealth(null);
+      return;
+    }
+    let alive = true;
+    api
+      .health()
+      .then((h) => alive && setHealth(h))
+      .catch(() => alive && setHealth(null));
+    return () => {
+      alive = false;
+    };
+  }, [reachable, base]);
+
   useEffect(() => {
     let cancelled = false;
     const loadConfig = async () => {
@@ -355,6 +372,8 @@ export function App() {
     : state === "fault"
       ? "fault"
       : "connected";
+  // UI ↔ operator API version handshake (like FLIR): major mismatch refuses, minor warns.
+  const handshake = reachable && health ? checkHandshake(UI_API_VERSION, health.api_version) : null;
   const faulted = state === "fault";
   const maxRefl = limits?.max_reflected_w ?? 25;
   const reflW = t?.reverse_w ?? 0;
@@ -716,11 +735,24 @@ export function App() {
                   before enabling RF (this unit's protocol is unconfirmed).
                 </div>
               </div>
+
+              <div className="connect-version mono">
+                UI {UI_VERSION}
+                {health ? ` · operator ${health.version}` : reachable ? "" : " · operator offline"}
+                {" · API "}
+                {UI_API_VERSION}
+                {health?.api_version ? `/${health.api_version}` : ""}
+              </div>
             </div>
           ) : null}
         </div>
       </header>
 
+      {handshake && handshake.level !== "ok" ? (
+        <div className={`banner ${handshake.level === "refuse" ? "fault" : "warn"}`}>
+          <strong>Version mismatch.</strong> {handshake.message}
+        </div>
+      ) : null}
       {faulted ? (
         <div className="banner fault">
           <strong>FAULT — RF disabled.</strong> {ctrl?.fault_reasons.join("; ")}
@@ -902,7 +934,9 @@ export function App() {
                       <input
                         type="checkbox"
                         checked={!!ramp?.running}
-                        disabled={!controllable}
+                        // Start needs control (armed); OFF is always allowed while it's running, so
+                        // a ramp can never get 'stuck on'.
+                        disabled={!controllable && !ramp?.running}
                         onChange={(e) => (e.target.checked ? startRamp() : stopRamp())}
                       />
                       <span className="switch-slider" />
