@@ -36,7 +36,7 @@ export function App() {
   // additionally requires a device to be attached — with idle boot the operator is reachable long
   // before any generator is connected.
   const [reachable, setReachable] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; tone: "ok" | "err" | "warn" } | null>(null);
   const [view, setView] = useState<"dashboard" | "settings" | "experimental">("dashboard");
   const [showGauges, setShowGauges] = useState<boolean>(() => {
     try {
@@ -163,6 +163,15 @@ export function App() {
     } finally {
       setConnectBusy(null);
     }
+  }
+  async function armDevice() {
+    const res = await api.arm();
+    if (res.ok) flash("armed — control unlocked", "ok");
+    else flash("arm failed: " + (await detail(res)));
+  }
+  async function disarmDevice() {
+    await api.disarm();
+    flash("disarmed — RF off, read-only", "warn");
   }
 
   const fillLimForm = (s: SafetyLimitsStatus) => {
@@ -305,8 +314,10 @@ export function App() {
     };
   }, [base]);
 
-  const flash = (msg: string) => {
-    setToast(msg);
+  // tone drives the toast colour: "ok" green (affirmative), "err" red (failures — the default so a
+  // missed tag never dresses an error up as success), "warn" amber (e.g. E-STOP confirmation).
+  const flash = (msg: string, tone: "ok" | "err" | "warn" = "err") => {
+    setToast({ msg, tone });
     setTimeout(() => setToast(null), 3500);
   };
 
@@ -334,6 +345,11 @@ export function App() {
   // A device is usable only when the operator is reachable AND a generator is attached (CONNECTED).
   // FAULT still counts as connected (a device is there) so fault handling/controls behave.
   const connected = reachable && (state === "connected" || state === "fault");
+  // A connected device is read-only until ARMED. `controllable` gates every command that changes the
+  // generator (RF on, setpoint, caps, ramp/pulse/thermal/timer/tuner). RF OFF, E-STOP and DISARM stay
+  // available whenever connected — they are the safe-direction actions.
+  const armed = connected && (ctrl?.armed ?? false);
+  const controllable = connected && armed;
   const pillState = !reachable || state === "disconnected"
     ? "disconnected"
     : state === "fault"
@@ -359,7 +375,7 @@ export function App() {
   }
   async function estop() {
     await api.estop();
-    flash("E-STOP — RF off, setpoint 0, all drivers halted");
+    flash("E-STOP — RF off, setpoint 0, all drivers halted", "warn");
   }
   async function applySetpoint() {
     const watts = Number(setpointInput);
@@ -367,7 +383,7 @@ export function App() {
     const res = await api.setSetpoint(watts);
     if (res.ok) {
       const j = await res.json();
-      flash(`setpoint applied: ${j.applied_w} W${j.applied_w !== watts ? " (clamped)" : ""}`);
+      flash(`setpoint applied: ${j.applied_w} W${j.applied_w !== watts ? " (clamped)" : ""}`, "ok");
     } else {
       flash(await detail(res));
     }
@@ -496,7 +512,7 @@ export function App() {
       if (res.ok) {
         storeSettings(store, LIMITS_KEY, { v: body, pending: false });
         fillLimForm((await res.json()) as SafetyLimitsStatus);
-        flash("safety limits saved");
+        flash("safety limits saved", "ok");
       } else {
         flash(await detail(res));
       }
@@ -504,7 +520,7 @@ export function App() {
       // Operator unreachable: keep the values locally and apply them on the next connect.
       storeSettings(store, LIMITS_KEY, { v: body, pending: true });
       fillLimForm({ ...body, bounds: limitsStatus?.bounds ?? {} });
-      flash("saved locally — will apply when the operator connects");
+      flash("saved locally — will apply when the operator connects", "ok");
     }
   }
   async function saveThermalPlan() {
@@ -522,14 +538,14 @@ export function App() {
       if (res.ok) {
         storeSettings(store, THERMAL_KEY, { v: body, pending: false });
         fillThermalForm((await res.json()) as ThermalPlanStatus);
-        flash("thermal plan saved");
+        flash("thermal plan saved", "ok");
       } else {
         flash(await detail(res));
       }
     } catch {
       storeSettings(store, THERMAL_KEY, { v: body, pending: true });
       fillThermalForm({ ...body, bounds: thermalPlanStatus?.bounds ?? {} });
-      flash("saved locally — will apply when the operator connects");
+      flash("saved locally — will apply when the operator connects", "ok");
     }
   }
   async function startThermal() {
@@ -816,11 +832,33 @@ export function App() {
                   >
                     ⏻ E-STOP
                   </button>
+                  {/* ARM gate: a connected device is read-only until armed (replaces the CLI probe). */}
+                  {connected ? (
+                    armed ? (
+                      <button
+                        className="btn full disarm-btn"
+                        onClick={disarmDevice}
+                        style={{ marginTop: "8px" }}
+                        title="Drop control: RF off, back to read-only"
+                      >
+                        ● ARMED — click to DISARM
+                      </button>
+                    ) : (
+                      <button
+                        className="btn full arm-btn"
+                        onClick={armDevice}
+                        style={{ marginTop: "8px" }}
+                        title="Take control of the device (unlocks RF, setpoint, caps)"
+                      >
+                        ▲ ARM — take control
+                      </button>
+                    )
+                  ) : null}
                   <div className="row" style={{ marginTop: "8px" }}>
                     <button
                       className="btn danger full"
                       onClick={rfOn}
-                      disabled={!connected || faulted}
+                      disabled={!controllable || faulted}
                     >
                       RF ON
                     </button>
@@ -829,9 +867,13 @@ export function App() {
                     </button>
                   </div>
                   <div className="hint">
-                    {faulted
-                      ? "RF-enable blocked while faulted."
-                      : "RF-enable prompts to confirm. Protection commands RF off on any trip."}
+                    {!connected
+                      ? "Connect a generator to begin."
+                      : !armed
+                        ? "Read-only. Check the readings against the front panel, then ARM to take control."
+                        : faulted
+                          ? "RF-enable blocked while faulted."
+                          : "Armed. RF-enable prompts to confirm; protection commands RF off on any trip."}
                   </div>
                 </div>
                 <div className="setpoint-box">
@@ -848,7 +890,7 @@ export function App() {
                       onChange={(e) => setSetpointInput(e.target.value)}
                     />
                     <span className="setpoint-unit">W</span>
-                    <button className="btn accent" onClick={applySetpoint} disabled={!connected}>
+                    <button className="btn accent" onClick={applySetpoint} disabled={!controllable}>
                       Apply
                     </button>
                   </div>
@@ -860,7 +902,7 @@ export function App() {
                       <input
                         type="checkbox"
                         checked={!!ramp?.running}
-                        disabled={!connected}
+                        disabled={!controllable}
                         onChange={(e) => (e.target.checked ? startRamp() : stopRamp())}
                       />
                       <span className="switch-slider" />
@@ -997,7 +1039,7 @@ export function App() {
                 <span className="cap-name">Tune cap</span>
                 <button
                   className="btn step-btn"
-                  disabled={!connected}
+                  disabled={!controllable}
                   onMouseDown={() => holdStep(() => bumpTune(-0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
@@ -1010,12 +1052,12 @@ export function App() {
                   max={100}
                   step={0.1}
                   value={tune}
-                  disabled={!connected}
+                  disabled={!controllable}
                   onChange={(e) => sendTune(clampCap(Number(e.target.value)))}
                 />
                 <button
                   className="btn step-btn"
-                  disabled={!connected}
+                  disabled={!controllable}
                   onMouseDown={() => holdStep(() => bumpTune(0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
@@ -1033,14 +1075,14 @@ export function App() {
                 max={100}
                 step={0.1}
                 value={tune}
-                disabled={!connected}
+                disabled={!controllable}
                 onChange={(e) => sendTune(Number(e.target.value))}
               />
               <div className="cap-row" style={{ marginTop: "10px" }}>
                 <span className="cap-name">Load cap</span>
                 <button
                   className="btn step-btn"
-                  disabled={!connected}
+                  disabled={!controllable}
                   onMouseDown={() => holdStep(() => bumpLoad(-0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
@@ -1053,12 +1095,12 @@ export function App() {
                   max={100}
                   step={0.1}
                   value={load}
-                  disabled={!connected}
+                  disabled={!controllable}
                   onChange={(e) => sendLoad(clampCap(Number(e.target.value)))}
                 />
                 <button
                   className="btn step-btn"
-                  disabled={!connected}
+                  disabled={!controllable}
                   onMouseDown={() => holdStep(() => bumpLoad(0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
@@ -1076,7 +1118,7 @@ export function App() {
                 max={100}
                 step={0.1}
                 value={load}
-                disabled={!connected}
+                disabled={!controllable}
                 onChange={(e) => sendLoad(Number(e.target.value))}
               />
 
@@ -1087,14 +1129,14 @@ export function App() {
                 <div className="seg">
                   <button
                     className={activeCap === "tune" ? "seg-btn on" : "seg-btn"}
-                    disabled={!connected}
+                    disabled={!controllable}
                     onClick={() => setActiveCap("tune")}
                   >
                     TUNE
                   </button>
                   <button
                     className={activeCap === "load" ? "seg-btn on" : "seg-btn"}
-                    disabled={!connected}
+                    disabled={!controllable}
                     onClick={() => setActiveCap("load")}
                   >
                     LOAD
@@ -1102,7 +1144,7 @@ export function App() {
                 </div>
                 <button
                   className="btn step-btn"
-                  disabled={!connected}
+                  disabled={!controllable}
                   onMouseDown={() => holdStep(() => bumpActive(-0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
@@ -1111,7 +1153,7 @@ export function App() {
                 </button>
                 <button
                   className="btn step-btn"
-                  disabled={!connected}
+                  disabled={!controllable}
                   onMouseDown={() => holdStep(() => bumpActive(0.1))}
                   onMouseUp={stopRepeat}
                   onMouseLeave={stopRepeat}
@@ -1134,7 +1176,7 @@ export function App() {
                     <div key={n} className="preset-chip">
                       <button
                         className="preset-recall"
-                        disabled={!connected}
+                        disabled={!controllable}
                         title="Recall these cap positions (manual mode)"
                         onClick={() => recallPreset(n)}
                       >
@@ -1145,7 +1187,7 @@ export function App() {
                       </button>
                       <button
                         className="preset-clear"
-                        disabled={!connected}
+                        disabled={!controllable}
                         title="Clear this preset"
                         onClick={() => clearPreset(n)}
                       >
@@ -1165,7 +1207,7 @@ export function App() {
                 </span>
                 <select
                   value={saveSlot}
-                  disabled={!connected}
+                  disabled={!controllable}
                   onChange={(e) => setSaveSlot(e.target.value)}
                 >
                   {Array.from({ length: presets?.num_slots ?? 9 }, (_, i) => i + 1).map((n) => (
@@ -1174,7 +1216,7 @@ export function App() {
                     </option>
                   ))}
                 </select>
-                <button className="btn" disabled={!connected} onClick={() => savePreset(Number(saveSlot))}>
+                <button className="btn" disabled={!controllable} onClick={() => savePreset(Number(saveSlot))}>
                   Save
                 </button>
               </div>
@@ -1192,7 +1234,7 @@ export function App() {
                   <span>Mode</span>
                   <select
                     value={mt?.mode ?? "advisory"}
-                    disabled={!connected}
+                    disabled={!controllable}
                     onChange={(e) => setMatchMode(e.target.value)}
                   >
                     <option value="advisory">advisory (watch only)</option>
@@ -1204,7 +1246,7 @@ export function App() {
                     Stop
                   </button>
                 ) : (
-                  <button className="btn accent" onClick={startMatchTuner} disabled={!connected}>
+                  <button className="btn accent" onClick={startMatchTuner} disabled={!controllable}>
                     Start
                   </button>
                 )}
@@ -1216,7 +1258,7 @@ export function App() {
                   <button
                     className="btn danger"
                     onClick={armMatchTuner}
-                    disabled={!connected || !t?.rf_on || !mt?.running}
+                    disabled={!controllable || !t?.rf_on || !mt?.running}
                     title={
                       !mt?.running
                         ? "Start the tuner first"
@@ -1274,7 +1316,7 @@ export function App() {
                     Cancel
                   </button>
                 ) : (
-                  <button className="btn" onClick={startTimer} disabled={!connected}>
+                  <button className="btn" onClick={startTimer} disabled={!controllable}>
                     Start timer
                   </button>
                 )}
@@ -1310,7 +1352,7 @@ export function App() {
                   />
                   <button
                     className="btn full"
-                    disabled={!connected}
+                    disabled={!controllable}
                     onClick={() => api.startRecording(runName.trim() || "run", "")}
                   >
                     ● Start recording
@@ -1610,7 +1652,7 @@ export function App() {
                       <select
                         value={thermal?.source ?? "simulated"}
                         onChange={(e) => applyThermalSource(e.target.value as "simulated" | "flir")}
-                        disabled={!connected}
+                        disabled={!controllable}
                       >
                         <option value="simulated">simulated model</option>
                         <option value="flir">FLIR stream</option>
@@ -1643,7 +1685,7 @@ export function App() {
                         <button
                           className="btn accent full"
                           onClick={startThermal}
-                          disabled={!connected}
+                          disabled={!controllable}
                         >
                           Start loop
                         </button>
@@ -1653,7 +1695,7 @@ export function App() {
                       <button
                         className="btn full"
                         onClick={armThermal}
-                        disabled={!connected || !t?.rf_on || thermal?.armed}
+                        disabled={!controllable || !t?.rf_on || thermal?.armed}
                       >
                         {thermal?.armed ? "Armed" : "Arm"}
                       </button>
@@ -1719,7 +1761,7 @@ export function App() {
                           Stop pulse
                         </button>
                       ) : (
-                        <button className="btn accent" onClick={startPulse} disabled={!connected}>
+                        <button className="btn accent" onClick={startPulse} disabled={!controllable}>
                           Start pulse
                         </button>
                       )}
@@ -1736,7 +1778,7 @@ export function App() {
         )}
       </ErrorBoundary>
 
-      {toast ? <div className="toast">{toast}</div> : null}
+      {toast ? <div className={`toast ${toast.tone}`}>{toast.msg}</div> : null}
 
       {showStartup ? (
         <div className="modal-overlay" onClick={() => setShowStartup(false)}>

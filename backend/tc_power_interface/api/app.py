@@ -460,7 +460,10 @@ def create_app(
 
     @app.post("/api/setpoint")
     def set_setpoint(req: SetpointRequest) -> dict[str, Any]:
-        applied = _controller().set_setpoint(req.watts)
+        try:
+            applied = _controller().set_setpoint(req.watts)
+        except RuntimeError as exc:  # not armed / no device
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"requested_w": req.watts, "applied_w": applied}
 
     def _limits_payload() -> dict[str, Any]:
@@ -748,11 +751,28 @@ def create_app(
         _record_event("rf_disabled")
         return _controller().snapshot()
 
+    @app.post("/api/arm")
+    def arm() -> dict[str, Any]:
+        """Take control of the connected device (unlocks RF/setpoint/caps). Never enables RF."""
+        try:
+            _controller().arm()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        _record_event("armed")
+        return _status_payload()
+
+    @app.post("/api/disarm")
+    def disarm() -> dict[str, Any]:
+        """Drop control: RF off and re-lock the control commands. Always allowed."""
+        _controller().disarm()
+        _record_event("disarmed")
+        return _status_payload()
+
     @app.post("/api/estop")
     def estop() -> dict[str, Any]:
-        """Emergency stop: RF off, setpoint 0, halt drivers (ramp/pulse/timer/thermal/tuner)."""
-        _controller().disable_rf()
-        _controller().set_setpoint(0)
+        """Emergency stop: RF off, setpoint 0, halt drivers (ramp/pulse/timer/thermal/tuner).
+        Bypasses the arm gate and works in any state."""
+        _controller().estop()
         _ramp().stop()
         _pulse().stop()
         _timer().stop()
@@ -773,6 +793,8 @@ def create_app(
             _controller().set_tune_capacity(req.percent)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:  # not armed / no device
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"tune_capacity": req.percent}
 
     @app.post("/api/match/load")
@@ -781,6 +803,8 @@ def create_app(
             _controller().set_load_capacity(req.percent)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:  # not armed / no device
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"load_capacity": req.percent}
 
     @app.post("/api/recording/start")

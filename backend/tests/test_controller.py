@@ -205,6 +205,7 @@ class TestRuntimeAttachDetach:
         dev = CxnDevice(transport)
         c = Controller(device=None, poll_interval_s=0.01)
         c.attach_device(dev)
+        c.arm()  # runtime-connected devices start disarmed
         c.set_setpoint(150)
         c.enable_rf()
         c.detach_device()
@@ -220,5 +221,48 @@ class TestRuntimeAttachDetach:
         c.attach_device(CxnDevice(SimulatedCxnTransport()))  # second attach must not raise
         try:
             assert c.state is ControllerState.CONNECTED
+        finally:
+            c.detach_device()
+
+
+class TestArm:
+    """A runtime-connected device is read-only until ARMED. Arming takes control (no CLI probe)."""
+
+    def test_boot_connected_is_armed(self):
+        # The start()/direct-construction path stays armed (existing behaviour; tests unchanged).
+        c = make_controller()
+        assert c.armed is True
+
+    def test_runtime_connect_starts_disarmed_and_blocks_control(self):
+        c = Controller(device=None, poll_interval_s=0.01)
+        c.attach_device(CxnDevice(SimulatedCxnTransport()))
+        try:
+            assert c.armed is False
+            with pytest.raises(RuntimeError):
+                c.set_setpoint(100)
+            with pytest.raises(RuntimeError):
+                c.enable_rf()
+            with pytest.raises(RuntimeError):
+                c.set_tune_capacity(50)
+        finally:
+            c.detach_device()
+
+    def test_arm_enables_control_disarm_blocks_and_drops_rf(self):
+        transport = SimulatedCxnTransport()
+        c = Controller(device=None, poll_interval_s=0.01)
+        c.attach_device(CxnDevice(transport))
+        try:
+            c.arm()
+            assert c.armed is True
+            c.set_setpoint(150)
+            c.enable_rf()
+            c._tick()
+            assert c.latest_telemetry.rf_on is True
+            c.disarm()
+            assert c.armed is False
+            c._tick()
+            assert c.latest_telemetry.rf_on is False  # disarm drops RF
+            with pytest.raises(RuntimeError):
+                c.set_setpoint(50)  # control blocked again
         finally:
             c.detach_device()

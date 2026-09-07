@@ -251,12 +251,25 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   color: var(--danger-ink); }
 .btn.rec { background: var(--rec); color: var(--danger-ink); border-color: var(--rec); }
 .btn.full { width: 100%; }
+/* ARM: take control — solid green, the affirmative gate that unlocks the drive controls. */
+.btn.arm-btn { background: var(--live); color: var(--bg); border-color: var(--live); font-weight: 800;
+  letter-spacing: 0.04em; }
+.btn.arm-btn:hover:not(:disabled) { filter: brightness(1.08); }
+/* ARMED (click to disarm): green outline + a live dot so the armed state reads at a glance. */
+.btn.disarm-btn { background: var(--live-bg); color: var(--live); border-color: var(--live);
+  font-weight: 700; letter-spacing: 0.03em; }
+.btn.disarm-btn:hover:not(:disabled) { background: transparent; color: var(--fg-strong); }
 
 .toggle { display: flex; align-items: center; gap: var(--space); }
 
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-  background: var(--err); color: var(--danger-ink); padding: 8px 16px; border-radius: var(--radius);
-  box-shadow: var(--shadow); font-size: 12px; }
+  padding: 8px 16px; border-radius: var(--radius); box-shadow: var(--shadow); font-size: 12px;
+  font-weight: 600; }
+/* Colour by meaning: affirmative = green, failure = red, caution/E-STOP = amber. Dark ink on the
+   bright green/amber and white on the deep red all clear WCAG AA. */
+.toast.ok { background: var(--live); color: var(--bg); }
+.toast.err { background: var(--err-btn); color: #fff; }
+.toast.warn { background: var(--accent); color: var(--bg); }
 
 .hint { color: var(--muted); font-size: 11px; margin-top: var(--space); line-height: 1.4; }
 .mono { font-family: var(--font-mono); }
