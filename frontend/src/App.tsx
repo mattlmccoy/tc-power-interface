@@ -82,6 +82,10 @@ export function App() {
   const [pulseForm, setPulseForm] = useState({ on_ms: "1000", off_ms: "1000", power_w: "100" });
   const [tune, setTune] = useState(50);
   const [load, setLoad] = useState(50);
+  // When did the operator last drive a cap from software? While recent, the display holds their
+  // value; otherwise the input/slider MIRROR the device's actual cap position (the AIT is tuned
+  // physically/analog, so the readback is the truth — the UI must show where the caps really are).
+  const capsTouchedAt = useRef(0);
   const [runName, setRunName] = useState("");
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [autoLog, setAutoLog] = useState(true);
@@ -375,6 +379,16 @@ export function App() {
   // UI ↔ operator API version handshake (like FLIR): major mismatch refuses, minor warns.
   const handshake = reachable && health ? checkHandshake(UI_API_VERSION, health.api_version) : null;
   const faulted = state === "fault";
+
+  // Mirror the device's ACTUAL cap positions into the input/slider (unless the operator drove a cap
+  // from software within the last 1.5 s). The AIT is tuned physically, so the readback is the truth
+  // — the UI must show where the caps really are, not a stale default. setTune/setLoad to an equal
+  // value is a no-op, so this can run every telemetry tick without looping.
+  useEffect(() => {
+    if (!connected || Date.now() - capsTouchedAt.current < 1500) return;
+    if (t?.tune_cap_percent != null) setTune(clampCap(t.tune_cap_percent));
+    if (t?.load_cap_percent != null) setLoad(clampCap(t.load_cap_percent));
+  }, [t?.tune_cap_percent, t?.load_cap_percent, connected]);
   const maxRefl = limits?.max_reflected_w ?? 25;
   const reflW = t?.reverse_w ?? 0;
   const zone = t ? reflectedZone(reflW, maxRefl * 0.5, maxRefl) : "ok";
@@ -472,10 +486,12 @@ export function App() {
     await api.pulseStop();
   }
   async function sendTune(v: number) {
+    capsTouchedAt.current = Date.now();
     setTune(v);
     await api.tune(v);
   }
   async function sendLoad(v: number) {
+    capsTouchedAt.current = Date.now();
     setLoad(v);
     await api.load(v);
   }
