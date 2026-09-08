@@ -6,8 +6,42 @@ it is unit-tested without a live FLIR backend, mirroring FlirLink.
 
 from tc_power_interface.integration.control_telemetry import (
     ControlTelemetryPoster,
+    HeartbeatGate,
     build_control_telemetry,
+    build_power_heartbeat,
 )
+
+# --- power-only heartbeat (Matt, 2026-09-08): while the generator is connected but the thermal
+# loop is NOT running (manual RF run), post just the RF power so FLIR stays "engaged" and gets an
+# RF-power trace for EVERY run. FLIR needs nothing new: same endpoint, mode "manual", no thermal
+# keys. ---
+
+
+def test_build_power_heartbeat_has_only_the_power_keys_and_mode_manual():
+    body = build_power_heartbeat(
+        telemetry={"forward_w": 118.5, "reverse_w": 2.1, "reflected_fraction": 0.018,
+                   "load_w": 116.4, "rf_on": True},
+        ts="2026-09-08T21:50:00+00:00",
+    )
+    assert body == {
+        "ts": "2026-09-08T21:50:00+00:00",
+        "mode": "manual",
+        "forward_w": 118.5,
+        "reverse_w": 2.1,
+        "reflected_fraction": 0.018,
+    }
+    # No thermal-loop keys leak into a manual heartbeat (FLIR labels these "RF: <W>", not "loop:").
+    thermal_keys = {"setpoint_c", "measured_c", "applied_w", "recommended_w", "phase", "roi"}
+    assert not thermal_keys & body.keys()
+
+
+def test_heartbeat_gate_admits_at_most_one_per_period():
+    gate = HeartbeatGate(period_s=1.0)
+    assert gate.due(now=100.0) is True  # first one always goes
+    assert gate.due(now=100.4) is False  # too soon (the controller polls at 2 Hz)
+    assert gate.due(now=100.99) is False
+    assert gate.due(now=101.0) is True  # a full period elapsed
+    assert gate.due(now=101.5) is False
 
 THERMAL = {
     "phase": "ramp", "mode": "auto", "armed": True,

@@ -44,7 +44,9 @@ from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
 from tc_power_interface.integration.control_telemetry import (
     ControlTelemetryPoster,
+    HeartbeatGate,
     build_control_telemetry,
+    build_power_heartbeat,
 )
 from tc_power_interface.integration.flir_link import FlirLink
 from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
@@ -228,6 +230,7 @@ def create_app(
         # flag with the rf-link). Control ROI = the doped-part center circle (locked 2026-09-08).
         control_telemetry = ControlTelemetryPoster(flir_url or "", enabled=bool(flir_url))
         app.state.control_telemetry = control_telemetry
+        heartbeat_gate = HeartbeatGate(period_s=1.0)  # power-only heartbeat cadence (manual runs)
         app.state.control_roi = "circle_medium_small"
         controller.backend = backend
         thermal = ThermalController(
@@ -248,6 +251,13 @@ def create_app(
                     ts=datetime.now(UTC).isoformat(),
                 )
                 poster.post(body)
+            elif poster.enabled and snap.get("telemetry") and heartbeat_gate.due():
+                # Manual RF run (loop stopped, generator connected): a power-only heartbeat keeps
+                # FLIR "engaged" and gives it an RF-power trace for EVERY run, not just closed-loop.
+                # The running loop's row already carries these fields, so never both.
+                poster.post(build_power_heartbeat(
+                    telemetry=snap["telemetry"], ts=datetime.now(UTC).isoformat(),
+                ))
 
         controller.add_listener(_thermal_tick)
 

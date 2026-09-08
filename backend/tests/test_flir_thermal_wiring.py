@@ -110,6 +110,39 @@ def test_running_thermal_loop_posts_control_telemetry(tmp_path):
         assert "setpoint_c" in body and "measured_c" in body and "error_c" in body
 
 
+def test_power_heartbeat_posts_when_connected_but_thermal_loop_stopped(tmp_path):
+    # Manual RF run: generator connected (sim), FLIR link on, thermal loop NOT running -> a
+    # power-only heartbeat (mode "manual") keeps FLIR engaged and gives it an RF-power trace.
+    with _client(tmp_path) as c:
+        posted: list[dict] = []
+        poster = c.app.state.control_telemetry
+        poster._post = lambda url, body, timeout: posted.append(body)
+        poster.enabled = True
+        poster.url = "http://127.0.0.1:8000"
+        c.app.state.controller._tick()  # thermal loop is stopped by default
+        poster.join()
+        manual = [b for b in posted if b.get("mode") == "manual"]
+        assert manual, "expected a power-only heartbeat while the loop is stopped"
+        assert set(manual[-1]) == {"ts", "mode", "forward_w", "reverse_w", "reflected_fraction"}
+
+
+def test_no_heartbeat_while_the_thermal_loop_runs_only_the_full_row(tmp_path):
+    # When the loop runs, its per-tick row already carries the power fields — never double-post.
+    with _client(tmp_path) as c:
+        posted: list[dict] = []
+        poster = c.app.state.control_telemetry
+        poster._post = lambda url, body, timeout: posted.append(body)
+        poster.enabled = True
+        poster.url = "http://127.0.0.1:8000"
+        c.post("/api/thermal/start", json={"mode": "advisory"})
+        before = len(posted)
+        c.app.state.controller._tick()
+        poster.join()
+        new = posted[before:]
+        assert new and all(b.get("mode") != "manual" for b in new)
+        assert "setpoint_c" in new[-1]  # the full closed-loop row
+
+
 def test_no_control_telemetry_when_link_disabled(tmp_path):
     with _client(tmp_path) as c:
         posted: list[dict] = []
