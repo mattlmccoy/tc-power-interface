@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>T&amp;C Power Interface — offline</title>
+    <meta name="theme-color" content="#0b0e12" />
+    <!-- Self-contained on purpose: this page is served from the service-worker cache when the
+         internet is down, so it cannot depend on the hashed app bundle or any web font. The tokens
+         below are copied from src/theme.css (the tool's design tokens) so it reads as the same tool. -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101418; --bg-deep: #0b0e12; --panel: #141920; --line: #232a33; --line-strong: #2f3843;
+        --fg: #d7dde5; --fg-strong: #f5f7fa; --muted: #8b97a5; --accent: #ffb454; --live: #5cff8a;
+        --err: #ff5f56; --err-bg: rgba(255, 95, 86, 0.12);
+        --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+        --font-mono: "Space Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+        --radius: 3px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; background: var(--bg-deep); color: var(--fg);
+        font: 13px/1.5 var(--font-ui); }
+      .topbar { height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 16px;
+        background: var(--bg); border-bottom: 1px solid var(--line); }
+      .brand { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--fg-strong); }
+      .pill { margin-left: auto; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+        text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--err);
+        color: var(--err); background: var(--err-bg); }
+      main { max-width: 560px; margin: 10vh auto 0; padding: 0 16px; }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+        padding: 20px 22px; }
+      h1 { margin: 0 0 6px; font-size: 18px; font-weight: 600; color: var(--fg-strong); }
+      .label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+      p { margin: 0 0 8px; color: var(--fg); }
+      p.muted { color: var(--muted); }
+      .links { display: flex; flex-direction: column; gap: 8px; }
+      a.btn { display: block; text-decoration: none; font-family: var(--font-mono); font-size: 13px;
+        padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--line-strong);
+        color: var(--fg-strong); background: var(--bg); }
+      a.btn:hover { border-color: var(--accent); }
+      a.btn.primary { border-color: var(--accent); color: var(--accent); }
+      a.btn .tag { float: right; color: var(--muted); font-size: 10px; letter-spacing: 0.06em;
+        text-transform: uppercase; }
+      .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
+      button { font: 12px var(--font-ui); color: var(--fg); background: var(--bg); cursor: pointer;
+        border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 7px 12px; }
+      button:hover { border-color: var(--accent); }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err); display: inline-block; }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <span class="brand">T&amp;C Power Interface</span>
+      <span class="pill">offline</span>
+    </div>
+    <main>
+      <div class="panel">
+        <h1>You're offline — the operator isn't.</h1>
+        <p>This page is the hosted copy of the interface and needs the internet. The generator
+          operator runs <strong>on this machine</strong> and serves the same interface locally, so
+          the tool keeps working without a connection.</p>
+        <div class="label">Open the local operator</div>
+        <div class="links" id="links"></div>
+        <p class="muted" id="hint" style="margin-top:10px"></p>
+        <div class="row">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="muted" style="color:var(--muted)">No internet connection.</span>
+          <button type="button" onclick="location.reload()" style="margin-left:auto">Retry hosted page</button>
+        </div>
+      </div>
+    </main>
+    <script>
+      (function () {
+        // Same key the app persists the operator address under (src/lib/operator.ts). If the
+        // operator has been pointed anywhere else, offer THAT first; the defaults always follow.
+        var KEY = "tcp.operator.v1";
+        var DEFAULTS = ["http://localhost:8010", "http://127.0.0.1:8010"];
+        var links = [];
+        var configured = null;
+        try {
+          var raw = localStorage.getItem(KEY);
+          if (raw && /^https?:\/\/[^\s/]+/i.test(raw)) configured = raw.replace(/\/+$/, "");
+        } catch (e) { /* storage blocked: defaults only */ }
+        if (configured) links.push(configured);
+        DEFAULTS.forEach(function (u) { if (links.indexOf(u) === -1) links.push(u); });
+        var list = document.getElementById("links");
+        links.forEach(function (u, i) {
+          var a = document.createElement("a");
+          a.className = "btn" + (i === 0 ? " primary" : "");
+          a.href = u;
+          a.textContent = u;
+          if (configured && i === 0) {
+            var tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = "configured";
+            a.appendChild(tag);
+          }
+          list.appendChild(a);
+        });
+        document.getElementById("hint").textContent = configured
+          ? "First link is the operator address saved in this browser; the others are the defaults."
+          : "Defaults shown — the operator listens on port 8010 on the machine it runs on.";
+      })();
+    </script>
+  </body>
+</html>
