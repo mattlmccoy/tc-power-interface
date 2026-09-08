@@ -74,6 +74,36 @@ def test_saturated_control_roi_forces_invalid_even_when_frame_is_live():
     assert max_c is None
 
 
+# Captured from the LIVE FLIR endpoint (0.4.17, http://127.0.0.1:8000) on 2026-09-08 — reality, not
+# spec-invented. The healthy frame is FLIR's captured simulated-camera sample (identical shape to a
+# real A70); the not-acquiring frame is what the live GET actually returned with no camera/ROIs.
+_LIVE_NOT_ACQUIRING = {
+    "live": False, "frame_id": None, "frame_ts": None, "age_ms": None, "stale": True, "rois": [],
+}
+_LIVE_HEALTHY = {
+    "live": True, "frame_id": 15, "frame_ts": "2026-09-08T04:37:44.653241+00:00",
+    "age_ms": 51.3, "stale": False,
+    "rois": [
+        {"id": 10, "name": "circle_medium_small", "kind": "circle", "mean_c": 25.73,
+         "max_c": 25.73, "min_c": 25.73, "value_c": None, "over_range": False, "valid": True},
+        {"id": 45, "name": "trans_hotspot", "kind": "spot", "mean_c": 25.0, "max_c": 25.0,
+         "min_c": 25.0, "value_c": 25.0, "over_range": False, "valid": True},
+    ],
+}
+
+
+def test_conforms_to_captured_live_payloads():
+    # Not acquiring (rois empty roster) -> fail safe, holds 0 W.
+    sample, max_c = select_control_temp(_LIVE_NOT_ACQUIRING, ROI)
+    assert sample.valid is False and max_c is None
+    # Healthy live frame -> selects circle_medium_small.mean_c and exposes its max_c.
+    sample, max_c = select_control_temp(_LIVE_HEALTHY, ROI)
+    assert sample.valid is True and sample.celsius == 25.73 and max_c == 25.73
+    # age_ms is a FLOAT on the wire (51.3); the staleness comparison still trips correctly.
+    stale = select_control_temp({**_LIVE_HEALTHY, "age_ms": 1500.7}, ROI, max_age_ms=1000)
+    assert stale[0].valid is False
+
+
 class _FakeGet:
     """Injectable GET returning queued payloads (or raising) so the poller runs without HTTP."""
 
