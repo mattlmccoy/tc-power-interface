@@ -162,3 +162,18 @@ def test_poller_fails_safe_to_invalid_on_get_error():
                             _get=_FakeGet([RuntimeError("connection refused")]))
     src.poll_once()
     assert src.read().valid is False  # never a stale/fake reading on a failed fetch
+
+
+def test_poller_exposes_the_live_roster_and_switches_control_roi_at_runtime():
+    # The operator picks which live ROI to control on (ROIs change print-to-print), so the poller
+    # surfaces the whole roster and lets the control ROI be swapped without rebuilding the source.
+    src = FlirPollingSource("http://x", roi_name=ROI, _get=_FakeGet([_payload()]))
+    src.poll_once()
+    assert src.available_rois() == [
+        "circle_large_powder", "circle_medium_small", "circle_small_powder",
+    ]
+    assert src.read().celsius == 182.5  # circle_medium_small.mean_c
+    src.set_roi("circle_large_powder")  # switch the control ROI at runtime
+    src.poll_once()
+    assert src.roi_name == "circle_large_powder"
+    assert src.read().celsius == 150.0  # now controls on the newly-selected ROI's mean_c

@@ -68,6 +68,9 @@ export interface ThermalStatus {
   target_c: number;
   recommended_w: number;
   applied_w: number | null;
+  /** The selected control ROI name, and the live FLIR roster to pick from (empty unless FLIR). */
+  control_roi?: string;
+  available_rois?: string[];
 }
 
 /** Editable thermal plan (bounds-clamped server-side). */

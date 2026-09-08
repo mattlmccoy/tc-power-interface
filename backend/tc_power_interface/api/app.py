@@ -148,6 +148,10 @@ class ThermalSourceBody(BaseModel):
     url: str | None = None
 
 
+class ThermalRoiBody(BaseModel):
+    name: str
+
+
 class AutoLogBody(BaseModel):
     enabled: bool
 
@@ -376,6 +380,11 @@ def create_app(
     def _thermal() -> ThermalController:
         return cast(ThermalController, app.state.thermal)
 
+    def _available_rois() -> list[str]:
+        """The live FLIR roster (control-ROI candidates); empty unless a FLIR source is set."""
+        fn = getattr(_thermal().source, "available_rois", None)
+        return cast(list[str], fn()) if callable(fn) else []
+
     def _ramp() -> RampController:
         return cast(RampController, app.state.ramp)
 
@@ -431,7 +440,12 @@ def create_app(
                 "active": rec.state is RecorderState.RECORDING,
                 "run": app.state.current_run,
             },
-            "thermal": {**_thermal().snapshot(), "source": app.state.thermal_source},
+            "thermal": {
+                **_thermal().snapshot(),
+                "source": app.state.thermal_source,
+                "control_roi": app.state.control_roi,
+                "available_rois": _available_rois(),
+            },
             "ramp": _ramp().snapshot(),
             "timer": _timer().snapshot(),
             "presets": _presets_payload(),
@@ -613,6 +627,19 @@ def create_app(
             th.source = SimulatedThermalSource()
             app.state.thermal_source = "simulated"
         return {"source": app.state.thermal_source}
+
+    @app.get("/api/thermal/rois")
+    def thermal_rois() -> dict[str, Any]:
+        return {"available_rois": _available_rois(), "control_roi": app.state.control_roi}
+
+    @app.post("/api/thermal/roi")
+    def thermal_roi(body: ThermalRoiBody) -> dict[str, Any]:
+        # The operator selects which live FLIR ROI to control on (ROIs change print-to-print).
+        app.state.control_roi = body.name
+        setter = getattr(_thermal().source, "set_roi", None)
+        if callable(setter):
+            setter(body.name)
+        return {"control_roi": app.state.control_roi, "available_rois": _available_rois()}
 
     # --- power ramp ------------------------------------------------------------------------
     def _ramp_payload() -> dict[str, Any]:

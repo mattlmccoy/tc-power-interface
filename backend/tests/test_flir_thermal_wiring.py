@@ -35,6 +35,12 @@ class _StubSource:
     def stop(self):
         self.started = False
 
+    def available_rois(self):
+        return ["part_center", "circle_medium_small", "hotspot"]
+
+    def set_roi(self, name):
+        self.roi_name = name
+
     def read(self):  # pragma: no cover - not exercised here
         from tc_power_interface.control.temperature import TemperatureSample
 
@@ -53,6 +59,31 @@ def test_setting_source_to_flir_starts_the_polling_consumer(tmp_path, monkeypatc
         assert src.started is True  # the consumer is actually running (was the gap)
         assert src.url == "http://127.0.0.1:8000/api/live/roi-temps"  # base -> roi-temps endpoint
         assert src.roi_name == "circle_medium_small"
+
+
+def test_control_roi_is_selectable_from_the_live_roster(tmp_path, monkeypatch):
+    _StubSource.instances.clear()
+    monkeypatch.setattr(app_module, "FlirPollingSource", _StubSource)
+    with _client(tmp_path) as c:
+        c.post("/api/thermal/source", json={"type": "flir", "url": "http://127.0.0.1:8000"})
+        rois = c.get("/api/thermal/rois").json()
+        assert rois["available_rois"] == ["part_center", "circle_medium_small", "hotspot"]
+        assert rois["control_roi"] == "circle_medium_small"  # default, but not fixed
+        # The operator selects a different live ROI (ROIs change print-to-print).
+        r = c.post("/api/thermal/roi", json={"name": "part_center"})
+        assert r.status_code == 200
+        assert r.json()["control_roi"] == "part_center"
+        assert c.app.state.thermal.source.roi_name == "part_center"  # switched on the live source
+        # The selection flows into the posted control telemetry's roi field.
+        posted: list[dict] = []
+        poster = c.app.state.control_telemetry
+        poster._post = lambda url, body, timeout: posted.append(body)
+        poster.enabled = True
+        poster.url = "http://127.0.0.1:8000"
+        c.post("/api/thermal/start", json={"mode": "auto"})
+        c.app.state.controller._tick()
+        poster.join()
+        assert posted[-1]["roi"] == "part_center"
 
 
 def test_flir_link_enables_the_control_telemetry_poster(tmp_path):

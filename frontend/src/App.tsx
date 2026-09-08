@@ -688,6 +688,10 @@ export function App() {
     const res = await api.thermalSource(type, type === "flir" ? thermalFlirUrl.trim() : undefined);
     if (!res.ok) flash("thermal source failed: " + (await detail(res)));
   }
+  async function applyControlRoi(name: string) {
+    const res = await api.setThermalRoi(name);
+    if (!res.ok) flash("control ROI failed: " + (await detail(res)));
+  }
 
   const textInputStyle = {
     width: "100%",
@@ -1819,14 +1823,47 @@ export function App() {
                       </select>
                     </div>
                     {(thermal?.source ?? "simulated") === "flir" ? (
-                      <input
-                        className="mono"
-                        style={textInputStyle}
-                        placeholder="ws://localhost:8000/ws/frames"
-                        value={thermalFlirUrl}
-                        onChange={(e) => setThermalFlirUrl(e.target.value)}
-                        onBlur={() => applyThermalSource("flir")}
-                      />
+                      <>
+                        <input
+                          className="mono"
+                          style={textInputStyle}
+                          placeholder="http://127.0.0.1:8000"
+                          value={thermalFlirUrl}
+                          onChange={(e) => setThermalFlirUrl(e.target.value)}
+                          onBlur={() => applyThermalSource("flir")}
+                        />
+                        <label className="field-label" style={{ marginTop: "8px" }}>
+                          Control ROI
+                        </label>
+                        <div className="row">
+                          <select
+                            value={thermal?.control_roi ?? ""}
+                            onChange={(e) => applyControlRoi(e.target.value)}
+                            disabled={!controllable || (thermal?.available_rois?.length ?? 0) === 0}
+                          >
+                            {(thermal?.available_rois?.length ?? 0) === 0 ? (
+                              <option value="">no live ROIs — draw one in FLIR</option>
+                            ) : null}
+                            {/* If the selected ROI has left the live feed, still show it, flagged. */}
+                            {thermal?.control_roi &&
+                            !(thermal?.available_rois ?? []).includes(thermal.control_roi) &&
+                            (thermal?.available_rois?.length ?? 0) > 0 ? (
+                              <option value={thermal.control_roi}>
+                                {thermal.control_roi} (not in live feed)
+                              </option>
+                            ) : null}
+                            {(thermal?.available_rois ?? []).map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="hint">
+                          Loop controls on this ROI's mean temp. ROIs come from FLIR and change
+                          print-to-print; if the selected one leaves the feed, the loop holds 0&nbsp;W.
+                        </div>
+                      </>
                     ) : null}
                     <div className="row" style={{ marginTop: "10px" }}>
                       <select
