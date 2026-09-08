@@ -116,6 +116,51 @@ _LIVE_NO_CAMERA_ROSTER = {
 }
 
 
+# REAL HARDWARE — FLIR A70 (serial 89903739, fw 42.0.0) acquiring, captured 2026-09-08 19:54 UTC.
+# Same shape/keys/types as the simulated camera; only the values changed. 8 area ROIs (no spots, so
+# value_c is null everywhere). ROI ids CHURNED between runs (front/back_electrode 36/37 -> 50/51),
+# which is why the control ROI is keyed by NAME, never id.
+_LIVE_A70_HEALTHY = {
+    "live": True, "frame_id": 4566, "frame_ts": "2026-09-08T19:54:04.481336+00:00",
+    "age_ms": 61.9, "stale": False,
+    "rois": [
+        {"id": 7, "name": "circle_large_powder", "kind": "circle", "mean_c": 18.9487,
+         "max_c": 19.23, "min_c": 18.69, "value_c": None, "over_range": False, "valid": True},
+        {"id": 9, "name": "circle_medium_powder", "kind": "circle", "mean_c": 18.9411,
+         "max_c": 19.23, "min_c": 18.69, "value_c": None, "over_range": False, "valid": True},
+        {"id": 10, "name": "circle_medium_small", "kind": "circle", "mean_c": 18.9334,
+         "max_c": 19.16, "min_c": 18.76, "value_c": None, "over_range": False, "valid": True},
+        {"id": 33, "name": "shunt_cap_FP", "kind": "polygon", "mean_c": 18.9928,
+         "max_c": 19.39, "min_c": 18.34, "value_c": None, "over_range": False, "valid": True},
+        {"id": 34, "name": "series_cap_FP", "kind": "polygon", "mean_c": 18.9855,
+         "max_c": 19.58, "min_c": 18.32, "value_c": None, "over_range": False, "valid": True},
+        {"id": 35, "name": "transformer", "kind": "polygon", "mean_c": 18.6966,
+         "max_c": 18.97, "min_c": 18.18, "value_c": None, "over_range": False, "valid": True},
+        {"id": 50, "name": "front_electrode", "kind": "polygon", "mean_c": 18.8491,
+         "max_c": 19.18, "min_c": 18.37, "value_c": None, "over_range": False, "valid": True},
+        {"id": 51, "name": "back_electrode", "kind": "polygon", "mean_c": 18.8459,
+         "max_c": 19.37, "min_c": 18.2, "value_c": None, "over_range": False, "valid": True},
+    ],
+}
+
+
+def test_conforms_to_the_real_a70_live_payload():
+    # Selects the control ROI's mean_c and exposes its max_c from the real camera frame.
+    sample, max_c = select_control_temp(_LIVE_A70_HEALTHY, ROI)
+    assert sample.valid is True and sample.celsius == 18.9334 and max_c == 19.16
+    # The poller surfaces the full 8-ROI roster (in feed order) for the operator's dropdown ...
+    src = FlirPollingSource("http://x", roi_name=ROI, _get=_FakeGet([_LIVE_A70_HEALTHY]))
+    src.poll_once()
+    assert src.available_rois() == [
+        "circle_large_powder", "circle_medium_powder", "circle_medium_small", "shunt_cap_FP",
+        "series_cap_FP", "transformer", "front_electrode", "back_electrode",
+    ]
+    # ... and selection is by NAME, so a churned id (front_electrode is now 50) still resolves.
+    src.set_roi("front_electrode")
+    src.poll_once()
+    assert src.read().celsius == 18.8491
+
+
 def test_conforms_to_captured_live_payloads():
     # Not acquiring (rois empty roster) -> fail safe, holds 0 W.
     sample, max_c = select_control_temp(_LIVE_NOT_ACQUIRING, ROI)
