@@ -4,6 +4,7 @@ Logic is tested by driving `_tick()` directly (no threads); one lifecycle test e
 real background thread against the simulator.
 """
 
+import logging
 import time
 
 import pytest
@@ -195,6 +196,27 @@ class TestListeners:
         assert len(seen) == 1
         assert seen[0]["telemetry"] is not None
         assert seen[0]["state"] == "connected"
+
+    def test_raising_listener_is_isolated_and_logged(self, caplog):
+        # A broken listener (recorder, FLIR notifier, ...) must never break the control loop or the
+        # OTHER listeners — but it must not fail SILENTLY either: an operator has to be able to see
+        # in the log that e.g. auto-logging stopped working.
+        c = make_controller()
+        c.connect()
+        seen: list[dict] = []
+
+        def bad(_snap: dict) -> None:
+            raise RuntimeError("listener boom")
+
+        c.add_listener(bad)
+        c.add_listener(seen.append)  # registered AFTER the broken one
+        with caplog.at_level(logging.ERROR, logger="tc_power_interface.control.controller"):
+            c._tick()
+        assert len(seen) == 1  # the later listener still ran
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert errors, "the listener failure was swallowed without any log record"
+        assert any("listener boom" in (r.exc_text or "") or "listener boom" in str(r.exc_info)
+                   for r in errors)
 
 
 class TestSetpointGuard:

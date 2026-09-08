@@ -14,6 +14,7 @@ The controller never enables RF on its own — only an explicit :meth:`enable_rf
 from __future__ import annotations
 
 import enum
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -21,6 +22,8 @@ from typing import Any
 
 from tc_power_interface.control.safety import SafetyDecision, SafetyLimits, evaluate
 from tc_power_interface.device.base import Telemetry
+
+logger = logging.getLogger(__name__)
 
 
 class ControllerState(enum.Enum):
@@ -74,8 +77,10 @@ class Controller:
         for cb in self._listeners:
             try:
                 cb(snap)
-            except Exception:  # noqa: BLE001 - a listener must never break the control loop
-                pass
+            except Exception:  # noqa: BLE001 - a listener must never break the control loop ...
+                # ... but it must not fail SILENTLY either: a broken recorder/notifier has to be
+                # visible in the operator log, not swallowed forever.
+                logger.exception("controller listener %r failed", getattr(cb, "__qualname__", cb))
 
     # --- lifecycle -------------------------------------------------------------------------
     def connect(self) -> None:
