@@ -92,6 +92,30 @@ _LIVE_HEALTHY = {
 }
 
 
+# Exact bytes FLIR emits when the control ROI saturates (over-range) while the frame is otherwise
+# live: mean_c AND max_c both null, over_range:true, valid:false; other ROIs stay valid. Captured
+# 2026-09-08. Saturation = too hot -> must hold 0 W (and max_c is unusable, so the over-temp guard
+# trips on valid:false/over_range, never on a max_c number).
+_LIVE_SATURATED_CONTROL = {
+    "live": True, "frame_id": 42, "frame_ts": "2026-09-08T04:37:44.653241+00:00",
+    "age_ms": 0.1, "stale": False,
+    "rois": [
+        {"id": 10, "name": "circle_medium_small", "kind": "circle", "mean_c": None,
+         "max_c": None, "min_c": None, "value_c": None, "over_range": True, "valid": False},
+        {"id": 45, "name": "trans_hotspot", "kind": "spot", "mean_c": 185.0, "max_c": 185.0,
+         "min_c": 185.0, "value_c": 185.0, "over_range": False, "valid": True},
+    ],
+}
+# No camera, but the ROI IS drawn in the FLIR UI -> roster present, every roi valid:false + null.
+_LIVE_NO_CAMERA_ROSTER = {
+    "live": False, "frame_id": None, "frame_ts": None, "age_ms": None, "stale": True,
+    "rois": [
+        {"id": 10, "name": "circle_medium_small", "kind": "circle", "mean_c": None,
+         "max_c": None, "min_c": None, "value_c": None, "over_range": False, "valid": False},
+    ],
+}
+
+
 def test_conforms_to_captured_live_payloads():
     # Not acquiring (rois empty roster) -> fail safe, holds 0 W.
     sample, max_c = select_control_temp(_LIVE_NOT_ACQUIRING, ROI)
@@ -102,6 +126,11 @@ def test_conforms_to_captured_live_payloads():
     # age_ms is a FLOAT on the wire (51.3); the staleness comparison still trips correctly.
     stale = select_control_temp({**_LIVE_HEALTHY, "age_ms": 1500.7}, ROI, max_age_ms=1000)
     assert stale[0].valid is False
+    # Saturated control ROI while the frame is otherwise live -> hold 0 W, max_c unusable (null).
+    sample, max_c = select_control_temp(_LIVE_SATURATED_CONTROL, ROI)
+    assert sample.valid is False and max_c is None
+    # No camera but the ROI is drawn (present-but-invalid roster) -> hold 0 W.
+    assert select_control_temp(_LIVE_NO_CAMERA_ROSTER, ROI)[0].valid is False
 
 
 class _FakeGet:
