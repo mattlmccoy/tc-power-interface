@@ -219,7 +219,11 @@ def create_app(
             )
         recorder = TelemetryRecorder(experiments_root)
         flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
-        controller.add_listener(RfLinkNotifier(flir_link).on_snapshot)
+        # RF on/off -> FLIR: announced from BOTH the API command (immediate; catches pulses shorter
+        # than one telemetry poll) and the observed telemetry edge (front panel / faults), deduped.
+        rf_notifier = RfLinkNotifier(flir_link)
+        controller.add_listener(rf_notifier.on_snapshot)
+        app.state.rf_notifier = rf_notifier
         # Per-tick control-telemetry POST to the FLIR run logger (shares the FLIR base + enabled
         # flag with the rf-link). Control ROI = the doped-part center circle (locked 2026-09-08).
         control_telemetry = ControlTelemetryPoster(flir_url or "", enabled=bool(flir_url))
@@ -384,6 +388,17 @@ def create_app(
         """The live FLIR roster (control-ROI candidates); empty unless a FLIR source is set."""
         fn = getattr(_thermal().source, "available_rois", None)
         return cast(list[str], fn()) if callable(fn) else []
+
+    def _rf_command(*, on: bool, reason: str = "operator") -> None:
+        """Announce an accepted RF on/off command to the FLIR link immediately (see RfLinkNotifier:
+        a pulse shorter than one telemetry poll would otherwise never reach FLIR)."""
+        tel = _controller().latest_telemetry
+        cast(RfLinkNotifier, app.state.rf_notifier).on_command(
+            on=on,
+            forward_w=float(tel.forward_w) if tel else 0.0,
+            reflected_fraction=float(tel.reflected_fraction) if tel else 0.0,
+            reason=reason,
+        )
 
     def _ramp() -> RampController:
         return cast(RampController, app.state.ramp)
@@ -815,12 +830,14 @@ def create_app(
             _controller().enable_rf()
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        _rf_command(on=True)  # generator accepted the enable -> tell FLIR now, not next poll
         _record_event("rf_enabled")
         return _controller().snapshot()
 
     @app.post("/api/rf/disable")
     def rf_disable() -> dict[str, Any]:
         _controller().disable_rf()
+        _rf_command(on=False)
         _record_event("rf_disabled")
         return _controller().snapshot()
 
@@ -849,6 +866,7 @@ def create_app(
         """Emergency stop: RF off, setpoint 0, halt drivers (ramp/pulse/timer/thermal/tuner).
         Bypasses the arm gate and works in any state."""
         _controller().estop()
+        _rf_command(on=False, reason="e-stop")  # FLIR's timeline should show WHY RF dropped
         _stop_all_features()
         _record_event("estop")
         return {"ok": True, "rf": "off"}
