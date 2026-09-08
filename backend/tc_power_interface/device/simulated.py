@@ -143,8 +143,11 @@ class SimulatedCxnTransport(Transport):
         elif mnem == b"TM":  # manual mode (ack only)
             self.manual_mode = p1 == b"\x00\x02"
             self._ack(True)
-        elif mnem == b"TC":  # tune/load capacity (ack only); value is percent*10 (0.1% resolution)
-            value = int.from_bytes(command[4:6], "big") / 10
+        elif mnem == b"TC":  # tune/load capacity (ack only).
+            # The AG 0613 commands caps in WHOLE percent (0-100) — verified on hardware 2026-09-07
+            # (see codec.cmd_tune_capacity). GT reads back percent*10 (parse_gt / 10), so store the
+            # whole percent here; the earlier /10 confined the sim caps to 0-10 and broke the tuner.
+            value = float(int.from_bytes(command[4:6], "big"))
             if p1 == b"\x00\x01":
                 self.load_capacity = value
             elif p1 == b"\x00\x02":
