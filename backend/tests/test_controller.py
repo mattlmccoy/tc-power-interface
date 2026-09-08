@@ -10,8 +10,10 @@ import pytest
 
 from tc_power_interface.control.controller import Controller, ControllerState
 from tc_power_interface.control.safety import SafetyLimits
+from tc_power_interface.device.base import Telemetry
 from tc_power_interface.device.cxn import CxnDevice
 from tc_power_interface.device.simulated import SimulatedCxnTransport
+from tc_power_interface.protocol.codec import Status
 
 
 def make_controller(reflected_fraction=0.01, **limit_kw) -> Controller:
@@ -107,6 +109,79 @@ class TestProtection:
         c.connect()
         c._tick()
         assert c.state is ControllerState.FAULT
+        assert dev.rf_off_calls >= 1
+
+
+def _benign_telemetry() -> Telemetry:
+    """A sample that trips nothing on its own (RF off, cool, no status bits)."""
+    return Telemetry(
+        host_timestamp_ns=0,
+        forward_w=0.0,
+        reverse_w=0.0,
+        load_w=0.0,
+        reflected_fraction=0.0,
+        status=Status(0),
+        rf_on=False,
+        temperature_c=25.0,
+        operation_mode="",
+        tuner="",
+    )
+
+
+class _SlowReadDevice:
+    """Fake generator whose telemetry read consumes ``read_s`` of (fake) clock time — standing in
+    for the real unit's three sequential CXN round-trips over the slow/flaky USB-serial link."""
+
+    def __init__(self, holder: dict, read_s: float):
+        self.holder = holder
+        self.read_s = read_s
+        self.rf_off_calls = 0
+
+    def read_telemetry(self) -> Telemetry:
+        self.holder["t"] += self.read_s  # the read itself takes wall-clock time
+        return _benign_telemetry()
+
+    def set_rf(self, on: bool) -> None:
+        if on is False:
+            self.rf_off_calls += 1
+
+
+class TestStaleTelemetryWatchdog:
+    """The staleness watchdog must trip on ABSENT telemetry (a stalled loop), NOT on telemetry that
+    merely takes a while to READ. On the real generator a single read is three CXN round-trips and
+    can take ~1 s; counting that against the timeout spuriously FAULTed on connect."""
+
+    def test_slow_read_does_not_trip_stale_watchdog(self):
+        holder = {"t": 0.0}
+        # read takes 1.1 s and the poll interval is 0.5 s, so the cycle is 1.6 s (> the 1.5 s
+        # timeout) — but the sample each tick is fresh, so this must NOT fault.
+        dev = _SlowReadDevice(holder, read_s=1.1)
+        c = Controller(
+            dev,
+            limits=SafetyLimits(telemetry_timeout_s=1.5),
+            poll_interval_s=0.5,
+            clock=lambda: holder["t"],
+        )
+        c._tick()  # first sample: age 0
+        holder["t"] += 0.5  # the poll-interval wait between ticks
+        c._tick()  # second sample: slow read, but fresh
+        assert c.state is not ControllerState.FAULT
+        assert dev.rf_off_calls == 0
+
+    def test_genuine_stall_still_trips(self):
+        holder = {"t": 0.0}
+        dev = _SlowReadDevice(holder, read_s=0.05)  # fast reads
+        c = Controller(
+            dev,
+            limits=SafetyLimits(telemetry_timeout_s=1.5),
+            poll_interval_s=0.5,
+            clock=lambda: holder["t"],
+        )
+        c._tick()  # first sample: age 0
+        holder["t"] += 2.0  # the poll loop stalled 2 s WITHOUT reading (thread starved / hung)
+        c._tick()  # idle gap 2.0 s > 1.5 s -> genuine staleness
+        assert c.state is ControllerState.FAULT
+        assert any("stale" in r for r in c.fault_reasons)
         assert dev.rf_off_calls >= 1
 
 

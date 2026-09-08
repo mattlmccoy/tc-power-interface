@@ -221,6 +221,7 @@ class Controller:
     # --- core poll cycle -------------------------------------------------------------------
     def _tick(self) -> None:
         """One telemetry+protection cycle. Safe to call directly (tests) or from the thread."""
+        read_start = self._clock()
         try:
             with self._io_lock:
                 telemetry = self.device.read_telemetry()
@@ -229,9 +230,15 @@ class Controller:
             self._notify()
             return
 
-        now = self._clock()
-        age = 0.0 if self._last_sample_monotonic is None else now - self._last_sample_monotonic
-        self._last_sample_monotonic = now
+        # Staleness = the IDLE GAP between reads (a stalled/starved poll loop), NOT the duration of
+        # the read itself. A single real read is three sequential CXN round-trips over a slow, flaky
+        # USB-serial link and can take ~1 s; measuring age from the read's COMPLETION counted that
+        # duration against the timeout and spuriously FAULTed ("telemetry stale") right after
+        # connect, even though the sample just read is fresh. So age spans the previous read's
+        # completion -> this read's start; a genuinely stalled loop still trips.
+        last = self._last_sample_monotonic
+        age = 0.0 if last is None else read_start - last
+        self._last_sample_monotonic = self._clock()  # this read's completion time
 
         decision = evaluate(telemetry, self.limits, telemetry_age_s=age)
         with self._lock:
