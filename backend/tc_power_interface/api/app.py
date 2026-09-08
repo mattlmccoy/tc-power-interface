@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import platform
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -42,7 +42,12 @@ from tc_power_interface.control.thermal_store import load_plan, save_plan
 from tc_power_interface.control.timer import TIMER_BOUNDS, TimerController, TimerPlan
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
+from tc_power_interface.integration.control_telemetry import (
+    ControlTelemetryPoster,
+    build_control_telemetry,
+)
 from tc_power_interface.integration.flir_link import FlirLink
+from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
 from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 
@@ -211,14 +216,32 @@ def create_app(
         recorder = TelemetryRecorder(experiments_root)
         flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
         controller.add_listener(RfLinkNotifier(flir_link).on_snapshot)
+        # Per-tick control-telemetry POST to the FLIR run logger (shares the FLIR base + enabled
+        # flag with the rf-link). Control ROI = the doped-part center circle (locked 2026-09-08).
+        control_telemetry = ControlTelemetryPoster(flir_url or "", enabled=bool(flir_url))
+        app.state.control_telemetry = control_telemetry
+        app.state.control_roi = "circle_medium_small"
         controller.backend = backend
         thermal = ThermalController(
             controller, SimulatedThermalSource(),
             plan=load_plan(experiments_root, max_forward_w=active_limits.max_forward_w),
             mode="advisory",
         )
-        # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve.
-        controller.add_listener(lambda _snap: thermal.tick(poll_interval_s))
+        # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
+        # POST the control-telemetry row to the FLIR logger (best-effort; never blocks the tick).
+        def _thermal_tick(snap: dict[str, Any]) -> None:
+            thermal.tick(poll_interval_s)
+            poster = app.state.control_telemetry
+            if thermal.running and poster.enabled:
+                body = build_control_telemetry(
+                    thermal=thermal.snapshot(),
+                    telemetry=snap.get("telemetry") or {},
+                    roi=app.state.control_roi,
+                    ts=datetime.now(UTC).isoformat(),
+                )
+                poster.post(body)
+
+        controller.add_listener(_thermal_tick)
 
         # Auto-log: on an RF-on rising edge, start a recording if one isn't already running. This
         # runs BEFORE the recorder listener so the first sample of the run is captured.
@@ -575,10 +598,16 @@ def create_app(
     @app.post("/api/thermal/source")
     def thermal_source(body: ThermalSourceBody) -> dict[str, Any]:
         th = _thermal()
+        # Stop a previous polling source's background thread before swapping the source out.
+        prev_stop = getattr(th.source, "stop", None)
+        if callable(prev_stop):
+            prev_stop()
         if body.type == "flir":
-            from tc_power_interface.integration.flir_temperature import FlirTemperatureSource
-
-            th.source = FlirTemperatureSource(body.url or "")
+            base = (body.url or "").rstrip("/")
+            roi_url = base if base.endswith("/api/live/roi-temps") else f"{base}/api/live/roi-temps"
+            src = FlirPollingSource(roi_url, roi_name=app.state.control_roi)
+            src.start()  # begin polling GET /api/live/roi-temps in the background (closes the gap
+            th.source = src  # where the live consumer was defined but never started)
             app.state.thermal_source = "flir"
         else:
             th.source = SimulatedThermalSource()
@@ -900,6 +929,10 @@ def create_app(
         link = _flir_link()
         link.url = body.url.rstrip("/")
         link.enabled = body.enabled
+        # The control-telemetry poster shares the FLIR base + enabled flag with the rf-link.
+        ct = app.state.control_telemetry
+        ct.url = body.url.rstrip("/")
+        ct.enabled = body.enabled
         return {"url": link.url, "enabled": link.enabled, "last_result": link.last_result}
 
     # --- WebSocket -------------------------------------------------------------------------
