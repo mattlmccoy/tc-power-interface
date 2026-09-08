@@ -18,6 +18,18 @@ def observe(*, prev: float, curr: float, direction: int, eps: float) -> tuple[in
     return (direction if improved else -direction, improved)
 
 
+def backlash_takeup(*, step: float, direction: int, last_dir: int, backlash: float) -> float:
+    """Signed cap-command delta to physically move by ``direction*step`` given the AIT's backlash.
+
+    The AG's readback tracks the command, but the actual capacitance the RF reflection responds to
+    lags: on a direction REVERSAL the first ``backlash`` of travel only takes up mechanical slack
+    before the cap moves. So on a reversal (``direction`` differs from the last commanded
+    ``last_dir``, and there was one) command an extra ``backlash`` so the intended ``step`` still
+    lands; a same-direction move or the very first move commands the plain step."""
+    reversing = last_dir != 0 and direction != last_dir
+    return direction * (step + (backlash if reversing else 0.0))
+
+
 MATCH_TUNER_BOUNDS: dict[str, tuple[float, float]] = {
     "tune_step": (0.1, 5.0),
     "load_step": (0.1, 5.0),
@@ -42,6 +54,10 @@ class MatchTunerPlan:
     # the minimum by shrinking the step each time a move overshoots (reverse rises).
     shrink: float = 0.5      # step multiplier when a move overshoots (reverse rose)
     min_step: float = 0.1    # smallest step (0.1% = the caps' hardware resolution)
+    # AIT mechanical backlash: on a direction reversal the first ~this-many-percent of cap travel
+    # only takes up slack before the capacitance moves. The default is the measured hysteresis width
+    # (bench 2026-09-07: from-above landed ~+0.8%, from-below ~+0.2%). 0 disables the compensation.
+    backlash: float = 0.6
 
     @classmethod
     def bounded(
@@ -77,6 +93,9 @@ class MatchTuner:
         self.phase: Literal["idle", "searching", "holding"] = "idle"
         self._tune_turn = 0  # weights tune 2:1 over load
         self._dir = {"tune": 1, "load": 1}
+        # Last COMMANDED direction per axis (0 = none yet). Backlash comp adds slack takeup whenever
+        # a new move reverses this, so the capacitance physically travels the intended step.
+        self._phys_dir = {"tune": 0, "load": 0}
         self._base_step = {"tune": plan.tune_step, "load": plan.load_step}
         self._step = dict(self._base_step)
         self._prev_rev: float | None = None
@@ -93,6 +112,7 @@ class MatchTuner:
         self._best = None
         self._no_improve = 0
         self._dir = {"tune": 1, "load": 1}
+        self._phys_dir = {"tune": 0, "load": 0}
         self._base_step = {"tune": self.plan.tune_step, "load": self.plan.load_step}
         self._step = dict(self._base_step)
         self._last_move = None
@@ -202,10 +222,26 @@ class MatchTuner:
         self._prev_rev = rev
 
     def _apply(self, axis: str, delta: float, tune: float, load: float) -> None:
+        # `delta` is the INTENDED signed cap move (relative to the readback, which tracks the
+        # command). Compensate for the AIT's backlash on a direction reversal so the capacitance
+        # physically travels the intended amount, then command the absolute clamped position and
+        # record the commanded direction for the next reversal check.
+        direction = 1 if delta > 0 else -1 if delta < 0 else 0
+        if direction == 0:
+            return
+        commanded = backlash_takeup(
+            step=abs(delta),
+            direction=direction,
+            last_dir=self._phys_dir[axis],
+            backlash=self.plan.backlash,
+        )
+        self._phys_dir[axis] = direction
+        cur = tune if axis == "tune" else load
+        target = self._clamp(cur + commanded)
         if axis == "tune":
-            self.controller.set_tune_capacity(self._clamp(tune + delta))
+            self.controller.set_tune_capacity(target)
         else:
-            self.controller.set_load_capacity(self._clamp(load + delta))
+            self.controller.set_load_capacity(target)
 
     def snapshot(self) -> dict[str, Any]:
         return {

@@ -9,12 +9,40 @@ import pytest
 
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
+from tc_power_interface.device.simulated import backlash_position
 from tc_power_interface.protocol import codec
 
 
 @pytest.fixture
 def device() -> CxnDevice:
     return CxnDevice(create_transport("simulated"))
+
+
+class TestBacklashModel:
+    """Lost-motion integrator: the AG's readback tracks the command, but the physical capacitance
+    (what the RF reflection sees) lags — a reversal must take up `lash` of slack before it moves."""
+
+    def test_first_move_and_same_direction_track_the_command(self):
+        first = backlash_position(phys=0.0, engaged_dir=0, prev_cmd=0.0, cmd=37.0, lash=0.6)
+        same = backlash_position(phys=37.0, engaged_dir=1, prev_cmd=37.0, cmd=40.0, lash=0.6)
+        assert first == (37.0, 1)
+        assert same == (40.0, 1)
+
+    def test_no_command_change_does_not_move(self):
+        held = backlash_position(phys=40.0, engaged_dir=1, prev_cmd=40.0, cmd=40.0, lash=0.6)
+        assert held == (40.0, 1)
+
+    def test_small_reversal_within_the_deadband_does_not_move(self):
+        # |Δ| < lash 0.6 -> cap stays put, still engaged upward
+        half = backlash_position(phys=40.0, engaged_dir=1, prev_cmd=40.0, cmd=39.5, lash=0.6)
+        small = backlash_position(phys=40.0, engaged_dir=1, prev_cmd=40.0, cmd=39.8, lash=0.6)
+        assert half == (40.0, 1)
+        assert small == (40.0, 1)
+
+    def test_large_reversal_moves_by_delta_minus_lash_and_flips_direction(self):
+        phys, d = backlash_position(phys=40.0, engaged_dir=1, prev_cmd=40.0, cmd=38.0, lash=0.6)
+        assert phys == pytest.approx(38.6)  # 40 - (2.0 - 0.6)
+        assert d == -1
 
 
 class TestRegistry:

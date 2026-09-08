@@ -18,6 +18,28 @@ from tc_power_interface.device.reflection import reflected_fraction
 from tc_power_interface.protocol import codec
 
 
+def backlash_position(
+    *, phys: float, engaged_dir: int, prev_cmd: float, cmd: float, lash: float
+) -> tuple[float, int]:
+    """Lost-motion (backlash) update of an AIT cap's PHYSICAL capacitance.
+
+    Models what the real unit shows: the encoder readback tracks the command, but the actual
+    capacitance the RF reflection responds to lags. A command change in the currently engaged
+    direction moves the cap 1:1; a REVERSAL must first take up ``lash`` of mechanical slack, so a
+    reversal smaller than ``lash`` does not move the cap at all and a larger one moves it by
+    ``|Δ| - lash`` (and re-engages in the new direction). Returns (new_phys, new_engaged_dir)."""
+    delta = cmd - prev_cmd
+    if delta == 0:
+        return phys, engaged_dir
+    direction = 1 if delta > 0 else -1
+    if engaged_dir == 0 or direction == engaged_dir:
+        return phys + delta, direction
+    moved = abs(delta) - lash
+    if moved <= 0:
+        return phys, engaged_dir  # entirely within the deadband — the cap does not move
+    return phys + direction * moved, direction
+
+
 @register_transport("simulated")
 class SimulatedCxnTransport(Transport):
     """A fake CXN that speaks the real wire protocol over an internal buffer."""
@@ -46,9 +68,17 @@ class SimulatedCxnTransport(Transport):
         self.rf_on = False
         self.setpoint_w = 0
         self.manual_mode = False
-        self.load_capacity = 0.0
+        self.load_capacity = 0.0  # commanded / encoder readback (what GT reports)
         self.tune_capacity = 0.0
         self.interlock_open = False
+        # Physical capacitance the RF reflection responds to. It lags the commanded cap with
+        # backlash (lost motion on a reversal), modelling the measured AIT hysteresis: the readback
+        # above tracks the command, the physical below is what the reflection well actually sees.
+        self._lash = 0.6  # measured hysteresis width (%), matches MatchTunerPlan.backlash default
+        self._tune_phys = 0.0
+        self._load_phys = 0.0
+        self._tune_dir = 0  # last engaged physical direction per axis
+        self._load_dir = 0
         # Reflection well: the optimum is offset from the caps' 0/0 start so the tuner must search,
         # and drifts slowly while RF is on to emulate the load changing during sinter.
         self.t_opt = 62.0
@@ -91,7 +121,10 @@ class SimulatedCxnTransport(Transport):
         # Drift the optimum while RF is on (bounded so it stays reachable), then evaluate the well.
         self.t_opt = min(90.0, max(10.0, self.t_opt + self._t_drift))
         self.l_opt = min(90.0, max(10.0, self.l_opt + self._l_drift))
-        frac = reflected_fraction(self.tune_capacity, self.load_capacity, self.t_opt, self.l_opt)
+        # Evaluate the well at the PHYSICAL capacitance (which lags the command with backlash), not
+        # the commanded readback — so a direction reversal that hasn't taken up slack shows no
+        # reflection change, exactly the effect the tuner's backlash comp exists to cancel.
+        frac = reflected_fraction(self._tune_phys, self._load_phys, self.t_opt, self.l_opt)
         rev = fwd * frac
         return (fwd, rev, fwd - rev)
 
@@ -149,8 +182,16 @@ class SimulatedCxnTransport(Transport):
             # whole percent here; the earlier /10 confined the sim caps to 0-10 and broke the tuner.
             value = float(int.from_bytes(command[4:6], "big"))
             if p1 == b"\x00\x01":
-                self.load_capacity = value
+                self._load_phys, self._load_dir = backlash_position(
+                    phys=self._load_phys, engaged_dir=self._load_dir,
+                    prev_cmd=self.load_capacity, cmd=value, lash=self._lash,
+                )
+                self.load_capacity = value  # readback tracks the command
             elif p1 == b"\x00\x02":
+                self._tune_phys, self._tune_dir = backlash_position(
+                    phys=self._tune_phys, engaged_dir=self._tune_dir,
+                    prev_cmd=self.tune_capacity, cmd=value, lash=self._lash,
+                )
                 self.tune_capacity = value
             self._ack(True)
         elif mnem == b"GP":  # power readings
