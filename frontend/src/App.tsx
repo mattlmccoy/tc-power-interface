@@ -8,6 +8,8 @@ import { useOperator } from "./hooks/useOperator.ts";
 import { ClosedLoopPage } from "./pages/ClosedLoopPage.tsx";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { VnaTuneView } from "./pages/VnaTuneView.tsx";
+import { useVna } from "./hooks/useVna.ts";
 
 export function App() {
   const op = useOperator();
@@ -17,6 +19,8 @@ export function App() {
     disconnectDevice, connectBusy, connectErr, connectPort, health, reachable, handshake, faulted,
     ctrl, toast, showStartup, setShowStartup, estop, rfOff, disarmDevice, armed,
   } = op;
+  const vna = useVna(op);
+  const inVna = !!op.status?.vna_session?.active;
   return (
     <div className={`app ${showHelp ? "" : "help-off"}`}>
       <header className="topbar">
@@ -28,20 +32,22 @@ export function App() {
           {device?.frequency_hz ? ` · ${(device.frequency_hz / 1e6).toFixed(2)} MHz` : ""}
         </span>
         <span className="spacer" />
-        <span className="viewtabs">
-          <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
-            Dashboard
-          </button>
-          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
-            Settings
-          </button>
-          <button
-            className={view === "closed-loop" ? "active" : ""}
-            onClick={() => setView("closed-loop")}
-          >
-            Closed loop
-          </button>
-        </span>
+        {!inVna && (
+          <span className="viewtabs">
+            <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
+              Dashboard
+            </button>
+            <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+              Settings
+            </button>
+            <button
+              className={view === "closed-loop" ? "active" : ""}
+              onClick={() => setView("closed-loop")}
+            >
+              Closed loop
+            </button>
+          </span>
+        )}
         <button
           className={`help-toggle ${showHelp ? "on" : ""}`}
           onClick={toggleHelp}
@@ -81,11 +87,13 @@ export function App() {
 
       <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} vnaSession={op.status?.vna_session} />
 
-      <ErrorBoundary key={view}>
+      <ErrorBoundary key={inVna ? "vna" : view}>
         {() => (
           <>
-            {view === "dashboard" ? (
-              <DashboardPage op={op} />
+            {inVna ? (
+              <VnaTuneView op={op} vna={vna} />
+            ) : view === "dashboard" ? (
+              <DashboardPage op={op} vna={vna} />
             ) : view === "settings" ? (
               <SettingsPage op={op} />
             ) : (

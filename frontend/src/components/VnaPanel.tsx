@@ -1,285 +1,35 @@
-// Pre-run VNA auto-tune panel. Connects a NanoVNA over Web Serial (Chrome/Edge), reads live S11 at
-// 13.56 MHz, and — with RF OFF — drives the tune/load caps to the Smith centre using the pure control
-// law in lib/vna/autotune.ts. Connecting AUTO-BEGINS a VNA session on the operator: while it is active
-// the backend refuses enable_rf (409). The session ends only on an explicit End (fail safe: switching
-// away or a dead tab surfaces as vna_session.stale but never re-allows RF). This is distinct from the
-// in-run reflected-power tuner (control/match_tuner.py), which is untouched.
+// Dashboard entry card for the pre-run VNA auto-tune. Connecting a NanoVNA (Web Serial, Chrome/Edge)
+// begins a VNA session — which locks RF on the backend and opens the focused full-screen VNA tune view
+// (VnaTuneView). All the tuning happens there; this card is just the entrance. The connection + session
+// live in useVna at the App level so they survive the switch to the tune view.
 
-import { useEffect, useRef, useState } from "react";
 import type { Status } from "../lib/telemetry.ts";
-import { api } from "../lib/api.ts";
-import { approachFromBelow, clampCap, capSettled } from "../lib/instrument.ts";
-import { NanoVNAConnection } from "../lib/vna/nanovna.ts";
-import { magnitude, vswr, impedance, db, type SweepPoint } from "../lib/vna/rf.ts";
-import { planVnaStep, gammaAt, F0, DEFAULT_MODEL, type TuneModel } from "../lib/vna/autotune.ts";
-import { formatTouchstone } from "../lib/vna/touchstone.ts";
-import { gammaToXY, constResistanceCircle, constReactanceCircle, RESISTANCE_GRID, REACTANCE_GRID } from "../lib/vna/smith.ts";
+import type { VnaController } from "../hooks/useVna.ts";
 
-const SPAN = 1e6; // narrow sweep: 13.56 MHz ± 1 MHz
-const POINTS = 101;
-const HEARTBEAT_MS = 2000;
-
-interface Props {
-  status: Status | null;
-  /** connected && armed — from App; caps can only be driven when true. */
-  controllable: boolean;
-  sendTune: (v: number) => Promise<void>;
-  sendLoad: (v: number) => Promise<void>;
-}
-
-export default function VnaPanel({ status, controllable, sendTune, sendLoad }: Props) {
-  const connRef = useRef<NanoVNAConnection | null>(null);
-  const hbRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const runningRef = useRef(false);
-  const statusRef = useRef(status);
-  const controllableRef = useRef(controllable);
-
-  const [connected, setConnected] = useState(false);
-  const [sweep, setSweep] = useState<SweepPoint[]>([]);
-  const [running, setRunning] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [iter, setIter] = useState(0);
-
-  useEffect(() => { statusRef.current = status; }, [status]);
-  useEffect(() => { controllableRef.current = controllable; }, [controllable]);
-  // Cleanup on unmount: stop the loop and the heartbeat, but DO NOT end the session — leaving the
-  // Experimental tab must not silently re-allow RF. The backend surfaces the lost heartbeat as stale.
-  useEffect(() => () => {
-    runningRef.current = false;
-    if (hbRef.current) clearInterval(hbRef.current);
-  }, []);
-
-  const supported = NanoVNAConnection.supported();
-  const tel = status?.controller?.telemetry;
-  const rfOn = tel?.rf_on ?? false;
-  const sessionActive = status?.vna_session?.active ?? connected;
-  const sessionStale = status?.vna_session?.stale ?? false;
-
-  function startHeartbeat() {
-    if (hbRef.current) clearInterval(hbRef.current);
-    hbRef.current = setInterval(() => { void api.vnaHeartbeat(); }, HEARTBEAT_MS);
-  }
-
-  async function doSweep(): Promise<SweepPoint[] | null> {
-    const conn = connRef.current;
-    if (!conn) return null;
-    const res = await conn.sweep(F0 - SPAN, F0 + SPAN, POINTS);
-    setSweep(res.points);
-    return res.points;
-  }
-
-  async function connect() {
-    if (!supported) return;
-    const conn = new NanoVNAConnection();
-    try {
-      await conn.connect();
-      connRef.current = conn;
-      setConnected(true);
-      setMsg("");
-      await api.vnaBegin(); // fail-safe: a VNA connected in the tool ⇒ RF locked
-      startHeartbeat();
-      await doSweep();
-    } catch (e) {
-      setMsg(`connect failed: ${(e as Error).message}`);
-      try { await conn.disconnect(); } catch { /* ignore */ }
-      connRef.current = null;
-    }
-  }
-
-  async function endSession() {
-    runningRef.current = false;
-    setRunning(false);
-    if (hbRef.current) { clearInterval(hbRef.current); hbRef.current = null; }
-    try { await api.vnaEnd(); } catch { /* ignore */ }
-    try { await connRef.current?.disconnect(); } catch { /* ignore */ }
-    connRef.current = null;
-    setConnected(false);
-    setSweep([]);
-    setMsg("");
-  }
-
-  // Poll the live cap readback (from status) until it reaches `target`, or `timeoutMs` elapses — waits
-  // out the slow AIT motor between the two steps of an approach-from-below. Self-contained (reads the
-  // status prop via statusRef) so the panel drops cleanly into any page.
-  function waitCapSettle(which: "tune" | "load", target: number, tol = 2, timeoutMs = 12000): Promise<void> {
-    return new Promise((resolve) => {
-      const t0 = Date.now();
-      const tick = () => {
-        const tele = statusRef.current?.controller?.telemetry;
-        const read = which === "tune" ? tele?.tune_cap_percent ?? null : tele?.load_cap_percent ?? null;
-        if (capSettled(read, target, tol) || Date.now() - t0 >= timeoutMs) { resolve(); return; }
-        setTimeout(tick, 250);
-      };
-      tick();
-    });
-  }
-
-  // Drive one cap to `target` from below (backlash-compensated two-step).
-  async function driveCap(which: "tune" | "load", target: number) {
-    const send = which === "tune" ? sendTune : sendLoad;
-    const [pre, tgt] = approachFromBelow(clampCap(target));
-    await send(pre);
-    await waitCapSettle(which, pre);
-    await send(tgt);
-    await waitCapSettle(which, tgt);
-  }
-
-  // Why the loop is blocked from driving caps, or null when it may run.
-  function halted(): string | null {
-    if (!controllableRef.current) return "device not armed";
-    if (statusRef.current?.controller?.telemetry?.rf_on) return "RF is on";
-    return null;
-  }
-
-  async function runAutoTune() {
-    const blocked = halted();
-    if (blocked) { setMsg(`cannot run: ${blocked}`); return; }
-    runningRef.current = true;
-    setRunning(true);
-    setMsg("tuning…");
-    const model: TuneModel = { ...DEFAULT_MODEL };
-    let prevCost = Infinity;
-    let lastAxis: "tune" | "load" | null = null;
-    let i = 0;
-    try {
-      while (runningRef.current && i < model.maxIter) {
-        const stop = halted();
-        if (stop) { setMsg(`stopped: ${stop}`); break; }
-        const points = await doSweep();
-        if (!points || !points.length) { setMsg("stopped: no sweep"); break; }
-        const here = gammaAt(points);
-        const cost = here ? magnitude(here.s11) : 1;
-        // self-correct: if the previous move raised cost, flip that axis's assumed sign
-        if (lastAxis && cost > prevCost + 1e-3) {
-          if (lastAxis === "tune") model.tuneSign = (-model.tuneSign) as 1 | -1;
-          else model.loadSign = (-model.loadSign) as 1 | -1;
-        }
-        const t = statusRef.current?.controller?.telemetry;
-        const caps = { tune: clampCap(t?.tune_cap_percent ?? 50), load: clampCap(t?.load_cap_percent ?? 50) };
-        const step = planVnaStep(points, caps, model);
-        setIter(++i);
-        if (step.converged) { setMsg(`matched · |Γ|=${step.cost.toFixed(3)}`); break; }
-        if (step.abort) { setMsg(`aborted: ${step.abort}`); break; }
-        prevCost = cost;
-        if (step.action === "tune") { await driveCap("tune", step.nextTune); lastAxis = "tune"; }
-        else if (step.action === "load") { await driveCap("load", step.nextLoad); lastAxis = "load"; }
-        else break;
-      }
-      if (runningRef.current && i >= model.maxIter) setMsg("stopped: max iterations");
-    } catch (e) {
-      setMsg(`run error: ${(e as Error).message}`);
-    } finally {
-      runningRef.current = false;
-      setRunning(false);
-    }
-  }
-
-  function stop() { runningRef.current = false; setRunning(false); }
-
-  // Export the current sweep as a Touchstone .s1p file (same format the NanoVNA tool reads/writes).
-  function saveTouchstone() {
-    if (!sweep.length) return;
-    const blob = new Blob([formatTouchstone(sweep)], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `vna-sweep-${Date.now()}.s1p`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  // --- readout at 13.56 MHz ---
-  const p = sweep.length ? gammaAt(sweep) : null;
-  const gm = p ? magnitude(p.s11) : null;
-  const z = p ? impedance(p.s11, 50) : null;
-  const sw = p ? vswr(p.s11) : null;
-  const rl = p ? db(p.s11) : null;
-  const fmt = (v: number | null, d = 2) => (v == null || !Number.isFinite(v) ? "—" : v.toFixed(d));
-
-  // Full Smith chart: R/X grid + swept trace + 13.56 marker (pure geometry in lib/vna/smith.ts).
-  const FR = { cx: 100, cy: 100, r: 90 };
-  const tracePts = sweep
-    .map((pt) => gammaToXY(pt.s11, FR))
-    .map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`)
-    .join(" ");
-  const mk = p ? gammaToXY(p.s11, FR) : null;
+export default function VnaPanel({ vna, status }: { vna: VnaController; status: Status | null }) {
+  const sessionActive = status?.vna_session?.active ?? vna.connected;
 
   return (
     <section className="panel vna-panel">
       <h2>VNA auto-tune (pre-run)</h2>
       <div className="banner experimental help-text">
-        <strong>Experimental — RF-off coarse match.</strong> Connect a NanoVNA over Web Serial and drive
-        the caps to 50 Ω at 13.56 MHz before a fire. Connecting locks RF (VNA mode); End to unlock.
-        Requires the generator armed with RF off. Distinct from the in-run reflected-power tuner.
+        <strong>Experimental — RF-off coarse match.</strong> Connect a NanoVNA to match the caps to 50 Ω
+        at 13.56 MHz before a fire. Connecting <strong>locks RF</strong> and opens the focused VNA tune
+        screen; End there unlocks RF. Distinct from the in-run reflected-power tuner.
       </div>
 
-      {!supported && (
+      {!vna.supported && (
         <div className="banner warn">Web Serial is unavailable — use desktop Chrome or Edge.</div>
       )}
 
-      {sessionActive && (
-        <div className={`banner ${sessionStale ? "warn" : "fault"}`} style={{ margin: "8px 0" }}>
-          <strong>VNA mode — RF disabled.</strong>{sessionStale ? " Liveness lost — reconnect or End." : ""}
-        </div>
-      )}
-
-      <div className="row" style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <svg width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="S11 Smith chart">
-          <defs><clipPath id="vna-smith"><circle cx={FR.cx} cy={FR.cy} r={FR.r} /></clipPath></defs>
-          <g clipPath="url(#vna-smith)" fill="none" stroke="var(--border, #888)" strokeWidth="0.6" opacity="0.6">
-            {RESISTANCE_GRID.map((rn) => {
-              const c = constResistanceCircle(rn, FR);
-              return <circle key={`r${rn}`} cx={c.cx} cy={c.cy} r={c.r} />;
-            })}
-            {REACTANCE_GRID.flatMap((xn) => [xn, -xn]).map((xn) => {
-              const c = constReactanceCircle(xn, FR);
-              return <circle key={`x${xn}`} cx={c.cx} cy={c.cy} r={c.r} />;
-            })}
-          </g>
-          <circle cx={FR.cx} cy={FR.cy} r={FR.r} fill="none" stroke="var(--border-strong, #aaa)" strokeWidth="1" />
-          <line x1={FR.cx - FR.r} y1={FR.cy} x2={FR.cx + FR.r} y2={FR.cy} stroke="var(--border-strong, #aaa)" strokeWidth="0.6" />
-          {sweep.length > 1 && (
-            <polyline points={tracePts} fill="none" stroke="#1D9E75" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" clipPath="url(#vna-smith)" />
-          )}
-          <circle cx={FR.cx} cy={FR.cy} r="2.5" fill="var(--live, #2b8a3e)" />
-          {mk && <circle cx={mk.x} cy={mk.y} r="5" fill="var(--err-btn, #c92a2a)" stroke="var(--surface-1, #fff)" strokeWidth="0.8" />}
-        </svg>
-
-        <div className="readout" style={{ minWidth: 180 }}>
-          <div>|Γ| @ 13.56: <strong>{fmt(gm, 3)}</strong></div>
-          <div>Z: <strong>{fmt(z?.re ?? null, 1)}</strong> {z && z.im >= 0 ? "+" : "−"} j<strong>{fmt(z ? Math.abs(z.im) : null, 1)}</strong> Ω</div>
-          <div>VSWR: <strong>{sw != null && Number.isFinite(sw) ? fmt(sw, 2) : "∞"}</strong></div>
-          <div>RL: <strong>{fmt(rl, 1)}</strong> dB</div>
-        </div>
-      </div>
-
       <div className="controls" style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-        {!connected ? (
-          <button className="btn accent" onClick={() => void connect()} disabled={!supported}>Connect NanoVNA</button>
-        ) : (
-          <>
-            <button className="btn" onClick={() => void doSweep()} disabled={running}>Sweep</button>
-            <button className="btn" onClick={saveTouchstone} disabled={!sweep.length}>Save .s1p</button>
-            {!running ? (
-              <button className="btn accent" onClick={() => void runAutoTune()} disabled={!controllable || rfOn}
-                title={!controllable ? "arm the generator (RF off) first" : rfOn ? "RF must be off" : ""}>
-                Auto-tune
-              </button>
-            ) : (
-              <button className="btn" onClick={stop}>Stop</button>
-            )}
-          </>
-        )}
-        {(connected || sessionActive) && (
-          <button className="btn" onClick={() => void endSession()}>End VNA session</button>
+        <button className="btn accent" onClick={() => void vna.connect()} disabled={!vna.supported}>
+          Connect NanoVNA
+        </button>
+        {sessionActive && (
+          <button className="btn" onClick={() => void vna.endSession()}>End VNA session</button>
         )}
       </div>
-
-      {(msg || running) && (
-        <div className="help-text" style={{ marginTop: 6 }}>{msg}{running ? ` · step ${iter}` : ""}</div>
-      )}
     </section>
   );
 }
