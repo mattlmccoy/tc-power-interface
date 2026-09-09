@@ -17,8 +17,8 @@ import { GeneratorPanel } from "./components/GeneratorPanel.tsx";
 import { RfPowerPanel } from "./components/RfPowerPanel.tsx";
 import { TelemetryPanel } from "./components/TelemetryPanel.tsx";
 import { Banners } from "./components/Banners.tsx";
+import { ConnectBar } from "./components/ConnectBar.tsx";
 import { SITE_MODE } from "./lib/api.ts";
-import { UI_API_VERSION, UI_VERSION } from "./lib/operator.ts";
 import { useOperator } from "./hooks/useOperator.ts";
 
 export function App() {
@@ -75,120 +75,26 @@ export function App() {
         >
           ? Help
         </button>
-        <div className="connect-wrap">
-          <button
-            className={`pill ${pillState}`}
-            onClick={() => {
-              setShowConnect((v) => !v);
-              if (ports === null) void scanPorts();
-            }}
-            title="Connect a generator / set the operator address"
-          >
-            <span className="dot" />
-            {pillState}
-            <span className="pill-caret">▾</span>
-          </button>
-          {showConnect ? (
-            <div className="connect-pop">
-              <div className="connect-head">
-                <strong>Connection</strong>
-                <button className="pop-close" onClick={() => setShowConnect(false)}>
-                  ✕
-                </button>
-              </div>
-
-              {SITE_MODE ? (
-                <div className="connect-sec">
-                  <label className="field-label">Operator address</label>
-                  <div className="connect-row">
-                    <input
-                      value={baseInput}
-                      onChange={(e) => setBaseInput(e.target.value)}
-                      placeholder="http://localhost:8010"
-                      spellCheck={false}
-                    />
-                    <button
-                      className="btn"
-                      onClick={() => {
-                        applyBase();
-                        setPorts(null);
-                        setConnectErr(null);
-                      }}
-                    >
-                      Apply
-                    </button>
-                  </div>
-                  <div className="hint help-text">
-                    The local operator that serves your generator. Default{" "}
-                    <code>http://localhost:8010</code>.
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="connect-sec">
-                <div className="connect-row connect-row-head">
-                  <label className="field-label">Device</label>
-                  <button className="btn" onClick={scanPorts} disabled={connectBusy === "scanning"}>
-                    {connectBusy === "scanning" ? "Scanning…" : "Scan"}
-                  </button>
-                </div>
-
-                {connected ? (
-                  <div className="connect-current">
-                    <span>
-                      Connected{device?.id ? ` — ${device.id}` : ""}
-                    </span>
-                    <button
-                      className="btn danger"
-                      onClick={disconnectDevice}
-                      disabled={connectBusy === "disconnect"}
-                    >
-                      {connectBusy === "disconnect" ? "…" : "Disconnect"}
-                    </button>
-                  </div>
-                ) : ports === null ? (
-                  <div className="hint">Scan to find the generator's serial port.</div>
-                ) : ports.length === 0 ? (
-                  <div className="errbox">
-                    No serial ports found. Plug in the generator's USB-serial cable and Scan again.
-                  </div>
-                ) : (
-                  <ul className="port-list">
-                    {ports.map((p) => (
-                      <li key={p.device}>
-                        <div className="port-info">
-                          <div className="port-name">{p.description || p.device}</div>
-                          <code>{p.device}</code>
-                        </div>
-                        <button
-                          className="btn accent"
-                          onClick={() => connectPort(p.device)}
-                          disabled={connectBusy !== null}
-                        >
-                          {connectBusy === p.device ? "Connecting…" : "Connect"}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                {connectErr ? <div className="errbox">{connectErr}</div> : null}
-                <div className="hint help-text">
-                  Connecting is read-only — RF stays off. Verify readings against the front panel
-                  before enabling RF (this unit's protocol is unconfirmed).
-                </div>
-              </div>
-
-              <div className="connect-version mono">
-                UI {UI_VERSION}
-                {health ? ` · operator ${health.version}` : reachable ? "" : " · operator offline"}
-                {" · API "}
-                {UI_API_VERSION}
-                {health?.api_version ? `/${health.api_version}` : ""}
-              </div>
-            </div>
-          ) : null}
-        </div>
+        <ConnectBar
+          pillState={pillState}
+          showConnect={showConnect}
+          setShowConnect={setShowConnect}
+          ports={ports}
+          connectBusy={connectBusy}
+          connectErr={connectErr}
+          connected={connected}
+          device={device}
+          reachable={reachable}
+          health={health}
+          baseInput={baseInput}
+          setBaseInput={setBaseInput}
+          applyBase={applyBase}
+          scanPorts={scanPorts}
+          connectPort={connectPort}
+          disconnectDevice={disconnectDevice}
+          setPorts={setPorts}
+          setConnectErr={setConnectErr}
+        />
       </header>
 
       <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} />
