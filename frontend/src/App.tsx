@@ -7,8 +7,9 @@ import { Toast } from "./components/Toast.tsx";
 import { PulsePanel } from "./components/PulsePanel.tsx";
 import { ThermalControlPanel } from "./components/ThermalControlPanel.tsx";
 import { OperatorPanel } from "./components/OperatorPanel.tsx";
+import { FlirLinkPanel } from "./components/FlirLinkPanel.tsx";
 import { api, SITE_MODE } from "./lib/api.ts";
-import { boundHint, flirStatusLabel, fmtTemp, fmtWatts } from "./lib/format.ts";
+import { boundHint, fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
 import { UI_API_VERSION, UI_VERSION } from "./lib/operator.ts";
 import { useOperator } from "./hooks/useOperator.ts";
@@ -1023,36 +1024,15 @@ export function App() {
               </div>
             </section>
 
-            <section className="panel">
-              <h2>FLIR link</h2>
-              <label className="field-label" htmlFor="flir-url">
-                FLIR operator URL
-              </label>
-              <input
-                id="flir-url"
-                className="mono"
-                style={textInputStyle}
-                placeholder="http://localhost:8000"
-                value={flirUrlInput}
-                onChange={(e) => setFlirUrlInput(e.target.value)}
-                onBlur={applyFlirUrl}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") applyFlirUrl();
-                }}
-              />
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={flirEnabled}
-                  onChange={(e) => toggleFlirEnabled(e.target.checked)}
-                />
-                Enable FLIR link
-              </label>
-              <div className="hint mono">{flirStatusLabel(flirLast)}</div>
-              <div className="hint">
-                RF on/off starts + annotates a FLIR recording (FLIR owns stop-vs-keep).
-              </div>
-            </section>
+            <FlirLinkPanel
+              flirUrlInput={flirUrlInput}
+              setFlirUrlInput={setFlirUrlInput}
+              flirEnabled={flirEnabled}
+              flirLast={flirLast}
+              applyFlirUrl={applyFlirUrl}
+              toggleFlirEnabled={toggleFlirEnabled}
+              textInputStyle={textInputStyle}
+            />
 
             {SITE_MODE ? (
               <OperatorPanel
