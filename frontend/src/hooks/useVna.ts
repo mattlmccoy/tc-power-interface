@@ -14,12 +14,14 @@ import { F0 } from "../lib/vna/autotune.ts";
 import { shapeTune, dipOf } from "../lib/vna/autotune_shape.ts";
 import { formatTouchstone } from "../lib/vna/touchstone.ts";
 
-// Tight window around 13.56 MHz. The real match loop is only ~140 kHz wide, so a 12–18 MHz sweep put
-// only ~5 points on it (the "boxy" loop that could not be resolved). 1 MHz / 201 pts = 5 kHz/point puts
-// ~28 points on the loop while still covering a ~3.5% tune detune (the dip shifts ~0.4 MHz per 3%).
-const SWEEP_START = 13.06e6;
-const SWEEP_STOP = 14.06e6;
-const POINTS = 201;
+// Wide window (covers differently-tuned setups) with enough points to resolve the ~140 kHz match loop.
+// A narrow 1 MHz scan returned NO data from the NanoVNA-H4 (the device took the range but the read came
+// back empty), so we stay wide — which is also what the bench needs. 11–16 MHz / 401 pts = 12.5 kHz/pt
+// (~11 points on the loop). If the firmware caps the point count it returns fewer (still matched), so
+// this is safe. A saved log shows the actual returned count → we tune the window/resolution from data.
+const SWEEP_START = 11e6;
+const SWEEP_STOP = 16e6;
+const POINTS = 401;
 const HEARTBEAT_MS = 2000;
 const LIVE_GAP_MS = 30;
 const LOG_CAP = 6000;
@@ -118,22 +120,22 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     const conn = connRef.current;
     if (!conn) return null;
     const res = await conn.sweep(SWEEP_START, SWEEP_STOP, POINTS);
-    setSweep(res.points);
+    if (res.points.length) setSweep(res.points); // keep the last good trace if a read comes back empty
     return res.points;
   }
 
   async function liveLoop() {
+    let fails = 0;
     while (liveRef.current) {
       if (runningRef.current) { await sleep(100); continue; }
       try {
         const points = await doSweep();
-        if (points) logSweep("live", points);
+        if (points && points.length) { logSweep("live", points); if (fails) { fails = 0; setMsg(""); } }
+        else if (++fails === 3) setMsg("sweep returned no data — retrying (check the NanoVNA)…");
       } catch (e) {
-        liveRef.current = false;
-        setMsg(`sweep failed: ${(e as Error).message} — reconnect the NanoVNA`);
-        break;
+        if (++fails === 3) setMsg(`sweep error: ${(e as Error).message} — retrying…`);
       }
-      await sleep(LIVE_GAP_MS);
+      await sleep(fails > 2 ? 500 : LIVE_GAP_MS); // a transient bad read must not blank the display or stop the loop
     }
   }
 
@@ -218,7 +220,9 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     };
 
     try {
+      const spacingHz = (SWEEP_STOP - SWEEP_START) / (POINTS - 1);
       const res = await shapeTune(probe, start, {
+        freqTolHz: Math.max(8000, 2 * spacingHz),
         onStep: ({ iter: i, dipHz, cost }) => { setIter(i); setMsg(`tuning · dip ${(dipHz / 1e6).toFixed(3)} MHz · |Γ|=${cost.toFixed(3)}`); },
         shouldStop: () => !runningRef.current || halted() != null,
       });
