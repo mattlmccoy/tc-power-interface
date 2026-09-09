@@ -220,10 +220,8 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     };
 
     try {
-      const spacingHz = (SWEEP_STOP - SWEEP_START) / (POINTS - 1);
       const res = await shapeTune(probe, start, {
-        freqTolHz: Math.max(8000, 2 * spacingHz),
-        onStep: ({ iter: i, dipHz, cost }) => { setIter(i); setMsg(`tuning · dip ${(dipHz / 1e6).toFixed(3)} MHz · |Γ|=${cost.toFixed(3)}`); },
+        onStep: ({ iter: i, cost }) => { setIter(i); setMsg(`tuning · |Γ@13.56|=${cost.toFixed(3)}`); },
         shouldStop: () => !runningRef.current || halted() != null,
       });
       setMsg(res.converged ? `matched · caps ${res.tune}% / ${res.load}% (${res.iters} steps)` : `stopped · caps ${res.tune}% / ${res.load}%`);
