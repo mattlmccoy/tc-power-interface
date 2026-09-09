@@ -11,7 +11,8 @@ import { FlirLinkPanel } from "./components/FlirLinkPanel.tsx";
 import { LoggingPanel } from "./components/LoggingPanel.tsx";
 import { ThermalPlanPanel } from "./components/ThermalPlanPanel.tsx";
 import { SafetyLimitsPanel } from "./components/SafetyLimitsPanel.tsx";
-import { api, SITE_MODE } from "./lib/api.ts";
+import { RecordingPanel } from "./components/RecordingPanel.tsx";
+import { SITE_MODE } from "./lib/api.ts";
 import { fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
 import { UI_API_VERSION, UI_VERSION } from "./lib/operator.ts";
@@ -818,51 +819,15 @@ export function App() {
               </div>
             </section>
 
-            <section className="panel">
-              <h2>Recording</h2>
-              {recording?.active ? (
-                <>
-                  <button className="btn rec full" onClick={() => api.stopRecording()}>
-                    ■ Stop recording
-                  </button>
-                  <div className="hint mono">recording → {recording.run}</div>
-                </>
-              ) : (
-                <>
-                  <input
-                    className="mono"
-                    style={textInputStyle}
-                    placeholder="run name"
-                    value={runName}
-                    onChange={(e) => setRunName(e.target.value)}
-                  />
-                  <button
-                    className="btn full"
-                    disabled={!controllable}
-                    onClick={() => api.startRecording(runName.trim() || "run", "")}
-                  >
-                    ● Start recording
-                  </button>
-                </>
-              )}
-              {lastRun ? (
-                <button
-                  className="btn full"
-                  style={{ marginTop: "8px" }}
-                  onClick={() =>
-                    api
-                      .downloadRecording(lastRun)
-                      .catch((e) => flash("download failed: " + (e as Error).message))
-                  }
-                >
-                  ⬇ Download power curves ({lastRun}) CSV
-                </button>
-              ) : null}
-              <div className="hint">
-                Logs forward / reflected / load power + the thermal-loop commanded curve (phase,
-                control temp, commanded W) to telemetry.csv.
-              </div>
-            </section>
+            <RecordingPanel
+              controllable={controllable}
+              recording={recording}
+              lastRun={lastRun}
+              runName={runName}
+              setRunName={setRunName}
+              flash={flash}
+              textInputStyle={textInputStyle}
+            />
           </div>
         </div>
       ) : view === "settings" ? (
