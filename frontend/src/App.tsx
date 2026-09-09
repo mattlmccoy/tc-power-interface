@@ -1,14 +1,13 @@
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Gauge } from "./components/Gauge.tsx";
 import { StatusLeds } from "./components/StatusLeds.tsx";
-import { TimePlot } from "./components/TimePlot.tsx";
+import { HistoryPanel } from "./components/HistoryPanel.tsx";
 import { api, SITE_MODE } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
 import { UI_API_VERSION, UI_VERSION } from "./lib/operator.ts";
 import { useOperator } from "./hooks/useOperator.ts";
 
-const REFLECT_PLOT_CEIL = 15; // history-plot reflected % y-scale
 const SP_FINE = 5; // live power nudge: fine step (W) — ↑/↓ and the ±5 buttons
 const SP_COARSE = 25; // live power nudge: coarse step (W) — Shift+↑/↓ and the ±25 buttons
 
@@ -494,25 +493,7 @@ export function App() {
               </div>
             </section>
 
-            <section className="panel">
-              <h2>History</h2>
-              <TimePlot
-                forward={plot.fwd}
-                reflectedPct={plot.refl}
-                powerCeil={powerCeil}
-                reflectCeil={REFLECT_PLOT_CEIL}
-              />
-              <div className="plot-legend">
-                <span>
-                  <span className="swatch fwd" />
-                  forward power (0–{powerCeil} W)
-                </span>
-                <span>
-                  <span className="swatch refl" />
-                  reverse (0–{REFLECT_PLOT_CEIL}%)
-                </span>
-              </div>
-            </section>
+            <HistoryPanel plot={plot} powerCeil={powerCeil} />
           </div>
 
           <div className="col">
