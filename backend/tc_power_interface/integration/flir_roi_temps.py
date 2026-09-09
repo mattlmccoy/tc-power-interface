@@ -86,6 +86,7 @@ class FlirPollingSource:
         self._latest = TemperatureSample(celsius=0.0, valid=False, ts=0.0)
         self.latest_max_c: float | None = None
         self._roi_names: list[str] = []
+        self._roi_temps: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -101,11 +102,27 @@ class FlirPollingSource:
         with self._lock:
             return list(self._roi_names)
 
+    def latest_roi_temps(self) -> list[dict[str, Any]]:
+        """The last feed's per-ROI ``mean_c`` + ``valid`` (for the hero's optional overlay). Kept
+        from the last non-empty poll, so a transient fetch error never blanks it."""
+        with self._lock:
+            return [dict(r) for r in self._roi_temps]
+
     def poll_once(self) -> None:
         names: list[str] = []
+        roster: list[dict[str, Any]] = []
         try:
             payload = self._get(self.url, self.timeout)
             names = [r.get("name") for r in payload.get("rois", []) if r.get("name")]
+            roster = [
+                {
+                    "name": r.get("name"),
+                    "mean_c": r.get("mean_c"),
+                    "valid": bool(r.get("valid", False)),
+                }
+                for r in payload.get("rois", [])
+                if r.get("name")
+            ]
             sample, max_c = select_control_temp(
                 payload, self.roi_name, stat=self.stat,
                 max_age_ms=self.max_age_ms, recv_ts=time.time(),
@@ -117,6 +134,7 @@ class FlirPollingSource:
             self.latest_max_c = max_c
             if names:  # keep the last known roster if a poll returns none (e.g. a transient error)
                 self._roi_names = names
+                self._roi_temps = roster
 
     def read(self) -> TemperatureSample:
         with self._lock:
