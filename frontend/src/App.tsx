@@ -10,8 +10,9 @@ import { OperatorPanel } from "./components/OperatorPanel.tsx";
 import { FlirLinkPanel } from "./components/FlirLinkPanel.tsx";
 import { LoggingPanel } from "./components/LoggingPanel.tsx";
 import { ThermalPlanPanel } from "./components/ThermalPlanPanel.tsx";
+import { SafetyLimitsPanel } from "./components/SafetyLimitsPanel.tsx";
 import { api, SITE_MODE } from "./lib/api.ts";
-import { boundHint, fmtTemp, fmtWatts } from "./lib/format.ts";
+import { fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
 import { UI_API_VERSION, UI_VERSION } from "./lib/operator.ts";
 import { useOperator } from "./hooks/useOperator.ts";
@@ -867,70 +868,12 @@ export function App() {
       ) : view === "settings" ? (
         <div className="main">
           <div className="col">
-            <section className="panel">
-              <h2>Safety limits</h2>
-              {limitsStatus ? (
-                <>
-                  <div className="hint">
-                    Protection thresholds. You can always tighten; values are clamped to the hard
-                    bounds shown and take effect on the next telemetry poll.
-                  </div>
-                  <label className="field-label">
-                    Max forward power (W){boundHint(limitsStatus.bounds, "max_forward_w")}
-                  </label>
-                  <input
-                    type="number"
-                    value={limForm.max_forward_w}
-                    onChange={(e) => setLimForm({ ...limForm, max_forward_w: e.target.value })}
-                  />
-                  <label className="field-label" style={{ marginTop: "10px" }}>
-                    Max reflected power / trip (W){boundHint(limitsStatus.bounds, "max_reflected_w")}
-                  </label>
-                  <input
-                    type="number"
-                    value={limForm.max_reflected_w}
-                    onChange={(e) => setLimForm({ ...limForm, max_reflected_w: e.target.value })}
-                  />
-                  <label className="field-label" style={{ marginTop: "10px" }}>
-                    Over-temperature shutoff (°C){boundHint(limitsStatus.bounds, "temperature_c_trip")}
-                  </label>
-                  <input
-                    type="number"
-                    value={limForm.temperature_c_trip}
-                    onChange={(e) => setLimForm({ ...limForm, temperature_c_trip: e.target.value })}
-                  />
-                  <div className="hint" style={{ marginTop: "12px" }}>
-                    Gauge zones (display only — the forward power dials shade at these watts; they do
-                    not change protection).
-                  </div>
-                  <label className="field-label" style={{ marginTop: "8px" }}>
-                    Caution — yellow from (W){boundHint(limitsStatus.bounds, "forward_caution_w")}
-                  </label>
-                  <input
-                    type="number"
-                    value={limForm.forward_caution_w}
-                    onChange={(e) => setLimForm({ ...limForm, forward_caution_w: e.target.value })}
-                  />
-                  <label className="field-label" style={{ marginTop: "10px" }}>
-                    Danger — red from (W){boundHint(limitsStatus.bounds, "forward_danger_w")}
-                  </label>
-                  <input
-                    type="number"
-                    value={limForm.forward_danger_w}
-                    onChange={(e) => setLimForm({ ...limForm, forward_danger_w: e.target.value })}
-                  />
-                  <button
-                    className="btn accent full"
-                    style={{ marginTop: "12px" }}
-                    onClick={saveLimits}
-                  >
-                    Save limits
-                  </button>
-                </>
-              ) : (
-                <div className="muted">loading…</div>
-              )}
-            </section>
+            <SafetyLimitsPanel
+              limitsStatus={limitsStatus}
+              limForm={limForm}
+              setLimForm={setLimForm}
+              saveLimits={saveLimits}
+            />
 
             <ThermalPlanPanel
               thermalPlanStatus={thermalPlanStatus}
