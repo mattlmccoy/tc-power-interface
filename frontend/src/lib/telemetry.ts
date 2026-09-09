@@ -189,6 +189,9 @@ export interface Status {
   presets: PresetsStatus;
   pulse: PulseStatus;
   match_tuner: MatchTunerStatus;
+  /** VNA pre-run auto-tune interlock: while `active`, RF-enable is refused (409). `stale` marks a
+   * lost heartbeat (reported, but only an explicit End clears the session). */
+  vna_session?: { active: boolean; stale: boolean; age_s: number | null };
 }
 
 export interface Point {

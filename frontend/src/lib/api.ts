@@ -154,6 +154,11 @@ export const api = {
   matchTunerStop: () => post("/api/match-tuner/stop"),
   matchTunerArm: () => post("/api/match-tuner/arm"),
   matchTunerDisarm: () => post("/api/match-tuner/disarm"),
+  // VNA pre-run auto-tune session (RF-off interlock). Begin refuses RF until End; heartbeat keeps
+  // the session liveness fresh so a dead tab surfaces as `vna_session.stale` in the status.
+  vnaBegin: () => post("/api/vna-session/begin"),
+  vnaEnd: () => post("/api/vna-session/end"),
+  vnaHeartbeat: () => post("/api/vna-session/heartbeat"),
   autoLog: async (): Promise<{ enabled: boolean }> =>
     (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
   setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),

@@ -458,9 +458,10 @@ def create_app(
 
     def _status_payload() -> dict[str, Any]:
         rec = _recorder()
+        ctrl_snap = _controller().snapshot()
         return {
             "device": app.state.device_info,
-            "controller": _controller().snapshot(),
+            "controller": ctrl_snap,
             "recording": {
                 "active": rec.state is RecorderState.RECORDING,
                 "run": app.state.current_run,
@@ -476,6 +477,9 @@ def create_app(
             "presets": _presets_payload(),
             "pulse": _pulse().snapshot(),
             "match_tuner": _match_tuner().snapshot(),
+            # Surface the VNA-session interlock at the top level too (mirrors `match_tuner`), so the
+            # frontend banner/panel read `status.vna_session`; the same block stays in `controller`.
+            "vna_session": ctrl_snap["vna_session"],
         }
 
     @app.get("/api/status")
@@ -833,6 +837,28 @@ def create_app(
     def match_tuner_disarm() -> dict[str, Any]:
         _match_tuner().disarm()
         return _match_tuner().snapshot()
+
+    @app.post("/api/vna-session/begin")
+    def vna_session_begin() -> dict[str, Any]:
+        """Enter VNA pre-run auto-tune mode (RF off). While active, POST /api/rf/enable is refused
+        (409). Forces RF off best-effort; E-STOP / RF-OFF stay available."""
+        _controller().begin_vna_session()
+        _record_event("vna_session_begin")
+        return _status_payload()
+
+    @app.post("/api/vna-session/end")
+    def vna_session_end() -> dict[str, Any]:
+        """Leave VNA-tune mode; RF is allowed again (arm/connected/not-faulted gates still apply)."""
+        _controller().end_vna_session()
+        _record_event("vna_session_end")
+        return _status_payload()
+
+    @app.post("/api/vna-session/heartbeat")
+    def vna_session_heartbeat() -> dict[str, Any]:
+        """Refresh VNA-session liveness. A stale heartbeat is reported in the snapshot but never
+        clears the session — only /api/vna-session/end does."""
+        _controller().vna_heartbeat()
+        return _status_payload()
 
     @app.post("/api/rf/enable")
     def rf_enable() -> dict[str, Any]:

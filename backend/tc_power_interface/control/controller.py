@@ -56,6 +56,14 @@ class Controller:
         #: flows and tests are unchanged. disarm() drops RF and re-locks control.
         self.armed = True
 
+        #: VNA pre-run auto-tune interlock. While a VNA session is active the matching network is
+        #: being tuned against a NanoVNA with RF OFF, so enable_rf() must be REFUSED (fail safe).
+        #: Only end_vna_session() clears it; a stale heartbeat is reported but never clears it, and
+        #: disable_rf()/estop()/disarm() are never gated by it (RF-off / E-STOP always allowed).
+        self._vna_session_active = False
+        self._vna_hb_ns: int | None = None
+        self._vna_stale_s = 10.0
+
         self.state = ControllerState.DISCONNECTED
         self.latest_telemetry: Telemetry | None = None
         self.latest_decision: SafetyDecision | None = None
@@ -272,6 +280,10 @@ class Controller:
 
     # --- guarded commands ------------------------------------------------------------------
     def enable_rf(self) -> None:
+        # SAFETY: VNA-session interlock is the FIRST gate — refuse RF before any arm/state check
+        # while the matching network is being tuned against a NanoVNA with RF off. Fail safe.
+        if self._vna_session_active:
+            raise RuntimeError("VNA mode — RF disabled")
         self._require_armed()
         if self.state is ControllerState.FAULT:
             raise RuntimeError(f"cannot enable RF while faulted: {'; '.join(self.fault_reasons)}")
@@ -316,11 +328,41 @@ class Controller:
         with self._io_lock:
             self.device.set_load_capacity(percent)
 
+    # --- VNA pre-run auto-tune session (RF interlock) --------------------------------------
+    def begin_vna_session(self) -> None:
+        """Enter VNA-tune mode: RF is refused until end_vna_session(). Forces RF off best-effort
+        (defense in depth); the disable is ignored when no device is attached so begin never
+        raises. E-STOP / RF-OFF stay available throughout."""
+        with self._lock:
+            self._vna_session_active = True
+            self._vna_hb_ns = time.monotonic_ns()
+        try:
+            self.disable_rf()  # defense in depth; ignored if no device
+        except Exception:  # noqa: BLE001 - best-effort RF-off; no-device must not raise
+            pass
+
+    def end_vna_session(self) -> None:
+        """Leave VNA-tune mode. RF is allowed again (arm/connected/not-faulted gates still apply).
+        Never enables RF itself."""
+        with self._lock:
+            self._vna_session_active = False
+            self._vna_hb_ns = None
+
+    def vna_heartbeat(self) -> None:
+        """Refresh the VNA-session liveness timestamp. A missing/stale heartbeat is REPORTED in the
+        snapshot but never clears the session — only end_vna_session() does."""
+        with self._lock:
+            if self._vna_session_active:
+                self._vna_hb_ns = time.monotonic_ns()
+
     # --- snapshot for the API --------------------------------------------------------------
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             t = self.latest_telemetry
             d = self.latest_decision
+            vna_active = self._vna_session_active
+            vna_hb_ns = self._vna_hb_ns
+        age_s = None if vna_hb_ns is None else (time.monotonic_ns() - vna_hb_ns) / 1e9
         return {
             "state": self.state.value,
             "armed": self.armed,
@@ -345,6 +387,11 @@ class Controller:
                 "preset_slot": t.preset_slot,
             },
             "warnings": [] if d is None else list(d.warnings),
+            "vna_session": {
+                "active": vna_active,
+                "stale": bool(vna_active and age_s is not None and age_s > self._vna_stale_s),
+                "age_s": age_s,
+            },
             "limits": {
                 "max_forward_w": self.limits.max_forward_w,
                 "max_reflected_w": self.limits.max_reflected_w,
