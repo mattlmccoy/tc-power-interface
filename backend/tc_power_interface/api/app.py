@@ -189,6 +189,18 @@ class MatchTunerBody(BaseModel):
     guard: float
 
 
+def thermal_extra(source: Any) -> dict[str, Any]:
+    """Read-only extras surfaced alongside the thermal snapshot for the closed-loop hero: the
+    control ROI's hottest pixel and a compact per-ROI roster. Both come from the FLIR polling
+    source and are absent (None / []) on the simulated source or an older operator — never faked.
+    The loop's own behaviour is unchanged; this only exposes already-computed values."""
+    fn = getattr(source, "latest_roi_temps", None)
+    return {
+        "control_max_c": getattr(source, "latest_max_c", None),
+        "roi_temps": fn() if callable(fn) else [],
+    }
+
+
 def create_app(
     *,
     backend: str = "simulated",
@@ -445,6 +457,7 @@ def create_app(
                 "source": app.state.thermal_source,
                 "control_roi": app.state.control_roi,
                 "available_rois": _available_rois(),
+                **thermal_extra(_thermal().source),
             },
             "ramp": _ramp().snapshot(),
             "timer": _timer().snapshot(),
