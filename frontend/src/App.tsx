@@ -4,6 +4,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Gauge } from "./components/Gauge.tsx";
 import { StatusLeds } from "./components/StatusLeds.tsx";
 import { TimePlot } from "./components/TimePlot.tsx";
+import VnaPanel from "./components/VnaPanel.tsx";
 import { api, detail, operatorBase, setOperatorBase, SITE_MODE } from "./lib/api.ts";
 import type { SerialPort, Health } from "./lib/api.ts";
 import type { FlirLink } from "./lib/api.ts";
@@ -864,6 +865,14 @@ export function App() {
           <strong>WARNING.</strong> {ctrl.warnings.join("; ")}
         </div>
       ) : null}
+      {status?.vna_session?.active ? (
+        <div className={`banner ${status.vna_session.stale ? "warn" : "fault"}`}>
+          <strong>VNA mode — RF disabled.</strong>
+          {status.vna_session.stale
+            ? " Liveness lost — reconnect the NanoVNA or End the session."
+            : " A NanoVNA session is active; end it to re-enable RF."}
+        </div>
+      ) : null}
 
       <ErrorBoundary key={view}>
         {() => (
@@ -1385,6 +1394,14 @@ export function App() {
                 </button>
               </div>
             </section>
+
+            <VnaPanel
+              status={status}
+              controllable={controllable}
+              sendTune={sendTune}
+              sendLoad={sendLoad}
+              waitCapSettle={waitCapSettle}
+            />
 
             <section className="panel">
               <h2>Match tuner</h2>
