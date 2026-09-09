@@ -3,11 +3,12 @@ import { SITE_MODE } from "../lib/api.ts";
 import { FlirLinkPanel } from "../components/FlirLinkPanel.tsx";
 import { LoggingPanel } from "../components/LoggingPanel.tsx";
 import { OperatorPanel } from "../components/OperatorPanel.tsx";
+import { PulsePanel } from "../components/PulsePanel.tsx";
 import { SafetyLimitsPanel } from "../components/SafetyLimitsPanel.tsx";
 import { ThermalPlanPanel } from "../components/ThermalPlanPanel.tsx";
 
 export function SettingsPage({ op }: { op: Operator }) {
-  const { applyBase, applyFlirUrl, autoLog, baseInput, flirEnabled, flirLast, flirUrlInput, limForm, limitsStatus, saveLimits, saveThermalPlan, setAutoLog, setBaseInput, setFlirUrlInput, setLimForm, setThermalForm, textInputStyle, thermalForm, thermalPlanStatus, toggleFlirEnabled } = op;
+  const { applyBase, applyFlirUrl, autoLog, baseInput, controllable, flirEnabled, flirLast, flirUrlInput, limForm, limitsStatus, pulse, pulseForm, saveLimits, saveThermalPlan, setAutoLog, setBaseInput, setFlirUrlInput, setLimForm, setPulseForm, setThermalForm, startPulse, stopPulse, textInputStyle, thermalForm, thermalPlanStatus, toggleFlirEnabled } = op;
   return (
         <div className="main">
           <div className="col">
@@ -45,6 +46,15 @@ export function SettingsPage({ op }: { op: Operator }) {
                 textInputStyle={textInputStyle}
               />
             ) : null}
+
+            <PulsePanel
+              controllable={controllable}
+              pulse={pulse}
+              pulseForm={pulseForm}
+              setPulseForm={setPulseForm}
+              startPulse={startPulse}
+              stopPulse={stopPulse}
+            />
           </div>
         </div>
   );

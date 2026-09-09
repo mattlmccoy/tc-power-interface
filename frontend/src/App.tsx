@@ -2,10 +2,11 @@ import { Banners } from "./components/Banners.tsx";
 import { ConnectBar } from "./components/ConnectBar.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StartupModal } from "./components/StartupModal.tsx";
+import { SafetyRail } from "./components/SafetyRail.tsx";
 import { Toast } from "./components/Toast.tsx";
 import { useOperator } from "./hooks/useOperator.ts";
+import { ClosedLoopPage } from "./pages/ClosedLoopPage.tsx";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
-import { ExperimentalPage } from "./pages/ExperimentalPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 
 export function App() {
@@ -14,7 +15,7 @@ export function App() {
     device, view, setView, showHelp, toggleHelp, pillState, showConnect, setShowConnect, ports,
     scanPorts, baseInput, setBaseInput, applyBase, setPorts, setConnectErr, connected,
     disconnectDevice, connectBusy, connectErr, connectPort, health, reachable, handshake, faulted,
-    ctrl, toast, showStartup, setShowStartup,
+    ctrl, toast, showStartup, setShowStartup, estop, rfOff, disarmDevice, armed,
   } = op;
   return (
     <div className={`app ${showHelp ? "" : "help-off"}`}>
@@ -35,10 +36,10 @@ export function App() {
             Settings
           </button>
           <button
-            className={view === "experimental" ? "active" : ""}
-            onClick={() => setView("experimental")}
+            className={view === "closed-loop" ? "active" : ""}
+            onClick={() => setView("closed-loop")}
           >
-            Experimental
+            Closed loop
           </button>
         </span>
         <button
@@ -70,6 +71,14 @@ export function App() {
         />
       </header>
 
+      <SafetyRail
+        connected={connected}
+        armed={armed}
+        estop={estop}
+        rfOff={rfOff}
+        disarmDevice={disarmDevice}
+      />
+
       <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} />
 
       <ErrorBoundary key={view}>
@@ -80,7 +89,7 @@ export function App() {
             ) : view === "settings" ? (
               <SettingsPage op={op} />
             ) : (
-              <ExperimentalPage op={op} />
+              <ClosedLoopPage op={op} />
             )}
           </>
         )}

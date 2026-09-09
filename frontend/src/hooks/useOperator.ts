@@ -39,7 +39,7 @@ export function useOperator() {
   const [reachable, setReachable] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   const [toast, setToast] = useState<{ msg: string; tone: "ok" | "err" | "warn" } | null>(null);
-  const [view, setView] = useState<"dashboard" | "settings" | "experimental">("dashboard");
+  const [view, setView] = useState<"dashboard" | "settings" | "closed-loop">("dashboard");
   const [showGauges, setShowGauges] = useState<boolean>(() => {
     try {
       return localStorage.getItem("tcp.gauges") === "1";
