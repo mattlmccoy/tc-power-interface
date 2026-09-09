@@ -105,6 +105,30 @@ export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: 
     if (!improved && !tunedUp) break; // neither axis moved → settled at the best point
   }
 
+  // Fine endgame — the operator's one-click-at-a-time finish: with tune in the zone, walk LOAD (then
+  // tune) in single ±1 clicks stepped from the current best. Each click is issued relative to the best
+  // (the caps sit there), so with DIRECT cap drive a down-click is approached from above — landing the
+  // backlash-accessible sweet spot the coarse, from-below scan overshoots. LOAD clicks are tried first
+  // (Matt: "if T is near the right zone, L does the fine tuning"). First-improvement, best-so-far.
+  // Walk to the true local minimum (deepest match), NOT just the first RL<−20: the operator chases the
+  // deepest null they can, so the fine walk keeps going while single clicks still improve |Γ|.
+  const CLICKS: Array<[number, number]> = [[0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]];
+  for (let step = 0; step < 60; step++) {
+    if (opts.shouldStop?.()) break;
+    let moved = false;
+    for (const [dt, dl] of CLICKS) {
+      if (opts.shouldStop?.()) break;
+      const t = clampCap(bt + dt), l = clampCap(bl + dl);
+      if (t === bt && l === bl) continue;
+      iter++;
+      const s = await probe(t, l);
+      const c = costAt(s);
+      report(t, l, s);
+      if (c < bc - eps) { bc = c; bt = t; bl = l; bs = s; moved = true; break; }
+    }
+    if (!moved) break;
+  }
+
   // Command the caps back to the best point found (the last probe may have left them on a worse one).
   const restore = await probe(bt, bl);
   return { tune: bt, load: bl, converged: convergedAt(restore), iters: iter };

@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Status } from "../lib/telemetry.ts";
 import { api } from "../lib/api.ts";
-import { approachFromBelow, clampCap, capSettled } from "../lib/instrument.ts";
+import { clampCap, capSettled } from "../lib/instrument.ts";
 import { NanoVNAConnection } from "../lib/vna/nanovna.ts";
 import { impedance, magnitude, nearestPointByFrequency, type SweepPoint } from "../lib/vna/rf.ts";
 import { F0 } from "../lib/vna/autotune.ts";
@@ -193,9 +193,12 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
 
   async function driveCap(which: "tune" | "load", target: number) {
     const send = which === "tune" ? sendTune : sendLoad;
-    const [pre, tgt] = approachFromBelow(clampCap(target));
-    await send(pre);
-    await waitCapSettle(which, pre);
+    // Drive the cap EXACTLY like the manual +/- buttons: a single direct command from the current
+    // position — NOT approach-from-below. Backlash then lands the cap on the same side the operator
+    // reaches by hand (a down-click from 36 lands ~35.8, the sweet spot; approach-from-below landed
+    // 35.2 and could never match). We close the loop by measuring after each move, so we don't need
+    // approach-from-below's open-loop repeatability. (2026-09-09 bench: manual +/- hit −30, auto didn't.)
+    const tgt = clampCap(target);
     await send(tgt);
     await waitCapSettle(which, tgt);
   }

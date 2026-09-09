@@ -67,6 +67,15 @@ test("escapes the local min to the DEEP match (the bench case Matt beat by hand)
   assert.ok(r.load >= 63, `deep well is at high load (got load ${r.load})`);
 });
 
+test("fine endgame: single ±1 clicks refine to the EXACT match with no coarse sweep (L fine-tunes in)", async () => {
+  // Matt's finish: T already in the zone, LOAD walked one click at a time into the exact spot.
+  // maxRounds:0 disables the coarse line search, so ONLY the fine single-click endgame can do this.
+  const r = await shapeTune(probe, { tune: tStar, load: lStar - 2 }, { maxRounds: 0 });
+  assert.equal(r.converged, true, `caps ${r.tune}/${r.load}`);
+  assert.equal(r.tune, tStar);
+  assert.equal(r.load, lStar);
+});
+
 test("tune detune recovers", async () => {
   const r = await shapeTune(probe, { tune: tStar + 2, load: lStar }, {});
   assert.equal(r.converged, true, `caps ${r.tune},${r.load}`);
