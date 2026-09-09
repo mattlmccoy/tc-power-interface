@@ -16,6 +16,7 @@ import { MatchingNetworkPanel } from "./components/MatchingNetworkPanel.tsx";
 import { GeneratorPanel } from "./components/GeneratorPanel.tsx";
 import { RfPowerPanel } from "./components/RfPowerPanel.tsx";
 import { TelemetryPanel } from "./components/TelemetryPanel.tsx";
+import { Banners } from "./components/Banners.tsx";
 import { SITE_MODE } from "./lib/api.ts";
 import { UI_API_VERSION, UI_VERSION } from "./lib/operator.ts";
 import { useOperator } from "./hooks/useOperator.ts";
@@ -190,20 +191,7 @@ export function App() {
         </div>
       </header>
 
-      {handshake && handshake.level !== "ok" ? (
-        <div className={`banner ${handshake.level === "refuse" ? "fault" : "warn"}`}>
-          <strong>Version mismatch.</strong> {handshake.message}
-        </div>
-      ) : null}
-      {faulted ? (
-        <div className="banner fault">
-          <strong>FAULT — RF disabled.</strong> {ctrl?.fault_reasons.join("; ")}
-        </div>
-      ) : ctrl && ctrl.warnings.length > 0 ? (
-        <div className="banner warn">
-          <strong>WARNING.</strong> {ctrl.warnings.join("; ")}
-        </div>
-      ) : null}
+      <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} />
 
       <ErrorBoundary key={view}>
         {() => (
