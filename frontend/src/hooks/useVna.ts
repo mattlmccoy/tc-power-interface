@@ -71,6 +71,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const hbRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runningRef = useRef(false);
   const liveRef = useRef(false);
+  const inLiveRef = useRef(false); // true while a liveLoop body is actually executing (one instance only)
   const statusRef = useRef(status);
   const controllableRef = useRef(controllable);
   const logRef = useRef<LogEntry[]>([]);
@@ -125,17 +126,23 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   }
 
   async function liveLoop() {
+    if (inLiveRef.current) return; // exactly one live loop may touch the shared NanoVNA link at a time
+    inLiveRef.current = true;
     let fails = 0;
-    while (liveRef.current) {
-      if (runningRef.current) { await sleep(100); continue; }
-      try {
-        const points = await doSweep();
-        if (points && points.length) { logSweep("live", points); if (fails) { fails = 0; setMsg(""); } }
-        else if (++fails === 3) setMsg("sweep returned no data — retrying (check the NanoVNA)…");
-      } catch (e) {
-        if (++fails === 3) setMsg(`sweep error: ${(e as Error).message} — retrying…`);
+    try {
+      while (liveRef.current) {
+        if (runningRef.current) { await sleep(100); continue; }
+        try {
+          const points = await doSweep();
+          if (points && points.length) { logSweep("live", points); if (fails) { fails = 0; setMsg(""); } }
+          else if (++fails === 3) setMsg("sweep returned no data — retrying (check the NanoVNA)…");
+        } catch (e) {
+          if (++fails === 3) setMsg(`sweep error: ${(e as Error).message} — retrying…`);
+        }
+        await sleep(fails > 2 ? 500 : LIVE_GAP_MS); // a transient bad read must not blank the display or stop the loop
       }
-      await sleep(fails > 2 ? 500 : LIVE_GAP_MS); // a transient bad read must not blank the display or stop the loop
+    } finally {
+      inLiveRef.current = false;
     }
   }
 
@@ -201,12 +208,18 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
 
   // Shape-based auto-tune: pause the live loop, drive the caps by reading the loop shape each sweep.
   async function runAutoTune() {
+    if (runningRef.current) return;            // never run two auto-tunes at once (they fight over the caps)
     const blocked = halted();
     if (blocked) { setMsg(`cannot run: ${blocked}`); return; }
     runningRef.current = true;
     setRunning(true);
     setIter(0);
     setMsg("tuning…");
+    // Give the auto-tuner EXCLUSIVE use of the NanoVNA link: stop the live loop and wait for its
+    // in-flight sweep to finish. Concurrent sweeps corrupt reads and let a stale loop drive the caps
+    // off a good match (the 2026-09-09 "still_bad" log: a −30 dB match was wrecked mid-run).
+    liveRef.current = false;
+    for (let i = 0; i < 50 && inLiveRef.current; i++) await sleep(100);
     const t = statusRef.current?.controller?.telemetry;
     const start = { tune: clampCap(t?.tune_cap_percent ?? 50), load: clampCap(t?.load_cap_percent ?? 50) };
     let curT = start.tune, curL = start.load;
@@ -224,13 +237,17 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
         onStep: ({ iter: i, cost }) => { setIter(i); setMsg(`tuning · |Γ@13.56|=${cost.toFixed(3)}`); },
         shouldStop: () => !runningRef.current || halted() != null,
       });
-      setMsg(res.converged ? `matched · caps ${res.tune}% / ${res.load}% (${res.iters} steps)` : `stopped · caps ${res.tune}% / ${res.load}%`);
+      setMsg(
+        res.converged && res.iters === 0 ? `already matched — caps left at ${res.tune}% / ${res.load}%`
+        : res.converged ? `matched · caps ${res.tune}% / ${res.load}% (${res.iters} steps)`
+        : `stopped · caps ${res.tune}% / ${res.load}%`,
+      );
     } catch (e) {
       setMsg(`run error: ${(e as Error).message}`);
     } finally {
       runningRef.current = false;
       setRunning(false);
-      if (connRef.current && !liveRef.current) { liveRef.current = true; void liveLoop(); }
+      if (connRef.current) { liveRef.current = true; void liveLoop(); } // restart the single live loop
     }
   }
 
