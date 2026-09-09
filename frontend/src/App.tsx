@@ -2,6 +2,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { Gauge } from "./components/Gauge.tsx";
 import { StatusLeds } from "./components/StatusLeds.tsx";
 import { HistoryPanel } from "./components/HistoryPanel.tsx";
+import { StartupModal } from "./components/StartupModal.tsx";
 import { api, SITE_MODE } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
@@ -1290,40 +1291,7 @@ export function App() {
 
       {toast ? <div className={`toast ${toast.tone}`}>{toast.msg}</div> : null}
 
-      {showStartup ? (
-        <div className="modal-overlay" onClick={() => setShowStartup(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h2>Power-on order</h2>
-              <button
-                className="modal-close"
-                onClick={() => setShowStartup(false)}
-                aria-label="Dismiss"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="modal-lead">
-              <strong>Turn the generator ON before the AIT (matching network).</strong> Powering the
-              AIT first shifts the caps and ruins the tune.
-            </p>
-            <ol className="modal-steps">
-              <li>Load the part into the electrodes inside the chamber.</li>
-              <li>Connect the VNA and assess the match (S11).</li>
-              <li>Turn on the AIT; adjust tune / load to reach a match.</li>
-              <li>Turn off the AIT; unplug the VNA.</li>
-              <li>Plug the N-type cable into the RF generator.</li>
-              <li>Confirm everything is in place and safe.</li>
-              <li>
-                <strong>Turn on the generator → wait for boot → turn on the AIT.</strong>
-              </li>
-            </ol>
-            <button className="btn accent full" onClick={() => setShowStartup(false)}>
-              Got it
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <StartupModal open={showStartup} onClose={() => setShowStartup(false)} />
     </div>
   );
 }
