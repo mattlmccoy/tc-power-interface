@@ -6,6 +6,7 @@ import { StartupModal } from "./components/StartupModal.tsx";
 import { Toast } from "./components/Toast.tsx";
 import { PulsePanel } from "./components/PulsePanel.tsx";
 import { ThermalControlPanel } from "./components/ThermalControlPanel.tsx";
+import { OperatorPanel } from "./components/OperatorPanel.tsx";
 import { api, SITE_MODE } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
@@ -1054,24 +1055,12 @@ export function App() {
             </section>
 
             {SITE_MODE ? (
-              <section className="panel">
-                <h2>Operator</h2>
-                <label className="field-label" htmlFor="op">
-                  Local operator (tcp-serve) this UI connects to
-                </label>
-                <input
-                  id="op"
-                  className="mono"
-                  style={textInputStyle}
-                  value={baseInput}
-                  onChange={(e) => setBaseInput(e.target.value)}
-                  onBlur={applyBase}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") applyBase();
-                  }}
-                  placeholder="http://localhost:8010"
-                />
-              </section>
+              <OperatorPanel
+                baseInput={baseInput}
+                setBaseInput={setBaseInput}
+                applyBase={applyBase}
+                textInputStyle={textInputStyle}
+              />
             ) : null}
           </div>
         </div>
