@@ -55,6 +55,22 @@ export function useOperator() {
       /* storage unavailable — keep in-memory only */
     }
   };
+  // Hero overlay: faint traces of the OTHER live ROIs (caps, powder, electrodes), OFF by default.
+  const [showRoiOverlay, setShowRoiOverlay] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("tcp.hero.overlay") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleRoiOverlay = (on: boolean) => {
+    setShowRoiOverlay(on);
+    try {
+      localStorage.setItem("tcp.hero.overlay", on ? "1" : "0");
+    } catch {
+      /* storage unavailable — keep in-memory only */
+    }
+  };
   // Explanatory help text is hidden by default (instrument view stays uncluttered); toggle it on.
   const [showHelp, setShowHelp] = useState<boolean>(() => {
     try {
@@ -101,6 +117,13 @@ export function useOperator() {
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [autoLog, setAutoLog] = useState(true);
   const [plot, setPlot] = useState<{ fwd: Point[]; refl: Point[] }>({ fwd: [], refl: [] });
+  // Closed-loop hero history: control-ROI mean_c, its max_c, and the target, plus the other ROIs.
+  const [heroTrace, setHeroTrace] = useState<{ control: Point[]; max: Point[]; target: Point[] }>({
+    control: [],
+    max: [],
+    target: [],
+  });
+  const [roiTrace, setRoiTrace] = useState<{ name: string; points: Point[] }[]>([]);
   const [base, setBase] = useState(operatorBase());
   const [baseInput, setBaseInput] = useState(operatorBase());
   const [flirUrlInput, setFlirUrlInput] = useState("");
@@ -128,6 +151,12 @@ export function useOperator() {
 
   const fwdBuf = useRef(new TraceBuffer(150));
   const reflBuf = useRef(new TraceBuffer(150));
+  const heroBuf = useRef({
+    control: new TraceBuffer(300),
+    max: new TraceBuffer(300),
+    target: new TraceBuffer(300),
+  });
+  const roiBufs = useRef(new Map<string, TraceBuffer>());
   const store = settingsStorage();
 
   const applyBase = () => {
@@ -231,6 +260,31 @@ export function useOperator() {
           fwdBuf.current.push(ts, tel.forward_w);
           reflBuf.current.push(ts, tel.reflected_fraction * 100);
           setPlot({ fwd: fwdBuf.current.toArray(), refl: reflBuf.current.toArray() });
+        }
+        // Hero trace history — only while the loop runs, so a stopped loop never accrues a flat line.
+        const th = s.thermal;
+        if (th?.running) {
+          const hts = Date.now() / 1000;
+          heroBuf.current.control.push(hts, th.control_temp_c);
+          if (th.control_max_c != null) heroBuf.current.max.push(hts, th.control_max_c);
+          heroBuf.current.target.push(hts, th.target_c);
+          for (const r of th.roi_temps ?? []) {
+            if (r.mean_c == null) continue;
+            let b = roiBufs.current.get(r.name);
+            if (!b) {
+              b = new TraceBuffer(300);
+              roiBufs.current.set(r.name, b);
+            }
+            b.push(hts, r.mean_c);
+          }
+          setHeroTrace({
+            control: heroBuf.current.control.toArray(),
+            max: heroBuf.current.max.toArray(),
+            target: heroBuf.current.target.toArray(),
+          });
+          setRoiTrace(
+            [...roiBufs.current.entries()].map(([name, b]) => ({ name, points: b.toArray() })),
+          );
         }
       };
       ws.onclose = () => {
@@ -702,7 +756,8 @@ export function useOperator() {
   } as const;
 
   return {
-    status, reachable, health, toast, flash, view, setView, showGauges, toggleGauges, showHelp,
+    status, reachable, health, toast, flash, view, setView, showGauges, toggleGauges,
+    showRoiOverlay, toggleRoiOverlay, heroTrace, roiTrace, showHelp,
     toggleHelp, showStartup, setShowStartup, setpointInput, setSetpointInput, setpointRef,
     applySetpoint, nudgeSetpoint, onSetpointKey, rfOn, rfOff, estop, rampForm, setRampForm,
     startRamp, stopRamp, tune, load, activeCap, setActiveCap, capBusy, tuneVIn, setTuneVIn, loadVIn,
