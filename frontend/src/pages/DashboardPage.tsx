@@ -3,14 +3,12 @@ import { GeneratorPanel } from "../components/GeneratorPanel.tsx";
 import { HistoryPanel } from "../components/HistoryPanel.tsx";
 import { MatchingNetworkPanel } from "../components/MatchingNetworkPanel.tsx";
 import { MatchTunerPanel } from "../components/MatchTunerPanel.tsx";
-import VnaPanel from "../components/VnaPanel.tsx";
-import type { VnaController } from "../hooks/useVna.ts";
 import { RecordingPanel } from "../components/RecordingPanel.tsx";
 import { RfPowerPanel } from "../components/RfPowerPanel.tsx";
 import { TelemetryPanel } from "../components/TelemetryPanel.tsx";
 import { TimerPanel } from "../components/TimerPanel.tsx";
 
-export function DashboardPage({ op, vna }: { op: Operator; vna: VnaController }) {
+export function DashboardPage({ op }: { op: Operator }) {
   const { activeCap, applyLoadVolts, applySetpoint, applyTuneVolts, armDevice, armMatchTuner, armed, bumpActive, bumpLoad, bumpTune, capBusy, clearPreset, connected, controllable, device, disarmDevice, disarmMatchTuner, estop, faulted, flash, fmtDelta, fwdCaution, fwdDanger, lastRun, limits, load, loadVIn, maxRefl, mt, nudgeSetpoint, onSetpointKey, plot, powerCeil, presetEntries, presets, ramp, rampForm, recallPreset, recording, reflFillPct, requested, revPct, rfOff, rfOn, runName, savePreset, saveSlot, sendLoad, sendTune, setActiveCap, setLoadVIn, setMatchMode, setRampForm, setRunName, setSaveSlot, setSetpointInput, setTimerMin, setTuneVIn, setpointInput, setpointRef, showGauges, startMatchTuner, startRamp, startTimer, stopMatchTuner, stopRamp, stopTimer, t, textInputStyle, timer, timerMin, toggleGauges, tune, tuneVIn, zone } = op;
   return (
           <div className="main">
@@ -102,8 +100,6 @@ export function DashboardPage({ op, vna }: { op: Operator; vna: VnaController })
               revPct={revPct}
               fmtDelta={fmtDelta}
             />
-
-            <VnaPanel vna={vna} status={op.status} />
 
             <TimerPanel
               controllable={controllable}

@@ -22,14 +22,16 @@ interface ConnectBarProps {
   disconnectDevice: () => void;
   setPorts: (p: null) => void;
   setConnectErr: (e: null) => void;
+  vnaConnect: () => void;
 }
 
 export function ConnectBar(props: ConnectBarProps) {
   const {
     pillState, showConnect, setShowConnect, ports, connectBusy, connectErr, connected, device,
     reachable, health, baseInput, setBaseInput, applyBase, scanPorts, connectPort, disconnectDevice,
-    setPorts, setConnectErr,
+    setPorts, setConnectErr, vnaConnect,
   } = props;
+  const isVna = (p: SerialPort) => /nanovna/i.test(p.description) || /0483:5740/i.test(p.hwid);
   return (
         <div className="connect-wrap">
           <button
@@ -113,16 +115,26 @@ export function ConnectBar(props: ConnectBarProps) {
                     {ports.map((p) => (
                       <li key={p.device}>
                         <div className="port-info">
-                          <div className="port-name">{p.description || p.device}</div>
+                          <div className="port-name">{p.description || p.device}{isVna(p) ? " · VNA" : ""}</div>
                           <code>{p.device}</code>
                         </div>
-                        <button
-                          className="btn accent"
-                          onClick={() => connectPort(p.device)}
-                          disabled={connectBusy !== null}
-                        >
-                          {connectBusy === p.device ? "Connecting…" : "Connect"}
-                        </button>
+                        {isVna(p) ? (
+                          <button
+                            className="btn accent"
+                            onClick={() => { setShowConnect(false); vnaConnect(); }}
+                            title="Enter VNA tune mode over Web Serial. Locks RF while connected."
+                          >
+                            Connect (VNA)
+                          </button>
+                        ) : (
+                          <button
+                            className="btn accent"
+                            onClick={() => connectPort(p.device)}
+                            disabled={connectBusy !== null}
+                          >
+                            {connectBusy === p.device ? "Connecting…" : "Connect"}
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>

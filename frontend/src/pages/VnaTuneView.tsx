@@ -6,6 +6,7 @@
 import type { Operator } from "../hooks/useOperator.ts";
 import type { VnaController } from "../hooks/useVna.ts";
 import { VnaSmith } from "../components/VnaSmith.tsx";
+import { VnaS11Plot } from "../components/VnaS11Plot.tsx";
 import { magnitude, vswr, impedance, db } from "../lib/vna/rf.ts";
 import { gammaAt } from "../lib/vna/autotune.ts";
 
@@ -60,7 +61,11 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap", marginTop: 12 }}>
+      <div style={{ marginTop: 12 }}>
+        <VnaS11Plot sweep={vna.sweep} height={170} />
+      </div>
+
+      <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap", marginTop: 16 }}>
         <VnaSmith sweep={vna.sweep} size={320} />
 
         <div style={{ flex: 1, minWidth: 300, display: "flex", flexDirection: "column", gap: 16 }}>

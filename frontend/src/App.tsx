@@ -74,18 +74,20 @@ export function App() {
           disconnectDevice={disconnectDevice}
           setPorts={setPorts}
           setConnectErr={setConnectErr}
+          vnaConnect={() => void vna.connect()}
         />
       </header>
 
-      <SafetyRail
-        connected={connected}
-        armed={armed}
-        estop={estop}
-        rfOff={rfOff}
-        disarmDevice={disarmDevice}
-      />
-
-      <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} vnaSession={op.status?.vna_session} />
+      <div className="app-chrome">
+        <SafetyRail
+          connected={connected}
+          armed={armed}
+          estop={estop}
+          rfOff={rfOff}
+          disarmDevice={disarmDevice}
+        />
+        <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} vnaSession={op.status?.vna_session} />
+      </div>
 
       <ErrorBoundary key={inVna ? "vna" : view}>
         {() => (
@@ -93,7 +95,7 @@ export function App() {
             {inVna ? (
               <VnaTuneView op={op} vna={vna} />
             ) : view === "dashboard" ? (
-              <DashboardPage op={op} vna={vna} />
+              <DashboardPage op={op} />
             ) : view === "settings" ? (
               <SettingsPage op={op} />
             ) : (
