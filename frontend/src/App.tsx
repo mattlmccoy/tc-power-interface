@@ -3,6 +3,7 @@ import { Gauge } from "./components/Gauge.tsx";
 import { StatusLeds } from "./components/StatusLeds.tsx";
 import { HistoryPanel } from "./components/HistoryPanel.tsx";
 import { StartupModal } from "./components/StartupModal.tsx";
+import { Toast } from "./components/Toast.tsx";
 import { api, SITE_MODE } from "./lib/api.ts";
 import { boundHint, flirStatusLabel, fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
@@ -1289,7 +1290,7 @@ export function App() {
         )}
       </ErrorBoundary>
 
-      {toast ? <div className={`toast ${toast.tone}`}>{toast.msg}</div> : null}
+      <Toast toast={toast} />
 
       <StartupModal open={showStartup} onClose={() => setShowStartup(false)} />
     </div>
