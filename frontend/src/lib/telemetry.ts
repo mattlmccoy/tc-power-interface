@@ -71,6 +71,10 @@ export interface ThermalStatus {
   /** The selected control ROI name, and the live FLIR roster to pick from (empty unless FLIR). */
   control_roi?: string;
   available_rois?: string[];
+  /** Hottest pixel of the control ROI (FLIR source only; null at saturation/sim). Absent on older operators. */
+  control_max_c?: number | null;
+  /** Compact per-ROI roster for the optional hero overlay. Absent on older operators. */
+  roi_temps?: { name: string; mean_c: number | null; valid: boolean }[];
 }
 
 /** Editable thermal plan (bounds-clamped server-side). */

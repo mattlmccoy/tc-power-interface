@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Status } from "../lib/telemetry.ts";
 import { api } from "../lib/api.ts";
-import { approachFromBelow, clampCap } from "../lib/instrument.ts";
+import { approachFromBelow, clampCap, capSettled } from "../lib/instrument.ts";
 import { NanoVNAConnection } from "../lib/vna/nanovna.ts";
 import { magnitude, vswr, impedance, db, type SweepPoint } from "../lib/vna/rf.ts";
 import { planVnaStep, gammaAt, F0, DEFAULT_MODEL, type TuneModel } from "../lib/vna/autotune.ts";
@@ -23,10 +23,9 @@ interface Props {
   controllable: boolean;
   sendTune: (v: number) => Promise<void>;
   sendLoad: (v: number) => Promise<void>;
-  waitCapSettle: (which: "tune" | "load", target: number, tol?: number, timeoutMs?: number) => Promise<void>;
 }
 
-export default function VnaPanel({ status, controllable, sendTune, sendLoad, waitCapSettle }: Props) {
+export default function VnaPanel({ status, controllable, sendTune, sendLoad }: Props) {
   const connRef = useRef<NanoVNAConnection | null>(null);
   const hbRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runningRef = useRef(false);
@@ -97,7 +96,23 @@ export default function VnaPanel({ status, controllable, sendTune, sendLoad, wai
     setMsg("");
   }
 
-  // Drive one cap to `target` from below (backlash-compensated two-step), reusing App's settle wait.
+  // Poll the live cap readback (from status) until it reaches `target`, or `timeoutMs` elapses — waits
+  // out the slow AIT motor between the two steps of an approach-from-below. Self-contained (reads the
+  // status prop via statusRef) so the panel drops cleanly into any page.
+  function waitCapSettle(which: "tune" | "load", target: number, tol = 2, timeoutMs = 12000): Promise<void> {
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const tele = statusRef.current?.controller?.telemetry;
+        const read = which === "tune" ? tele?.tune_cap_percent ?? null : tele?.load_cap_percent ?? null;
+        if (capSettled(read, target, tol) || Date.now() - t0 >= timeoutMs) { resolve(); return; }
+        setTimeout(tick, 250);
+      };
+      tick();
+    });
+  }
+
+  // Drive one cap to `target` from below (backlash-compensated two-step).
   async function driveCap(which: "tune" | "load", target: number) {
     const send = which === "tune" ? sendTune : sendLoad;
     const [pre, tgt] = approachFromBelow(clampCap(target));

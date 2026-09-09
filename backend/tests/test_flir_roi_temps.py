@@ -222,3 +222,43 @@ def test_poller_exposes_the_live_roster_and_switches_control_roi_at_runtime():
     src.poll_once()
     assert src.roi_name == "circle_large_powder"
     assert src.read().celsius == 150.0  # now controls on the newly-selected ROI's mean_c
+
+
+def test_poller_retains_the_per_roi_temp_roster():
+    # The hero's optional overlay needs each ROI's mean_c (+valid), not just the names.
+    src = FlirPollingSource("http://x", roi_name=ROI, _get=_FakeGet([_payload()]))
+    src.poll_once()
+    roster = src.latest_roi_temps()
+    assert {"name": "circle_medium_small", "mean_c": 182.5, "valid": True} in roster
+    assert {"name": "circle_large_powder", "mean_c": 150.0, "valid": True} in roster
+    assert len(roster) == 3
+
+
+def test_poller_roi_temps_survive_a_failed_poll():
+    # A transient fetch error must keep the last-known roster, never blank it.
+    src = FlirPollingSource("http://x", roi_name=ROI,
+                            _get=_FakeGet([_payload(), RuntimeError("net")]))
+    src.poll_once()  # healthy -> roster of 3
+    src.poll_once()  # error -> keep last known
+    assert len(src.latest_roi_temps()) == 3
+
+
+def test_thermal_extra_surfaces_control_max_c_and_roster():
+    from tc_power_interface.api.app import thermal_extra
+    src = FlirPollingSource("http://x", roi_name=ROI, _get=_FakeGet([_payload()]))
+    src.poll_once()
+    extra = thermal_extra(src)
+    assert extra["control_max_c"] == 190.1
+    assert {"name": ROI, "mean_c": 182.5, "valid": True} in extra["roi_temps"]
+
+
+def test_thermal_extra_defaults_when_source_lacks_the_fields():
+    # The simulated source (and older operators) expose neither -> honest defaults, never a fake OK.
+    from tc_power_interface.api.app import thermal_extra
+
+    class Bare:
+        pass
+
+    extra = thermal_extra(Bare())
+    assert extra["control_max_c"] is None
+    assert extra["roi_temps"] == []
