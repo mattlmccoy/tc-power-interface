@@ -7,7 +7,9 @@ import { s11PlotPoints, DEFAULT_PLOT } from "../lib/vna/s11plot.ts";
 const W = 1000; // viewBox width; the SVG stretches to the container (preserveAspectRatio=none)
 
 export function VnaS11Plot({ sweep, height = 150 }: { sweep: SweepPoint[]; height?: number }) {
-  const box = { width: W, height, ...DEFAULT_PLOT };
+  const fMin = sweep.length ? sweep[0].frequency : DEFAULT_PLOT.fMin;
+  const fMax = sweep.length ? sweep[sweep.length - 1].frequency : DEFAULT_PLOT.fMax;
+  const box = { width: W, height, dbMin: DEFAULT_PLOT.dbMin, dbMax: DEFAULT_PLOT.dbMax, fMin, fMax };
   const { points, markerX } = s11PlotPoints(sweep, box);
   const yOf = (d: number) => ((DEFAULT_PLOT.dbMax - d) / (DEFAULT_PLOT.dbMax - DEFAULT_PLOT.dbMin)) * height;
   const gridDb = [0, -10, -20, -30, -40];
@@ -24,9 +26,9 @@ export function VnaS11Plot({ sweep, height = 150 }: { sweep: SweepPoint[]; heigh
         )}
       </svg>
       <div className="vna-s11plot-axis" style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-        <span>12 MHz</span>
+        <span>{(fMin / 1e6).toFixed(2)} MHz</span>
         <span>|S11| dB · 0 (top) → −40 (bottom) · ▼ 13.56</span>
-        <span>18 MHz</span>
+        <span>{(fMax / 1e6).toFixed(2)} MHz</span>
       </div>
     </div>
   );

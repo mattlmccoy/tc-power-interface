@@ -111,6 +111,10 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
             )}
             <button className="btn" onClick={() => void vna.doSweep()} disabled={vna.running}>Sweep</button>
             <button className="btn" onClick={vna.saveTouchstone} disabled={!vna.sweep.length}>Save .s1p</button>
+            <button className="btn" onClick={vna.saveLog} disabled={!vna.logCount} title="Download the session log (JSON) — every sweep + cap position, for assessing the tuner vs manual">
+              Save log ({vna.logCount})
+            </button>
+            {vna.logCount > 0 && <button className="btn" onClick={vna.clearLog}>Clear log</button>}
             <span style={{ flex: 1 }} />
             <button className="btn" onClick={() => void vna.endSession()}>End VNA session</button>
           </div>
