@@ -8,6 +8,7 @@ import { PulsePanel } from "./components/PulsePanel.tsx";
 import { ThermalControlPanel } from "./components/ThermalControlPanel.tsx";
 import { OperatorPanel } from "./components/OperatorPanel.tsx";
 import { FlirLinkPanel } from "./components/FlirLinkPanel.tsx";
+import { LoggingPanel } from "./components/LoggingPanel.tsx";
 import { api, SITE_MODE } from "./lib/api.ts";
 import { boundHint, fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
@@ -1004,25 +1005,7 @@ export function App() {
               )}
             </section>
 
-            <section className="panel">
-              <h2>Logging</h2>
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={autoLog}
-                  onChange={(e) => {
-                    setAutoLog(e.target.checked);
-                    api.setAutoLog(e.target.checked);
-                  }}
-                />
-                Auto-log power curves on RF-on
-              </label>
-              <div className="hint">
-                Starts a telemetry recording automatically when RF turns on (device power + the
-                thermal-loop commanded curve). Keeps recording through cooldown — stop it manually.
-                Download the CSV from the Recording panel.
-              </div>
-            </section>
+            <LoggingPanel autoLog={autoLog} setAutoLog={setAutoLog} />
 
             <FlirLinkPanel
               flirUrlInput={flirUrlInput}
