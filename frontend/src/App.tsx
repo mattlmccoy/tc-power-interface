@@ -12,6 +12,7 @@ import { LoggingPanel } from "./components/LoggingPanel.tsx";
 import { ThermalPlanPanel } from "./components/ThermalPlanPanel.tsx";
 import { SafetyLimitsPanel } from "./components/SafetyLimitsPanel.tsx";
 import { RecordingPanel } from "./components/RecordingPanel.tsx";
+import { TimerPanel } from "./components/TimerPanel.tsx";
 import { SITE_MODE } from "./lib/api.ts";
 import { fmtTemp, fmtWatts } from "./lib/format.ts";
 import { capVolts, generatorModes, LOAD_CAL, tempBar, TUNE_CAL } from "./lib/instrument.ts";
@@ -784,40 +785,14 @@ export function App() {
               ) : null}
             </section>
 
-            <section className="panel">
-              <h2>Auto-shutoff timer</h2>
-              <div className="ramp-actions">
-                <label className="ramp-field" style={{ flex: "0 0 82px" }}>
-                  <span>Minutes</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={99}
-                    value={timerMin}
-                    disabled={timer?.running}
-                    onChange={(e) => setTimerMin(e.target.value)}
-                  />
-                </label>
-                {timer?.running ? (
-                  <button className="btn" onClick={stopTimer}>
-                    Cancel
-                  </button>
-                ) : (
-                  <button className="btn" onClick={startTimer} disabled={!controllable}>
-                    Start timer
-                  </button>
-                )}
-                {timer?.running ? (
-                  <span className="hint mono">
-                    {Math.ceil(timer.remaining_s / 60)} min left → RF off
-                  </span>
-                ) : timer?.done ? (
-                  <span className="hint mono">timer elapsed · RF commanded off</span>
-                ) : (
-                  <span className="hint">Commands RF off after N minutes (1–99). Never enables RF.</span>
-                )}
-              </div>
-            </section>
+            <TimerPanel
+              controllable={controllable}
+              timer={timer}
+              timerMin={timerMin}
+              setTimerMin={setTimerMin}
+              startTimer={startTimer}
+              stopTimer={stopTimer}
+            />
 
             <RecordingPanel
               controllable={controllable}
