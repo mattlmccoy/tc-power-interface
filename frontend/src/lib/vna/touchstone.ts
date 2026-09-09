@@ -5,6 +5,14 @@
 
 import type { SweepPoint } from "./rf.ts";
 
+/** Serialize S11 sweep points to Touchstone text (`# Hz S RI R 50`, one-port) — the inverse of
+ *  parseTouchstone, for exporting the live sweep as a `.s1p` file. */
+export function formatTouchstone(points: SweepPoint[]): string {
+  const lines = ["! TC-POWER VNA auto-tune export", "# Hz S RI R 50"];
+  for (const p of points) lines.push(`${p.frequency} ${p.s11.re} ${p.s11.im}`);
+  return lines.join("\n") + "\n";
+}
+
 /** Parse Touchstone text (`# Hz S RI R 50`, one-port) into S11 sweep points. Comment (`!`) and
  *  option (`#`) lines are skipped; malformed/non-finite rows are dropped. */
 export function parseTouchstone(text: string): SweepPoint[] {

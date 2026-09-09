@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseTouchstone } from "./touchstone.ts";
+import { parseTouchstone, formatTouchstone } from "./touchstone.ts";
 import { magnitude, nearestPointByFrequency } from "./rf.ts";
 
 const load = (f: string): ReturnType<typeof parseTouchstone> =>
@@ -26,4 +26,18 @@ test("skips comment/header lines and leaves s21 zero", () => {
   const pts = load("matched.s1p");
   assert.equal(pts[0].s21.re, 0);
   assert.equal(pts[0].s21.im, 0);
+});
+
+test("formatTouchstone round-trips S11 through parseTouchstone", () => {
+  const pts = [
+    { frequency: 13.5e6, s11: { re: 0.1, im: -0.2 }, s21: { re: 0, im: 0 } },
+    { frequency: 13.56e6, s11: { re: -0.03, im: 0.04 }, s21: { re: 0, im: 0 } },
+  ];
+  const text = formatTouchstone(pts);
+  assert.ok(text.includes("# Hz S RI R 50"), "has the Touchstone option line");
+  const back = parseTouchstone(text);
+  assert.equal(back.length, 2);
+  assert.equal(back[0].frequency, 13.5e6);
+  assert.equal(back[1].s11.re, -0.03);
+  assert.equal(back[1].s11.im, 0.04);
 });

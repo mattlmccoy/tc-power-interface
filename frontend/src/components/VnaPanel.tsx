@@ -12,6 +12,8 @@ import { approachFromBelow, clampCap, capSettled } from "../lib/instrument.ts";
 import { NanoVNAConnection } from "../lib/vna/nanovna.ts";
 import { magnitude, vswr, impedance, db, type SweepPoint } from "../lib/vna/rf.ts";
 import { planVnaStep, gammaAt, F0, DEFAULT_MODEL, type TuneModel } from "../lib/vna/autotune.ts";
+import { formatTouchstone } from "../lib/vna/touchstone.ts";
+import { gammaToXY, constResistanceCircle, constReactanceCircle, RESISTANCE_GRID, REACTANCE_GRID } from "../lib/vna/smith.ts";
 
 const SPAN = 1e6; // narrow sweep: 13.56 MHz ± 1 MHz
 const POINTS = 101;
@@ -174,6 +176,20 @@ export default function VnaPanel({ status, controllable, sendTune, sendLoad }: P
 
   function stop() { runningRef.current = false; setRunning(false); }
 
+  // Export the current sweep as a Touchstone .s1p file (same format the NanoVNA tool reads/writes).
+  function saveTouchstone() {
+    if (!sweep.length) return;
+    const blob = new Blob([formatTouchstone(sweep)], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vna-sweep-${Date.now()}.s1p`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // --- readout at 13.56 MHz ---
   const p = sweep.length ? gammaAt(sweep) : null;
   const gm = p ? magnitude(p.s11) : null;
@@ -182,10 +198,13 @@ export default function VnaPanel({ status, controllable, sendTune, sendLoad }: P
   const rl = p ? db(p.s11) : null;
   const fmt = (v: number | null, d = 2) => (v == null || !Number.isFinite(v) ? "—" : v.toFixed(d));
 
-  // Smith dot: Γ plane, unit circle radius R about centre.
-  const R = 64, CX = 76, CY = 76;
-  const gx = p ? CX + Math.max(-1, Math.min(1, p.s11.re)) * R : CX;
-  const gy = p ? CY - Math.max(-1, Math.min(1, p.s11.im)) * R : CY;
+  // Full Smith chart: R/X grid + swept trace + 13.56 marker (pure geometry in lib/vna/smith.ts).
+  const FR = { cx: 100, cy: 100, r: 90 };
+  const tracePts = sweep
+    .map((pt) => gammaToXY(pt.s11, FR))
+    .map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`)
+    .join(" ");
+  const mk = p ? gammaToXY(p.s11, FR) : null;
 
   return (
     <section className="panel vna-panel">
@@ -207,12 +226,25 @@ export default function VnaPanel({ status, controllable, sendTune, sendLoad }: P
       )}
 
       <div className="row" style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <svg width={2 * CX} height={2 * CY} viewBox={`0 0 ${2 * CX} ${2 * CY}`} role="img" aria-label="Smith position">
-          <circle cx={CX} cy={CY} r={R} fill="none" stroke="var(--border-strong, #999)" strokeWidth="1" />
-          <line x1={CX - R} y1={CY} x2={CX + R} y2={CY} stroke="var(--border, #ccc)" strokeWidth="0.5" />
-          <line x1={CX} y1={CY - R} x2={CX} y2={CY + R} stroke="var(--border, #ccc)" strokeWidth="0.5" />
-          <circle cx={CX} cy={CY} r="3" fill="var(--live, #2b8a3e)" />
-          {p && <circle cx={gx} cy={gy} r="5" fill="var(--err-btn, #c92a2a)" />}
+        <svg width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="S11 Smith chart">
+          <defs><clipPath id="vna-smith"><circle cx={FR.cx} cy={FR.cy} r={FR.r} /></clipPath></defs>
+          <g clipPath="url(#vna-smith)" fill="none" stroke="var(--border, #888)" strokeWidth="0.6" opacity="0.6">
+            {RESISTANCE_GRID.map((rn) => {
+              const c = constResistanceCircle(rn, FR);
+              return <circle key={`r${rn}`} cx={c.cx} cy={c.cy} r={c.r} />;
+            })}
+            {REACTANCE_GRID.flatMap((xn) => [xn, -xn]).map((xn) => {
+              const c = constReactanceCircle(xn, FR);
+              return <circle key={`x${xn}`} cx={c.cx} cy={c.cy} r={c.r} />;
+            })}
+          </g>
+          <circle cx={FR.cx} cy={FR.cy} r={FR.r} fill="none" stroke="var(--border-strong, #aaa)" strokeWidth="1" />
+          <line x1={FR.cx - FR.r} y1={FR.cy} x2={FR.cx + FR.r} y2={FR.cy} stroke="var(--border-strong, #aaa)" strokeWidth="0.6" />
+          {sweep.length > 1 && (
+            <polyline points={tracePts} fill="none" stroke="#1D9E75" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" clipPath="url(#vna-smith)" />
+          )}
+          <circle cx={FR.cx} cy={FR.cy} r="2.5" fill="var(--live, #2b8a3e)" />
+          {mk && <circle cx={mk.x} cy={mk.y} r="5" fill="var(--err-btn, #c92a2a)" stroke="var(--surface-1, #fff)" strokeWidth="0.8" />}
         </svg>
 
         <div className="readout" style={{ minWidth: 180 }}>
@@ -229,6 +261,7 @@ export default function VnaPanel({ status, controllable, sendTune, sendLoad }: P
         ) : (
           <>
             <button className="btn" onClick={() => void doSweep()} disabled={running}>Sweep</button>
+            <button className="btn" onClick={saveTouchstone} disabled={!sweep.length}>Save .s1p</button>
             {!running ? (
               <button className="btn accent" onClick={() => void runAutoTune()} disabled={!controllable || rfOn}
                 title={!controllable ? "arm the generator (RF off) first" : rfOn ? "RF must be off" : ""}>
