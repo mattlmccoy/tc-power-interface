@@ -14,7 +14,7 @@ const fmt = (v: number | null, d = 2) => (v == null || !Number.isFinite(v) ? "�
 
 export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
   const {
-    controllable, tune, load, bumpTune, bumpLoad, capBusy,
+    controllable, tune, load, bumpTune, bumpLoad, capBusy, connected, armed, armDevice, disarmDevice,
     tuneVIn, setTuneVIn, applyTuneVolts, loadVIn, setLoadVIn, applyLoadVolts, textInputStyle,
   } = op;
   const rfOn = op.status?.controller?.telemetry?.rf_on ?? false;
@@ -59,6 +59,22 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
         <span className={`badge ${stale ? "warn" : "fault"}`} style={{ fontWeight: 500 }}>
           RF disabled — VNA mode{stale ? " · liveness lost" : ""}
         </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginTop: 8, fontSize: 13 }}>
+        {!connected ? (
+          <span style={{ color: "var(--warn)" }}>⚠ Generator not connected — add it from the connect pill (top-right) to drive the AIT.</span>
+        ) : armed ? (
+          <>
+            <span style={{ color: "var(--live)" }}>● ARMED for caps · RF interlocked</span>
+            <button className="btn" onClick={() => void disarmDevice()}>Disarm</button>
+          </>
+        ) : (
+          <>
+            <span style={{ color: "var(--warn)" }}>Generator connected — not armed</span>
+            <button className="btn accent" onClick={() => void armDevice()}>Arm (drive AIT)</button>
+          </>
+        )}
       </div>
 
       <div style={{ marginTop: 12 }}>

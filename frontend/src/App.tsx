@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Banners } from "./components/Banners.tsx";
 import { ConnectBar } from "./components/ConnectBar.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
@@ -21,6 +22,16 @@ export function App() {
   } = op;
   const vna = useVna(op);
   const inVna = !!op.status?.vna_session?.active;
+  // VNA mode: auto-arm the generator once so the AIT caps are drivable (RF stays interlocked off — the
+  // arm gate never enables RF and the VNA session refuses enable_rf). A manual disarm afterwards sticks.
+  const autoArmedRef = useRef(false);
+  useEffect(() => {
+    if (!inVna) { autoArmedRef.current = false; return; }
+    if (connected && !armed && !autoArmedRef.current) {
+      autoArmedRef.current = true;
+      void op.armDevice();
+    }
+  }, [inVna, connected, armed]);
   return (
     <div className={`app ${showHelp ? "" : "help-off"}`}>
       <header className="topbar">
@@ -75,6 +86,8 @@ export function App() {
           setPorts={setPorts}
           setConnectErr={setConnectErr}
           vnaConnect={() => void vna.connect()}
+          vnaConnected={vna.connected}
+          vnaEnd={() => void vna.endSession()}
         />
       </header>
 

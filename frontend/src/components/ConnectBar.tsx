@@ -23,13 +23,15 @@ interface ConnectBarProps {
   setPorts: (p: null) => void;
   setConnectErr: (e: null) => void;
   vnaConnect: () => void;
+  vnaConnected: boolean;
+  vnaEnd: () => void;
 }
 
 export function ConnectBar(props: ConnectBarProps) {
   const {
     pillState, showConnect, setShowConnect, ports, connectBusy, connectErr, connected, device,
     reachable, health, baseInput, setBaseInput, applyBase, scanPorts, connectPort, disconnectDevice,
-    setPorts, setConnectErr, vnaConnect,
+    setPorts, setConnectErr, vnaConnect, vnaConnected, vnaEnd,
   } = props;
   const isVna = (p: SerialPort) => /nanovna/i.test(p.description) || /0483:5740/i.test(p.hwid);
   return (
@@ -85,7 +87,7 @@ export function ConnectBar(props: ConnectBarProps) {
 
               <div className="connect-sec">
                 <div className="connect-row connect-row-head">
-                  <label className="field-label">Device</label>
+                  <label className="field-label">Generator</label>
                   <button className="btn" onClick={scanPorts} disabled={connectBusy === "scanning"}>
                     {connectBusy === "scanning" ? "Scanning…" : "Scan"}
                   </button>
@@ -93,57 +95,55 @@ export function ConnectBar(props: ConnectBarProps) {
 
                 {connected ? (
                   <div className="connect-current">
-                    <span>
-                      Connected{device?.id ? ` — ${device.id}` : ""}
-                    </span>
-                    <button
-                      className="btn danger"
-                      onClick={disconnectDevice}
-                      disabled={connectBusy === "disconnect"}
-                    >
+                    <span>Connected{device?.id ? ` — ${device.id}` : ""}</span>
+                    <button className="btn danger" onClick={disconnectDevice} disabled={connectBusy === "disconnect"}>
                       {connectBusy === "disconnect" ? "…" : "Disconnect"}
                     </button>
                   </div>
                 ) : ports === null ? (
                   <div className="hint">Scan to find the generator's serial port.</div>
-                ) : ports.length === 0 ? (
+                ) : ports.filter((p) => !isVna(p)).length === 0 ? (
                   <div className="errbox">
-                    No serial ports found. Plug in the generator's USB-serial cable and Scan again.
+                    No generator serial port found. Plug in the generator's USB-serial cable and Scan again.
                   </div>
                 ) : (
                   <ul className="port-list">
-                    {ports.map((p) => (
+                    {ports.filter((p) => !isVna(p)).map((p) => (
                       <li key={p.device}>
                         <div className="port-info">
-                          <div className="port-name">{p.description || p.device}{isVna(p) ? " · VNA" : ""}</div>
+                          <div className="port-name">{p.description || p.device}</div>
                           <code>{p.device}</code>
                         </div>
-                        {isVna(p) ? (
-                          <button
-                            className="btn accent"
-                            onClick={() => { setShowConnect(false); vnaConnect(); }}
-                            title="Enter VNA tune mode over Web Serial. Locks RF while connected."
-                          >
-                            Connect (VNA)
-                          </button>
-                        ) : (
-                          <button
-                            className="btn accent"
-                            onClick={() => connectPort(p.device)}
-                            disabled={connectBusy !== null}
-                          >
-                            {connectBusy === p.device ? "Connecting…" : "Connect"}
-                          </button>
-                        )}
+                        <button
+                          className="btn accent"
+                          onClick={() => connectPort(p.device)}
+                          disabled={connectBusy !== null}
+                        >
+                          {connectBusy === p.device ? "Connecting…" : "Connect"}
+                        </button>
                       </li>
                     ))}
                   </ul>
                 )}
-
                 {connectErr ? <div className="errbox">{connectErr}</div> : null}
+                <div className="hint help-text">Drives the AIT caps. Connecting is read-only — RF stays off.</div>
+              </div>
+
+              <div className="connect-sec">
+                <label className="field-label">NanoVNA (VNA tune)</label>
+                {vnaConnected ? (
+                  <div className="connect-current">
+                    <span>Connected — VNA mode</span>
+                    <button className="btn danger" onClick={() => { setShowConnect(false); vnaEnd(); }}>End</button>
+                  </div>
+                ) : (
+                  <button className="btn accent" style={{ marginTop: 6 }} onClick={() => { setShowConnect(false); vnaConnect(); }}>
+                    Connect NanoVNA
+                  </button>
+                )}
                 <div className="hint help-text">
-                  Connecting is read-only — RF stays off. Verify readings against the front panel
-                  before enabling RF (this unit's protocol is unconfirmed).
+                  Web Serial (Chrome/Edge). Enters VNA tune mode and locks RF; connect the generator too
+                  and it auto-arms so you can drive the AIT with the VNA. N-type must be on the VNA.
                 </div>
               </div>
 
