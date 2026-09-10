@@ -8,7 +8,7 @@ import type { VnaController } from "../hooks/useVna.ts";
 import { VnaSmith } from "../components/VnaSmith.tsx";
 import { VnaS11Plot } from "../components/VnaS11Plot.tsx";
 import { magnitude, vswr, impedance, db } from "../lib/vna/rf.ts";
-import { gammaAt } from "../lib/vna/autotune.ts";
+import { interpS11At, F0 } from "../lib/vna/autotune_shape.ts";
 
 const fmt = (v: number | null, d = 2) => (v == null || !Number.isFinite(v) ? "—" : v.toFixed(d));
 
@@ -20,11 +20,13 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
   const rfOn = op.status?.controller?.telemetry?.rf_on ?? false;
   const stale = op.status?.vna_session?.stale ?? false;
 
-  const p = vna.sweep.length ? gammaAt(vna.sweep) : null;
-  const gm = p ? magnitude(p.s11) : null;
-  const z = p ? impedance(p.s11, 50) : null;
-  const sw = p ? vswr(p.s11) : null;
-  const rl = p ? db(p.s11) : null;
+  // Read the match at EXACTLY 13.56 MHz by interpolating between sweep bins (like the device's marker),
+  // not the nearest bin — on this sharp resonance the nearest bin can be 10+ kHz off and read very wrong.
+  const s = vna.sweep.length ? interpS11At(vna.sweep, F0) : null;
+  const gm = s ? magnitude(s) : null;
+  const z = s ? impedance(s, 50) : null;
+  const sw = s ? vswr(s) : null;
+  const rl = s ? db(s) : null;
 
   const capDisabled = !controllable || vna.running || capBusy != null;
 

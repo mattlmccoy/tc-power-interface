@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dipOf, shapeTune, costAt, F0 } from "./autotune_shape.ts";
+import { dipOf, shapeTune, costAt, interpS11At, F0 } from "./autotune_shape.ts";
 import { modelSweep, DEFAULT_NETWORK } from "./network_model.ts";
+import { impedance, magnitude, nearestPointByFrequency } from "./rf.ts";
 
 // The control law is validated end-to-end OFFLINE against the 496 real bench sweeps (2026-09-09 logs):
 // 9/9 detunes recover to RL < −24 dB. These unit tests exercise the same law on the frequency-resolved
@@ -37,6 +38,18 @@ test("dip frequency moves monotonically with tune (the PHASE-A control signal)",
   const dLow = dipOf(modelSweep(tStar - 2, lStar))!.freqHz;
   const dHigh = dipOf(modelSweep(tStar + 2, lStar))!.freqHz;
   assert.ok(dHigh < dLow, "more tune -> lower dip frequency");
+});
+
+test("interpS11At reads Z at EXACTLY 13.56 (not the nearest bin) — the native-tool marker behaviour", () => {
+  // Matched network: Z(13.56) = 50 + j0. On a coarse 25 kHz grid no bin lands on 13.56, so the nearest
+  // bin reads the resonance skirt (wrong Z, shallower match). Interpolation must read closer to 50+j0.
+  const sweep = modelSweep(tStar, lStar, { start: 11e6, stop: 16e6, points: 201 });
+  const near = impedance(nearestPointByFrequency(sweep, F0)!.s11, 50);
+  const interp = impedance(interpS11At(sweep, F0)!, 50);
+  const errNear = Math.hypot(near.re - 50, near.im);
+  const errInterp = Math.hypot(interp.re - 50, interp.im);
+  assert.ok(errInterp < errNear, `interp err ${errInterp.toFixed(2)} should beat nearest-bin err ${errNear.toFixed(2)}`);
+  assert.ok(magnitude(interpS11At(sweep, F0)!) < magnitude(nearestPointByFrequency(sweep, F0)!.s11), "interp |Γ| lower");
 });
 
 test("does NOT wander off a converged match (leaves a good match alone)", async () => {

@@ -10,9 +10,9 @@ import { api } from "../lib/api.ts";
 import { clampCap, capSettled } from "../lib/instrument.ts";
 import { NanoVNAConnection } from "../lib/vna/nanovna.ts";
 import { VERSION_FULL } from "../version.ts";
-import { impedance, magnitude, nearestPointByFrequency, type SweepPoint } from "../lib/vna/rf.ts";
+import { impedance, magnitude, type SweepPoint } from "../lib/vna/rf.ts";
 import { F0 } from "../lib/vna/autotune.ts";
-import { shapeTune, dipOf } from "../lib/vna/autotune_shape.ts";
+import { shapeTune, dipOf, interpS11At } from "../lib/vna/autotune_shape.ts";
 import { formatTouchstone } from "../lib/vna/touchstone.ts";
 
 // Wide window (covers differently-tuned setups) with enough points to resolve the ~140 kHz match loop.
@@ -116,13 +116,13 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   function logSweep(phase: "live" | "auto", points: SweepPoint[], full = false) {
     const tel = statusRef.current?.controller?.telemetry;
     const dip = dipOf(points);
-    const p = nearestPointByFrequency(points, F0);
-    const z = p ? impedance(p.s11, 50) : null;
+    const s11 = interpS11At(points, F0); // value at EXACTLY 13.56 (interpolated), matching the readout/tuner
+    const z = s11 ? impedance(s11, 50) : null;
     const e: LogEntry = {
       t: Date.now(), phase,
       tune: tel?.tune_cap_percent ?? null, load: tel?.load_cap_percent ?? null,
       dipHz: dip?.freqHz ?? null, gammaMin: dip?.gammaMin ?? null,
-      g1356: p ? magnitude(p.s11) : null, R: z ? z.re : null, X: z ? z.im : null,
+      g1356: s11 ? magnitude(s11) : null, R: z ? z.re : null, X: z ? z.im : null,
       readMs: lastReadMsRef.current,
     };
     if (full) e.sweep = points.map((s) => ({ f: s.frequency, re: s.s11.re, im: s.s11.im }));

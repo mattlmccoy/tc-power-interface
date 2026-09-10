@@ -13,7 +13,7 @@
 // FINISH worse than it started. Validated offline against the real logged surface: 9/9 detunes recover
 // to RL < −24 dB. Pure + device-agnostic: `probe(tune, load)` drives the caps and returns the sweep.
 
-import { magnitude, vswr, db, impedance, nearestPointByFrequency, type SweepPoint } from "./rf.ts";
+import { magnitude, vswr, db, impedance, type Complex, type SweepPoint } from "./rf.ts";
 import { clampCap } from "../instrument.ts";
 
 export const F0 = 13.56e6;
@@ -46,7 +46,27 @@ export function dipOf(sweep: SweepPoint[]): Dip | null {
   return { freqHz, gammaMin: bg, index: bi };
 }
 
-function pAt(sweep: SweepPoint[]) { return nearestPointByFrequency(sweep, F0); }
+/** S11 linearly interpolated at EXACTLY `freq` between the two bracketing sweep bins — the native VNA
+ *  marker behaviour. On a sharp resonance the nearest bin can sit 10+ kHz off 13.56 and read a very
+ *  different impedance (our −15 dB vs the device's −31 dB at the same match); interpolating at 13.56
+ *  makes the readout and the tuner agree with the instrument. */
+export function interpS11At(sweep: SweepPoint[], freq: number): Complex | null {
+  if (!sweep.length) return null;
+  if (sweep.length === 1 || freq <= sweep[0].frequency) return sweep[0].s11;
+  const last = sweep[sweep.length - 1];
+  if (freq >= last.frequency) return last.s11;
+  let lo = 0, hi = sweep.length - 1; // grid is strictly increasing → binary search the bracket
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (sweep[mid].frequency <= freq) lo = mid; else hi = mid; }
+  const a = sweep[lo], b = sweep[hi];
+  const span = b.frequency - a.frequency;
+  const t = span > 0 ? (freq - a.frequency) / span : 0;
+  return { re: a.s11.re + t * (b.s11.re - a.s11.re), im: a.s11.im + t * (b.s11.im - a.s11.im) };
+}
+
+function pAt(sweep: SweepPoint[]): { s11: Complex } | null {
+  const s11 = interpS11At(sweep, F0);
+  return s11 ? { s11 } : null;
+}
 /** Z (Ω) at 13.56 MHz. */
 export function zAt(sweep: SweepPoint[]): { re: number; im: number } | null {
   const p = pAt(sweep); return p ? impedance(p.s11, 50) : null;

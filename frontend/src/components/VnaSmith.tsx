@@ -4,19 +4,19 @@
 
 import { useId } from "react";
 import type { SweepPoint } from "../lib/vna/rf.ts";
-import { gammaAt } from "../lib/vna/autotune.ts";
+import { interpS11At, F0 } from "../lib/vna/autotune_shape.ts";
 import { gammaToXY, constResistanceCircle, constReactanceCircle, RESISTANCE_GRID, REACTANCE_GRID } from "../lib/vna/smith.ts";
 
 const FR = { cx: 100, cy: 100, r: 90 };
 
 export function VnaSmith({ sweep, size = 200 }: { sweep: SweepPoint[]; size?: number }) {
   const clipId = `smith-${useId()}`;
-  const p = sweep.length ? gammaAt(sweep) : null;
+  const s11 = sweep.length ? interpS11At(sweep, F0) : null; // marker at exactly 13.56 (interpolated)
   const tracePts = sweep
     .map((pt) => gammaToXY(pt.s11, FR))
     .map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`)
     .join(" ");
-  const mk = p ? gammaToXY(p.s11, FR) : null;
+  const mk = s11 ? gammaToXY(s11, FR) : null;
 
   return (
     <svg width={size} height={size} viewBox="0 0 200 200" role="img" aria-label="S11 Smith chart">
