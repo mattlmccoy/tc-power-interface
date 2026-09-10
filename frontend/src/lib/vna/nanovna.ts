@@ -150,6 +150,7 @@ export class NanoVNAConnection {
   private operationQueue: Promise<void> = Promise.resolve();
   private closing = false;
   private bandwidthMethod: 'direct' | 'dislord' | null = null;
+  private lastBandwidth: number | null = null; // last IF bandwidth applied; restored on reconnect
   version = 'Unknown firmware';
   calibration = 'Unknown';
   supportsScan = false;
@@ -230,6 +231,14 @@ export class NanoVNAConnection {
     this.writer = port.writable.getWriter();
     await this.write('\r');
     await this.readUntilPrompt(3000);
+    // A port reopen resets the device IF bandwidth to its slow default — restore the fast one we set,
+    // so sweeps don't silently drop from ~180 ms back to ~850 ms after a self-heal.
+    if (this.lastBandwidth != null) {
+      try {
+        const code = this.bandwidthMethod === 'dislord' ? DISLORD_BANDWIDTH_CODES[this.lastBandwidth] : this.lastBandwidth;
+        if (code !== undefined) await this.command(`bandwidth ${code}`);
+      } catch { /* keep default if it refuses right after reopen */ }
+    }
   }
 
   async sweep(start: number, stop: number, points: number, segments = 1, averages = 1, truncateCount = 0, logarithmic = false, onSegment?: (update: SweepUpdate) => void, isCancelled?: () => boolean): Promise<SweepResult> {
@@ -343,6 +352,7 @@ export class NanoVNAConnection {
       const commandValue = this.bandwidthMethod === 'dislord' ? DISLORD_BANDWIDTH_CODES[bandwidth] : bandwidth;
       if (commandValue === undefined) throw new Error(`Bandwidth ${bandwidth} Hz is not supported by this firmware family.`);
       this.assertAccepted(`bandwidth ${commandValue}`, await this.command(`bandwidth ${commandValue}`));
+      this.lastBandwidth = bandwidth; // remembered so reconnect() can restore it (a port reopen resets it)
     });
   }
 
