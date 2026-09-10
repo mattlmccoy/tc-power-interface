@@ -90,6 +90,10 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
             <div>VSWR: <strong>{sw != null && Number.isFinite(sw) ? fmt(sw, 2) : "∞"}</strong></div>
             <div>Z: <strong>{fmt(z?.re ?? null, 1)}</strong> {z && z.im >= 0 ? "+" : "−"} j<strong>{fmt(z ? Math.abs(z.im) : null, 1)}</strong> Ω</div>
             <div>RL: <strong>{fmt(rl, 1)}</strong> dB</div>
+            <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "var(--muted)" }}>
+              sweep read: <strong>{vna.readMs ? `${vna.readMs} ms` : "—"}</strong>
+              {vna.readMs ? ` · ${(1000 / vna.readMs).toFixed(1)} /s` : ""} — if this jumps when other USB devices are busy, it's hub contention
+            </div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

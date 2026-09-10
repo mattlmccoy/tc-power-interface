@@ -22,8 +22,8 @@ import { formatTouchstone } from "../lib/vna/touchstone.ts";
 // this is safe. A saved log shows the actual returned count → we tune the window/resolution from data.
 const SWEEP_START = 11e6;
 const SWEEP_STOP = 16e6;
-const POINTS = 401; // 12.5 kHz/pt over the wide span. Affordable again now that a read is ONE hardware
-                    // sweep (nanovna readSegment mask 0b111), not two; dip is parabola-refined below the bin.
+const POINTS = 201; // fewer points = faster device read (the native NanoVNA app sweeps ~this many). The
+                    // dip frequency is parabola-refined below the bin (dipOf) so the tuner stays precise.
 const HEARTBEAT_MS = 2000;
 const LIVE_GAP_MS = 30;
 const LOG_CAP = 6000;
@@ -40,6 +40,7 @@ interface LogEntry {
   g1356: number | null;
   R: number | null;
   X: number | null;
+  readMs?: number; // device read latency for this sweep (isolates USB/device time from render/loop time)
   sweep?: Array<{ f: number; re: number; im: number }>;
 }
 
@@ -58,6 +59,7 @@ export interface VnaController {
   msg: string;
   iter: number;
   logCount: number;
+  readMs: number;
   connect: () => Promise<void>;
   endSession: () => Promise<void>;
   doSweep: () => Promise<SweepPoint[] | null>;
@@ -75,6 +77,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const liveRef = useRef(false);
   const inLiveRef = useRef(false); // true while a liveLoop body is actually executing (one instance only)
   const sweepingRef = useRef(false); // true while a sweep is in flight on the NanoVNA link
+  const lastReadMsRef = useRef(0); // last device sweep-read latency (ms), for perf diagnosis in the log
   const statusRef = useRef(status);
   const controllableRef = useRef(controllable);
   const logRef = useRef<LogEntry[]>([]);
@@ -85,6 +88,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const [msg, setMsg] = useState("");
   const [iter, setIter] = useState(0);
   const [logCount, setLogCount] = useState(0);
+  const [readMs, setReadMs] = useState(0);
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { controllableRef.current = controllable; }, [controllable]);
@@ -113,6 +117,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
       tune: tel?.tune_cap_percent ?? null, load: tel?.load_cap_percent ?? null,
       dipHz: dip?.freqHz ?? null, gammaMin: dip?.gammaMin ?? null,
       g1356: p ? magnitude(p.s11) : null, R: z ? z.re : null, X: z ? z.im : null,
+      readMs: lastReadMsRef.current,
     };
     if (full) e.sweep = points.map((s) => ({ f: s.frequency, re: s.s11.re, im: s.s11.im }));
     logRef.current.push(e);
@@ -124,8 +129,11 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     const conn = connRef.current;
     if (!conn) return null;
     sweepingRef.current = true;
+    const t0 = performance.now();
     try {
       const res = await conn.sweep(SWEEP_START, SWEEP_STOP, POINTS);
+      lastReadMsRef.current = Math.round(performance.now() - t0);
+      setReadMs(lastReadMsRef.current);
       if (res.points.length) setSweep(res.points); // keep the last good trace if a read comes back empty
       return res.points;
     } finally {
@@ -298,7 +306,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   function clearLog() { logRef.current = []; setLogCount(0); }
 
   return {
-    supported, connected, sweep, running, msg, iter, logCount,
+    supported, connected, sweep, running, msg, iter, logCount, readMs,
     connect, endSession, doSweep, runAutoTune, stop, saveTouchstone, saveLog, clearLog,
   };
 }
