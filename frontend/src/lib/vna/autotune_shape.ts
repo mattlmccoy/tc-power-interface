@@ -107,7 +107,7 @@ export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: 
 
     // ── PHASE B: at the locked tune, FULL LOAD scan for the deepest |Γ| (coarse → fine) — no ridge trap ──
     let bestLoad = load, bestLoadCost = costAt(sweep);
-    for (let l = clampCap(load - LOAD_WINDOW); l <= clampCap(load + LOAD_WINDOW) && !stop(); l += 2) {
+    for (let l = clampCap(load - LOAD_WINDOW); l <= clampCap(load + LOAD_WINDOW) && !stop(); l += 3) {
       if (l === load) continue;
       const s = await probe(tune, l);
       const c = visit(tune, l, s);

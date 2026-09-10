@@ -348,24 +348,11 @@ export class NanoVNAConnection {
   }
 
   private async readSegment(start: number, stop: number, points: number): Promise<SweepPoint[]> {
-    if (this.supportsScanMask) {
-      // ONE sweep returning freq + S11 + S21 together (mask 0b111). The previous code issued two scans
-      // (0b001 then 0b110), each of which re-swept the hardware — doubling every read's latency (the
-      // dominant live-view lag). Columns per row: freq, S11 re, S11 im, S21 re, S21 im. On any shape
-      // mismatch we fall through to the compatibility path below rather than break the sweep.
-      // [local perf fix — upstream to nanovna-web]
-      const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 15000);
-      const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 5 && row.every(Number.isFinite));
-      if (values.length) {
-        return values.map((row) => ({
-          frequency: row[0],
-          s11: { re: row[1], im: row[2] },
-          s21: { re: row[3], im: row[4] },
-        }));
-      }
-      // else: combined mask returned nothing usable → fall through to the two-step path.
-    }
-
+    // ONE hardware sweep, then read the stored grid + traces (fast, cached). Do NOT use the scan-mask
+    // forms: `scan …0b001` then `scan …0b110` re-swept the hardware TWICE per read (the live-view lag),
+    // and the combined `scan …0b111` was unreliable on the NanoVNA-H4 — parse failures fell back after a
+    // full command timeout, causing multi-second stalls. This single-sweep path is the reliable one.
+    // [local change — upstream to nanovna-web]
     await this.command(`${this.supportsScan ? 'scan' : 'sweep'} ${start} ${stop} ${points}`, 15000);
     const frequencies = (await this.command('frequencies', 15000)).map(Number).filter(Number.isFinite);
     const s11 = (await this.command('data 0', 15000)).map(parseComplex).filter((value): value is Complex => value !== null);
