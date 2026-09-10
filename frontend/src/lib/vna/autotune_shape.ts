@@ -148,7 +148,22 @@ export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: 
     if (convergedAt(sweep)) break;
   }
 
-  // Command the caps to the best point found and report against it.
-  const restore = await probe(best.tune, best.load);
-  return { tune: best.tune, load: best.load, converged: convergedAt(restore), iters: iter };
+  // Land on the best point and LOCK it. Backlash means re-commanding the best caps can MISS (land a
+  // different physical spot than when best was measured — the 2026-09-10 log ended at 0.93 after a best
+  // of 0.48). So re-measure where we actually land, then take a few ±1 clicks that improve |Γ(13.56)|,
+  // ending on a real local minimum at the ACTUAL caps — never on a worse frame than we can reach.
+  let cur = await probe(best.tune, best.load);
+  best = { tune: best.tune, load: best.load, cost: costAt(cur) };
+  for (let k = 0; k < 12 && !convergedAt(cur) && !stop(); k++) {
+    let moved = false;
+    for (const [dt, dl] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as Array<[number, number]>) {
+      const nt = clampCap(best.tune + dt), nl = clampCap(best.load + dl);
+      if (nt === best.tune && nl === best.load) continue;
+      const s = await probe(nt, nl);
+      if (visit(nt, nl, s) < best.cost - EPS) { best = { tune: nt, load: nl, cost: costAt(s) }; cur = s; moved = true; break; }
+    }
+    if (!moved) break;
+  }
+  const settled = await probe(best.tune, best.load);
+  return { tune: best.tune, load: best.load, converged: convergedAt(settled), iters: iter };
 }
