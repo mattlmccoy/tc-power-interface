@@ -8,7 +8,8 @@ import { execSync } from "node:child_process";
 function buildId(): string {
   try {
     const sha = execSync("git rev-parse --short HEAD").toString().trim();
-    const dirty = execSync("git status --porcelain").toString().trim() ? "*" : "";
+    // Only flag uncommitted *tracked* edits (-uno) — the untracked build output (dist/) is not "dirty".
+    const dirty = execSync("git status --porcelain -uno").toString().trim() ? "*" : "";
     const date = new Date().toISOString().slice(0, 16).replace("T", " ");
     return `${sha}${dirty} · ${date}`;
   } catch {
