@@ -237,7 +237,10 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
 
     try {
       const res = await shapeTune(probe, start, {
-        onStep: ({ iter: i, cost }) => { setIter(i); setMsg(`tuning · |Γ@13.56|=${cost.toFixed(3)}`); },
+        onStep: ({ iter: i, tune: t, load: l, dipHz, cost }) => {
+          setIter(i);
+          setMsg(`tuning · T${t}% L${l}% · dip ${(dipHz / 1e6).toFixed(3)}MHz → 13.560 · |Γ|${cost.toFixed(3)}`);
+        },
         shouldStop: () => !runningRef.current || halted() != null,
       });
       setMsg(

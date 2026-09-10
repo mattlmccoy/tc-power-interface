@@ -1,26 +1,30 @@
-// VNA auto-tuner that mimics the manual technique AND its global search. The operator reads the Smith
-// position at 13.56 MHz and moves LOAD (coupling → R) and TUNE (frequency → reactance) — but crucially
-// they will drive a cap THROUGH a worse region to reach a deeper match on the other side of a ridge.
-// The 2026-09-09 bench logs proved this: from the auto-tuner's stop point (tune 36 / load 59, |Γ|0.125,
-// RL −18) the DEEP match (load ~65, |Γ|0.021, RL −33) sits past a ridge at load ~62 (|Γ|0.24). A greedy
-// "never step worse" descent is trapped at 59; a human crosses the ridge every time.
-//
-// So the law is COORDINATE DESCENT WITH FULL LINE SEARCHES, not greedy ±1 steps: scan the whole LOAD
-// axis (coarse, to cross ridges → fine), jump to the global best on that line even if intermediate
-// points are worse; then scan the TUNE axis; repeat. The anti-wander safety is preserved not by
-// forbidding uphill steps but by BEST-SO-FAR + RESTORE: every point is compared to the best seen, and
-// the caps are commanded back to that best at the end — so the tuner can explore a hill yet can never
-// FINISH worse than it started (it cannot wreck a good match). Pure + device-agnostic: `probe(tune,
-// load)` drives the caps and returns the sweep (real hardware or the synthetic model).
+// VNA auto-tuner built on the PHYSICS, not blind |Γ| search — mirrors how the operator matches by eye.
+// The 2026-09-09 bench logs (496 sweeps) showed |Γ(13.56)| is a razor cliff (tune 35.8 → −36 dB,
+// 36.2 → −8 dB): searching it directly falls into whatever ledge is nearest. But two signals are smooth
+// and monotonic, with no cliffs:
+//   • DIP FREQUENCY vs TUNE  — the resonance dip slides ~65 kHz per 1% tune. Reading where the dip sits
+//     tells you the tune move directly (no local minima). This is the breakthrough the old search lacked.
+//   • R (and |Γ|) vs LOAD    — load sets the coupling; a full load scan at the locked tune finds the
+//     match's load with no ridge trap.
+// So: PHASE A drives TUNE to put the dip on 13.56 MHz (proportional on the measured dip, damped); PHASE B
+// scans LOAD at that tune for the deepest |Γ| (coarse → fine); iterate (load nudges the dip a little).
+// Cap drive is DIRECT (see useVna.driveCap), so a down-move lands the backlash-accessible sweet spot the
+// operator reaches by hand. BEST-SO-FAR + RESTORE keeps the anti-wander safety: it can explore yet never
+// FINISH worse than it started. Validated offline against the real logged surface: 9/9 detunes recover
+// to RL < −24 dB. Pure + device-agnostic: `probe(tune, load)` drives the caps and returns the sweep.
 
 import { magnitude, vswr, db, impedance, nearestPointByFrequency, type SweepPoint } from "./rf.ts";
 import { clampCap } from "../instrument.ts";
 
 export const F0 = 13.56e6;
+const DIP_SENS = 65e3;   // |Δdip| per 1% tune (Hz); sign handled in the loop (more tune → lower dip)
+const DIP_TOL = 8e3;     // put the dip within ~half a sweep bin of 13.56 MHz
+const LOAD_WINDOW = 16;  // ± whole-percent span of the load scan
+const EPS = 1e-3;        // minimum |Γ| improvement to adopt a fine move
 
 export interface Dip { freqHz: number; gammaMin: number; index: number; }
 
-/** Min-|Γ| point of the sweep (loop's closest approach to the Smith centre) — for display. */
+/** Min-|Γ| point of the sweep — the resonance dip. Its FREQUENCY is the tune control signal. */
 export function dipOf(sweep: SweepPoint[]): Dip | null {
   if (!sweep.length) return null;
   let bi = 0, bg = Infinity;
@@ -44,92 +48,76 @@ export function convergedAt(sweep: SweepPoint[]): boolean {
 }
 
 export interface ShapeOpts {
-  eps?: number;         // minimum |Γ| improvement to adopt a new best
-  maxRounds?: number;   // load+tune line-search rounds
-  loadWindow?: number;  // ± whole-percent span of the load line search
-  tuneWindow?: number;  // ± whole-percent span of the tune line search
+  maxRounds?: number;
   onStep?: (s: { iter: number; tune: number; load: number; dipHz: number; gammaMin: number; cost: number }) => void;
   shouldStop?: () => boolean;
 }
 export interface ShapeResult { tune: number; load: number; converged: boolean; iters: number; }
 export type ShapeProbe = (tune: number, load: number) => SweepPoint[] | Promise<SweepPoint[]>;
+const sign = (x: number) => (x >= 0 ? 1 : -1);
+const clip = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 
 export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: number }, opts: ShapeOpts): Promise<ShapeResult> {
-  const eps = opts.eps ?? 1e-3;
   const maxRounds = opts.maxRounds ?? 3;
-  const loadWin = opts.loadWindow ?? 9;
-  const tuneWin = opts.tuneWindow ?? 3;
+  const stop = () => opts.shouldStop?.() ?? false;
 
-  let bt = clampCap(Math.round(start.tune));   // best caps so far
-  let bl = clampCap(Math.round(start.load));
-  let bs = await probe(bt, bl);
-  let bc = costAt(bs);
+  let tune = clampCap(Math.round(start.tune));
+  let load = clampCap(Math.round(start.load));
+  let sweep = await probe(tune, load);
   let iter = 0;
-  const report = (t: number, l: number, s: SweepPoint[]) => {
+  let best = { tune, load, cost: costAt(sweep) };
+
+  const visit = (t: number, l: number, s: SweepPoint[]) => {
+    iter++;
+    const c = costAt(s);
     const d = dipOf(s);
-    opts.onStep?.({ iter, tune: t, load: l, dipHz: d?.freqHz ?? F0, gammaMin: d?.gammaMin ?? costAt(s), cost: costAt(s) });
+    opts.onStep?.({ iter, tune: t, load: l, dipHz: d?.freqHz ?? F0, gammaMin: d?.gammaMin ?? c, cost: c });
+    if (c < best.cost) best = { tune: t, load: l, cost: c };
+    return c;
   };
-  report(bt, bl, bs);
-  if (convergedAt(bs)) return { tune: bt, load: bl, converged: true, iters: 0 };
+  visit(tune, load, sweep);
+  if (convergedAt(sweep)) return { tune, load, converged: true, iters: 0 };
 
-  // A full line search along one axis: scan the whole ±half window (allowed to pass through worse
-  // points — that is how it crosses a ridge), keeping the single global best. Returns true if it
-  // improved on the incoming best. Centre is the current best on that axis.
-  async function line(axis: "tune" | "load", half: number, step: number): Promise<boolean> {
-    const centre = axis === "tune" ? bt : bl;
-    let improved = false;
-    for (let off = -half; off <= half; off += step) {
-      if (opts.shouldStop?.()) return improved;
-      const t = axis === "tune" ? clampCap(centre + off) : bt;
-      const l = axis === "load" ? clampCap(centre + off) : bl;
-      if (t === bt && l === bl) continue;
-      iter++;
-      const s = await probe(t, l);
-      const c = costAt(s);
-      report(t, l, s);
-      if (c < bc - eps) { bc = c; bt = t; bl = l; bs = s; improved = true; if (convergedAt(s)) return improved; }
+  for (let round = 0; round < maxRounds && !stop(); round++) {
+    // ── PHASE A: drive TUNE to put the resonance dip on 13.56 MHz (proportional, damped; no local minima) ──
+    for (let a = 0; a < 8 && !stop(); a++) {
+      const d = dipOf(sweep);
+      if (!d) break;
+      const err = d.freqHz - F0;               // dip too high (+) → need more tune (dip drops with tune)
+      if (Math.abs(err) < DIP_TOL) break;
+      let dt = Math.round(0.8 * err / DIP_SENS); // damped proportional step
+      dt = clip(dt, -3, 3) || sign(err);
+      const nt = clampCap(tune + dt);
+      if (nt === tune) break;
+      sweep = await probe(nt, load); tune = nt;
+      visit(tune, load, sweep);
     }
-    return improved;
-  }
+    if (convergedAt(sweep)) break;
 
-  for (let r = 0; r < maxRounds; r++) {
-    if (opts.shouldStop?.()) break;
-    // LOAD first (coupling / R sets the basin): coarse to cross any ridge, then fine.
-    let improved = await line("load", loadWin, 3);
-    if (convergedAt(bs) || opts.shouldStop?.()) break;
-    improved = (await line("load", 2, 1)) || improved;
-    if (convergedAt(bs) || opts.shouldStop?.()) break;
-    // TUNE (frequency / reactance).
-    const tunedUp = await line("tune", tuneWin, 1);
-    if (convergedAt(bs)) break;
-    if (!improved && !tunedUp) break; // neither axis moved → settled at the best point
-  }
-
-  // Fine endgame — the operator's one-click-at-a-time finish: with tune in the zone, walk LOAD (then
-  // tune) in single ±1 clicks stepped from the current best. Each click is issued relative to the best
-  // (the caps sit there), so with DIRECT cap drive a down-click is approached from above — landing the
-  // backlash-accessible sweet spot the coarse, from-below scan overshoots. LOAD clicks are tried first
-  // (Matt: "if T is near the right zone, L does the fine tuning"). First-improvement, best-so-far.
-  // Walk to the true local minimum (deepest match), NOT just the first RL<−20: the operator chases the
-  // deepest null they can, so the fine walk keeps going while single clicks still improve |Γ|.
-  const CLICKS: Array<[number, number]> = [[0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [-1, 1], [1, -1], [1, 1]];
-  for (let step = 0; step < 60; step++) {
-    if (opts.shouldStop?.()) break;
-    let moved = false;
-    for (const [dt, dl] of CLICKS) {
-      if (opts.shouldStop?.()) break;
-      const t = clampCap(bt + dt), l = clampCap(bl + dl);
-      if (t === bt && l === bl) continue;
-      iter++;
-      const s = await probe(t, l);
-      const c = costAt(s);
-      report(t, l, s);
-      if (c < bc - eps) { bc = c; bt = t; bl = l; bs = s; moved = true; break; }
+    // ── PHASE B: at the locked tune, FULL LOAD scan for the deepest |Γ| (coarse → fine) — no ridge trap ──
+    let bestLoad = load, bestLoadCost = costAt(sweep);
+    for (let l = clampCap(load - LOAD_WINDOW); l <= clampCap(load + LOAD_WINDOW) && !stop(); l += 2) {
+      if (l === load) continue;
+      const s = await probe(tune, l);
+      const c = visit(tune, l, s);
+      if (c < bestLoadCost) { bestLoadCost = c; bestLoad = l; }
     }
-    if (!moved) break;
+    if (bestLoad !== load) { load = bestLoad; sweep = await probe(tune, load); visit(tune, load, sweep); }
+    // fine ±1 load walk into the null
+    for (let f = 0; f < 6 && !stop(); f++) {
+      let moved = false;
+      for (const dl of [-1, 1]) {
+        const nl = clampCap(load + dl);
+        if (nl === load) continue;
+        const s = await probe(tune, nl);
+        if (visit(tune, nl, s) < costAt(sweep) - EPS) { load = nl; sweep = s; moved = true; break; }
+      }
+      if (!moved) break;
+    }
+    if (convergedAt(sweep)) break;
   }
 
-  // Command the caps back to the best point found (the last probe may have left them on a worse one).
-  const restore = await probe(bt, bl);
-  return { tune: bt, load: bl, converged: convergedAt(restore), iters: iter };
+  // Command the caps to the best point found and report against it.
+  const restore = await probe(best.tune, best.load);
+  return { tune: best.tune, load: best.load, converged: convergedAt(restore), iters: iter };
 }
