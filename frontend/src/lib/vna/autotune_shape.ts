@@ -19,7 +19,7 @@ import { clampCap } from "../instrument.ts";
 export const F0 = 13.56e6;
 const DIP_SENS = 65e3;   // |Δdip| per 1% tune (Hz); sign handled in the loop (more tune → lower dip)
 const DIP_TOL = 8e3;     // put the dip within ~half a sweep bin of 13.56 MHz
-const LOAD_WINDOW = 26;  // ± whole-percent span of the load scan (wide, for more reactive loads)
+const LOAD_WINDOW = 18;  // ± whole-percent span of the load scan (wide enough for reactive loads, not slow)
 const EPS = 1e-3;        // minimum |Γ| improvement to adopt a fine move
 
 export interface Dip { freqHz: number; gammaMin: number; index: number; }
@@ -173,34 +173,6 @@ export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: 
     }
     if (!moved) break;
   }
-  // ── BACKLASH FINE-TUNE: the sub-1% of tune the integer grid can't reach. Approaching the tune cap from
-  //    ABOVE vs BELOW lands it ~0.5% apart (mechanical backlash), shifting the dip the last few kHz onto
-  //    13.56 — the operator's manual trick. Try {best.tune-1,tune,+1} × {below,above}, keep the landing
-  //    with the lowest |Γ(13.56)|, then a short load walk that re-approaches that winning tune direction.
-  let bestFrom: Approach | undefined;
-  if (!convergedAt(await probe(best.tune, best.load)) && !stop()) {
-    for (const t of [best.tune, best.tune - 1, best.tune + 1]) {
-      const ct = clampCap(t);
-      for (const from of ["below", "above"] as Approach[]) {
-        if (stop()) break;
-        const s = await probe(ct, best.load, from);
-        const c = report(ct, best.load, s);
-        if (c < best.cost - EPS) { best = { tune: ct, load: best.load, cost: c }; bestFrom = from; }
-      }
-    }
-    for (let f = 0; f < 6 && !stop(); f++) { // load walk holding the winning tune approach
-      let moved = false;
-      for (const dl of [-1, 1]) {
-        const nl = clampCap(best.load + dl);
-        if (nl === best.load) continue;
-        const s = await probe(best.tune, nl, bestFrom);
-        const c = report(best.tune, nl, s);
-        if (c < best.cost - EPS) { best = { tune: best.tune, load: nl, cost: c }; moved = true; break; }
-      }
-      if (!moved) break;
-    }
-  }
-
-  const settled = await probe(best.tune, best.load, bestFrom); // land on best via its winning approach
+  const settled = await probe(best.tune, best.load);
   return { tune: best.tune, load: best.load, converged: convergedAt(settled), iters: iter };
 }

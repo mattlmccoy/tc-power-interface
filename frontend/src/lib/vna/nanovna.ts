@@ -207,6 +207,31 @@ export class NanoVNAConnection {
     this.port = null;
   }
 
+  /** True while the serial reader/writer are live. A command timeout nulls the reader (see
+   *  readUntilPrompt), which is when {@link reconnect} is needed. */
+  get isAlive(): boolean { return this.reader != null && this.writer != null && this.port != null; }
+
+  /** Recover a lost reader WITHOUT a new user gesture: reopen the already-granted port and rebuild
+   *  reader/writer. Device settings (bandwidth, calibration) persist on the device across this. Used by
+   *  the live loop to self-heal after a command timeout instead of freezing until a manual reconnect. */
+  async reconnect(): Promise<void> {
+    const port = this.port;
+    if (!port) throw new Error('No NanoVNA port to reconnect.');
+    this.closing = false;
+    try { await this.reader?.cancel(); } catch { /* best effort */ }
+    try { this.reader?.releaseLock(); } catch { /* best effort */ }
+    try { this.writer?.releaseLock(); } catch { /* best effort */ }
+    this.reader = null;
+    this.writer = null;
+    try { await port.close(); } catch { /* may already be closed */ }
+    await port.open({ baudRate: 115200, bufferSize: 65536 });
+    if (!port.readable || !port.writable) throw new Error('Port not readable/writable after reopen.');
+    this.reader = port.readable.getReader();
+    this.writer = port.writable.getWriter();
+    await this.write('\r');
+    await this.readUntilPrompt(3000);
+  }
+
   async sweep(start: number, stop: number, points: number, segments = 1, averages = 1, truncateCount = 0, logarithmic = false, onSegment?: (update: SweepUpdate) => void, isCancelled?: () => boolean): Promise<SweepResult> {
     return this.runExclusive(async () => {
       if (!Number.isInteger(averages) || averages < 1 || averages > 99) throw new Error('Averages must be an integer from 1 through 99.');
@@ -354,7 +379,7 @@ export class NanoVNAConnection {
       // device hiccup falls back quickly instead of stalling on the full command timeout (that was the
       // v0.7.0 "30 s" lag). Columns: freq, S11 re, S11 im, S21 re, S21 im. [upstream to nanovna-web]
       try {
-        const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 3000);
+        const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 8000);
         const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 5 && row.every(Number.isFinite));
         if (values.length >= points / 2) {
           return values.map((row) => ({ frequency: row[0], s11: { re: row[1], im: row[2] }, s21: { re: row[3], im: row[4] } }));
