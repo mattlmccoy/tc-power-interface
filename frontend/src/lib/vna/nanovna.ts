@@ -348,11 +348,26 @@ export class NanoVNAConnection {
   }
 
   private async readSegment(start: number, stop: number, points: number): Promise<SweepPoint[]> {
-    // ONE hardware sweep, then read the stored grid + traces (fast, cached). Do NOT use the scan-mask
-    // forms: `scan …0b001` then `scan …0b110` re-swept the hardware TWICE per read (the live-view lag),
-    // and the combined `scan …0b111` was unreliable on the NanoVNA-H4 — parse failures fell back after a
-    // full command timeout, causing multi-second stalls. This single-sweep path is the reliable one.
-    // [local change — upstream to nanovna-web]
+    if (this.supportsScanMask) {
+      // FAST path (what makes the native tool responsive): ONE combined scan returning freq + S11 + S21
+      // (mask 0b111) — ~200 ms vs ~1.5 s for the four-command read below. A SHORT timeout means a rare
+      // device hiccup falls back quickly instead of stalling on the full command timeout (that was the
+      // v0.7.0 "30 s" lag). Columns: freq, S11 re, S11 im, S21 re, S21 im. [upstream to nanovna-web]
+      try {
+        const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 3000);
+        const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 5 && row.every(Number.isFinite));
+        if (values.length >= points / 2) {
+          return values.map((row) => ({ frequency: row[0], s11: { re: row[1], im: row[2] }, s21: { re: row[3], im: row[4] } }));
+        }
+      } catch { /* fall through to the reliable two-scan path */ }
+      // RELIABLE fallback: two scans (frequencies, then S11+S21) — the original vendored behavior.
+      const frequencies = (await this.command(`scan ${start} ${stop} ${points} 0b001`, 8000)).map(Number).filter(Number.isFinite);
+      const rows = await this.command(`scan ${start} ${stop} ${points} 0b110`, 8000);
+      const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 4 && row.every(Number.isFinite));
+      if (frequencies.length !== values.length) throw new Error(`Device returned ${frequencies.length} frequencies and ${values.length} data rows.`);
+      return frequencies.map((frequency, index) => ({ frequency, s11: { re: values[index][0], im: values[index][1] }, s21: { re: values[index][2], im: values[index][3] } }));
+    }
+
     await this.command(`${this.supportsScan ? 'scan' : 'sweep'} ${start} ${stop} ${points}`, 15000);
     const frequencies = (await this.command('frequencies', 15000)).map(Number).filter(Number.isFinite);
     const s11 = (await this.command('data 0', 15000)).map(parseComplex).filter((value): value is Complex => value !== null);
