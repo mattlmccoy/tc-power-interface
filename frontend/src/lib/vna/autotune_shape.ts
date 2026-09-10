@@ -19,12 +19,14 @@ import { clampCap } from "../instrument.ts";
 export const F0 = 13.56e6;
 const DIP_SENS = 65e3;   // |Δdip| per 1% tune (Hz); sign handled in the loop (more tune → lower dip)
 const DIP_TOL = 8e3;     // put the dip within ~half a sweep bin of 13.56 MHz
-const LOAD_WINDOW = 16;  // ± whole-percent span of the load scan
+const LOAD_WINDOW = 26;  // ± whole-percent span of the load scan (wide, for more reactive loads)
 const EPS = 1e-3;        // minimum |Γ| improvement to adopt a fine move
 
 export interface Dip { freqHz: number; gammaMin: number; index: number; }
 
-/** Min-|Γ| point of the sweep — the resonance dip. Its FREQUENCY is the tune control signal. */
+/** Min-|Γ| point of the sweep — the resonance dip. Its FREQUENCY is the tune control signal.
+ *  The frequency is refined BELOW the bin size by parabolic interpolation of |Γ| around the minimum,
+ *  so a fast low-point-count sweep still locates the dip precisely enough to drive Phase A. */
 export function dipOf(sweep: SweepPoint[]): Dip | null {
   if (!sweep.length) return null;
   let bi = 0, bg = Infinity;
@@ -32,7 +34,16 @@ export function dipOf(sweep: SweepPoint[]): Dip | null {
     const g = magnitude(sweep[i].s11);
     if (g < bg) { bg = g; bi = i; }
   }
-  return { freqHz: sweep[bi].frequency, gammaMin: bg, index: bi };
+  let freqHz = sweep[bi].frequency;
+  if (bi > 0 && bi < sweep.length - 1) {
+    const y0 = magnitude(sweep[bi - 1].s11), y1 = bg, y2 = magnitude(sweep[bi + 1].s11);
+    const denom = y0 - 2 * y1 + y2;
+    if (denom > 0) {
+      const delta = clip(0.5 * (y0 - y2) / denom, -0.5, 0.5); // sub-bin offset in [-0.5, 0.5]
+      freqHz += delta * (sweep[bi + 1].frequency - sweep[bi - 1].frequency) / 2;
+    }
+  }
+  return { freqHz, gammaMin: bg, index: bi };
 }
 
 function pAt(sweep: SweepPoint[]) { return nearestPointByFrequency(sweep, F0); }

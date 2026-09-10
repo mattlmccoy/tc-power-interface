@@ -16,6 +16,23 @@ test("dipOf finds the resonance dip on 13.56 at the match", () => {
   assert.ok(d.gammaMin < 0.02);
 });
 
+test("dipOf refines the dip frequency BELOW the sweep bin size (parabolic interpolation)", () => {
+  // A coarse sweep whose true resonance sits between two bins: parabolic interpolation must place the
+  // dip nearer the true minimum than the nearest bin center — so a low-point-count (fast) sweep still
+  // drives the tune loop precisely.
+  const bin = 25e3;
+  const trueF = 13.5615e6; // 1.5 kHz above the 13.5600 bin, between bins
+  const sweep = Array.from({ length: 201 }, (_, i) => {
+    const f = 11e6 + i * bin;
+    const g = Math.min(1, 0.02 + Math.abs(f - trueF) / 2e6); // V-shaped |Γ| valley at trueF
+    return { frequency: f, s11: { re: g, im: 0 }, s21: { re: 0, im: 0 } };
+  });
+  const d = dipOf(sweep)!;
+  const nearestBin = 11e6 + Math.round((trueF - 11e6) / bin) * bin;
+  assert.ok(Math.abs(d.freqHz - trueF) < Math.abs(nearestBin - trueF), `refined ${d.freqHz} vs bin ${nearestBin}`);
+  assert.ok(Math.abs(d.freqHz - trueF) < 5e3, `within 5 kHz of true (got ${d.freqHz})`);
+});
+
 test("dip frequency moves monotonically with tune (the PHASE-A control signal)", () => {
   const dLow = dipOf(modelSweep(tStar - 2, lStar))!.freqHz;
   const dHigh = dipOf(modelSweep(tStar + 2, lStar))!.freqHz;

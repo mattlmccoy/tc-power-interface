@@ -22,7 +22,8 @@ import { formatTouchstone } from "../lib/vna/touchstone.ts";
 // this is safe. A saved log shows the actual returned count → we tune the window/resolution from data.
 const SWEEP_START = 11e6;
 const SWEEP_STOP = 16e6;
-const POINTS = 401;
+const POINTS = 201; // 25 kHz/pt over the wide span — ~2× faster live refresh than 401; the dip frequency
+                    // is parabola-refined below the bin size (see dipOf) so Phase A stays precise.
 const HEARTBEAT_MS = 2000;
 const LIVE_GAP_MS = 30;
 const LOG_CAP = 6000;
@@ -73,6 +74,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const runningRef = useRef(false);
   const liveRef = useRef(false);
   const inLiveRef = useRef(false); // true while a liveLoop body is actually executing (one instance only)
+  const sweepingRef = useRef(false); // true while a sweep is in flight on the NanoVNA link
   const statusRef = useRef(status);
   const controllableRef = useRef(controllable);
   const logRef = useRef<LogEntry[]>([]);
@@ -121,9 +123,14 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   async function doSweep(): Promise<SweepPoint[] | null> {
     const conn = connRef.current;
     if (!conn) return null;
-    const res = await conn.sweep(SWEEP_START, SWEEP_STOP, POINTS);
-    if (res.points.length) setSweep(res.points); // keep the last good trace if a read comes back empty
-    return res.points;
+    sweepingRef.current = true;
+    try {
+      const res = await conn.sweep(SWEEP_START, SWEEP_STOP, POINTS);
+      if (res.points.length) setSweep(res.points); // keep the last good trace if a read comes back empty
+      return res.points;
+    } finally {
+      sweepingRef.current = false;
+    }
   }
 
   async function liveLoop() {
@@ -219,11 +226,11 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     setRunning(true);
     setIter(0);
     setMsg("tuning…");
-    // Give the auto-tuner EXCLUSIVE use of the NanoVNA link: stop the live loop and wait for its
-    // in-flight sweep to finish. Concurrent sweeps corrupt reads and let a stale loop drive the caps
-    // off a good match (the 2026-09-09 "still_bad" log: a −30 dB match was wrecked mid-run).
-    liveRef.current = false;
-    for (let i = 0; i < 50 && inLiveRef.current; i++) await sleep(100);
+    // Give the auto-tuner EXCLUSIVE use of the NanoVNA link WITHOUT killing the live loop (killing +
+    // restarting it left the view frozen when a sweep hung). The live loop pauses itself while
+    // runningRef is set (below); here we just wait for any in-flight LIVE sweep to drain so the first
+    // probe doesn't overlap it. When auto finishes, the persistent live loop resumes on its own.
+    for (let i = 0; i < 80 && sweepingRef.current; i++) await sleep(25);
     const t = statusRef.current?.controller?.telemetry;
     const start = { tune: clampCap(t?.tune_cap_percent ?? 50), load: clampCap(t?.load_cap_percent ?? 50) };
     let curT = start.tune, curL = start.load;
@@ -252,9 +259,9 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     } catch (e) {
       setMsg(`run error: ${(e as Error).message}`);
     } finally {
-      runningRef.current = false;
+      runningRef.current = false; // the persistent live loop resumes sweeping on its own
       setRunning(false);
-      if (connRef.current) { liveRef.current = true; void liveLoop(); } // restart the single live loop
+      if (connRef.current && !inLiveRef.current) { liveRef.current = true; void liveLoop(); } // safety: revive if it ever died
     }
   }
 
