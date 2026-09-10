@@ -234,6 +234,18 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     await waitCapSettle(which, tgt);
   }
 
+  // Approach a cap target from a chosen side (overshoot ±3%, then settle onto it) so mechanical backlash
+  // lands it at the sub-1% position that side gives — the backlash-fine-tune stage picks the better side.
+  async function driveCapFrom(which: "tune" | "load", target: number, from: "above" | "below") {
+    const send = which === "tune" ? sendTune : sendLoad;
+    const tgt = clampCap(target);
+    const pre = clampCap(tgt + (from === "above" ? 3 : -3));
+    await send(pre);
+    await waitCapSettle(which, pre);
+    await send(tgt);
+    await waitCapSettle(which, tgt);
+  }
+
   function halted(): string | null {
     if (!controllableRef.current) return "device not armed";
     if (statusRef.current?.controller?.telemetry?.rf_on) return "RF is on";
@@ -258,9 +270,10 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     const start = { tune: clampCap(t?.tune_cap_percent ?? 50), load: clampCap(t?.load_cap_percent ?? 50) };
     let curT = start.tune, curL = start.load;
 
-    const probe = async (tune: number, load: number): Promise<SweepPoint[]> => {
+    const probe = async (tune: number, load: number, tuneFrom?: "above" | "below"): Promise<SweepPoint[]> => {
       let moved = false;
-      if (tune !== curT) { await driveCap("tune", tune); curT = tune; moved = true; }
+      if (tuneFrom) { await driveCapFrom("tune", tune, tuneFrom); curT = tune; moved = true; } // force directional
+      else if (tune !== curT) { await driveCap("tune", tune); curT = tune; moved = true; }
       if (load !== curL) { await driveCap("load", load); curL = load; moved = true; }
       // After a cap move, waitCapSettle only confirms the cap READBACK arrived — the network + VNA still
       // settle for a moment. Sweeping too soon reads a mid-transition trace and the tuner overshoots. So

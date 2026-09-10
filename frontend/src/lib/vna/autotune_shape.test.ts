@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dipOf, shapeTune, costAt, interpS11At, F0 } from "./autotune_shape.ts";
+import { dipOf, shapeTune, costAt, interpS11At, convergedAt as convergedAtSweep, F0 } from "./autotune_shape.ts";
 import { modelSweep, DEFAULT_NETWORK } from "./network_model.ts";
 import { impedance, magnitude, nearestPointByFrequency } from "./rf.ts";
 
@@ -76,6 +76,21 @@ test("recovers a load-only detune by scanning load at the locked tune", async ()
   const r = await shapeTune(probe, { tune: tStar, load: lStar - 5 }, {});
   assert.equal(r.converged, true, `caps ${r.tune}/${r.load}`);
   assert.ok(Math.abs(r.load - lStar) <= 1, `load ${r.load}`);
+});
+
+test("backlash fine-tune: reaches a match only accessible by approaching TUNE from above", async () => {
+  // Model the mechanical backlash measured on the bench: command T lands at T+0.2 approached from below
+  // (the default), T+0.8 from above. Put the true match at effective tune 36.8 — so NO integer direct
+  // command centres the dip (they land …35.2, 36.2, 37.2…); only "command 36 FROM ABOVE" hits it.
+  const BL = { ...DEFAULT_NETWORK, tStar: 36.8 };
+  const off = (from?: "above" | "below") => (from === "above" ? 0.8 : 0.2);
+  const backlashProbe = (t: number, l: number, from?: "above" | "below") =>
+    modelSweep(t + off(from), l, undefined, BL);
+  // sanity: direct (from-below) commands can't converge; only 36-from-above does
+  assert.ok(!convergedAtSweep(backlashProbe(36, lStar)), "direct 36 is off-centre");
+  assert.ok(convergedAtSweep(backlashProbe(36, lStar, "above")), "36-from-above centres the dip");
+  const r = await shapeTune(backlashProbe, { tune: 34, load: lStar - 3 }, {});
+  assert.equal(r.converged, true, `should find the from-above match (got caps ${r.tune}/${r.load})`);
 });
 
 test("monotonic: never ends worse than it started (best-so-far + restore)", async () => {

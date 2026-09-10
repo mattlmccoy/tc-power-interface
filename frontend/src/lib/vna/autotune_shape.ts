@@ -84,7 +84,12 @@ export interface ShapeOpts {
   shouldStop?: () => boolean;
 }
 export interface ShapeResult { tune: number; load: number; converged: boolean; iters: number; }
-export type ShapeProbe = (tune: number, load: number) => SweepPoint[] | Promise<SweepPoint[]>;
+export type Approach = "above" | "below";
+/** Drive the caps and return the sweep. `tuneFrom` requests the tune cap be approached from above/below
+ *  (overshoot then settle) so mechanical backlash lands it at its sub-1% position — the backlash-fine
+ *  stage uses this to nudge the dip the last few kHz onto 13.56. Probes that ignore it just do a direct
+ *  drive (fine with the synthetic model, which has no backlash). */
+export type ShapeProbe = (tune: number, load: number, tuneFrom?: Approach) => SweepPoint[] | Promise<SweepPoint[]>;
 const sign = (x: number) => (x >= 0 ? 1 : -1);
 const clip = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 
@@ -98,11 +103,15 @@ export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: 
   let iter = 0;
   let best = { tune, load, cost: costAt(sweep) };
 
-  const visit = (t: number, l: number, s: SweepPoint[]) => {
+  const report = (t: number, l: number, s: SweepPoint[]) => {
     iter++;
     const c = costAt(s);
     const d = dipOf(s);
     opts.onStep?.({ iter, tune: t, load: l, dipHz: d?.freqHz ?? F0, gammaMin: d?.gammaMin ?? c, cost: c });
+    return c;
+  };
+  const visit = (t: number, l: number, s: SweepPoint[]) => {
+    const c = report(t, l, s);
     if (c < best.cost) best = { tune: t, load: l, cost: c };
     return c;
   };
@@ -164,6 +173,34 @@ export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: 
     }
     if (!moved) break;
   }
-  const settled = await probe(best.tune, best.load);
+  // ── BACKLASH FINE-TUNE: the sub-1% of tune the integer grid can't reach. Approaching the tune cap from
+  //    ABOVE vs BELOW lands it ~0.5% apart (mechanical backlash), shifting the dip the last few kHz onto
+  //    13.56 — the operator's manual trick. Try {best.tune-1,tune,+1} × {below,above}, keep the landing
+  //    with the lowest |Γ(13.56)|, then a short load walk that re-approaches that winning tune direction.
+  let bestFrom: Approach | undefined;
+  if (!convergedAt(await probe(best.tune, best.load)) && !stop()) {
+    for (const t of [best.tune, best.tune - 1, best.tune + 1]) {
+      const ct = clampCap(t);
+      for (const from of ["below", "above"] as Approach[]) {
+        if (stop()) break;
+        const s = await probe(ct, best.load, from);
+        const c = report(ct, best.load, s);
+        if (c < best.cost - EPS) { best = { tune: ct, load: best.load, cost: c }; bestFrom = from; }
+      }
+    }
+    for (let f = 0; f < 6 && !stop(); f++) { // load walk holding the winning tune approach
+      let moved = false;
+      for (const dl of [-1, 1]) {
+        const nl = clampCap(best.load + dl);
+        if (nl === best.load) continue;
+        const s = await probe(best.tune, nl, bestFrom);
+        const c = report(best.tune, nl, s);
+        if (c < best.cost - EPS) { best = { tune: best.tune, load: nl, cost: c }; moved = true; break; }
+      }
+      if (!moved) break;
+    }
+  }
+
+  const settled = await probe(best.tune, best.load, bestFrom); // land on best via its winning approach
   return { tune: best.tune, load: best.load, converged: convergedAt(settled), iters: iter };
 }
