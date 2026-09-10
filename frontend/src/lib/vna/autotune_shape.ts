@@ -93,6 +93,13 @@ export type ShapeProbe = (tune: number, load: number, tuneFrom?: Approach) => Sw
 const sign = (x: number) => (x >= 0 ? 1 : -1);
 const clip = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 
+type Jac = [[number, number], [number, number]]; // [[∂R/∂tune, ∂R/∂load], [∂X/∂tune, ∂X/∂load]] (Ω per %)
+function solve2x2(J: Jac, b: [number, number]): [number, number] | null {
+  const det = J[0][0] * J[1][1] - J[0][1] * J[1][0];
+  if (Math.abs(det) < 1e-6) return null;
+  return [(b[0] * J[1][1] - b[1] * J[0][1]) / det, (J[0][0] * b[1] - J[1][0] * b[0]) / det];
+}
+
 export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: number }, opts: ShapeOpts): Promise<ShapeResult> {
   const maxRounds = opts.maxRounds ?? 3;
   const stop = () => opts.shouldStop?.() ?? false;
@@ -161,15 +168,42 @@ export async function shapeTune(probe: ShapeProbe, start: { tune: number; load: 
   // different physical spot than when best was measured — the 2026-09-10 log ended at 0.93 after a best
   // of 0.48). So re-measure where we actually land, then take a few ±1 clicks that improve |Γ(13.56)|,
   // ending on a real local minimum at the ACTUAL caps — never on a worse frame than we can reach.
+  const J: Jac = [[-64, -5], [-70, 3]];
   let cur = await probe(best.tune, best.load);
   best = { tune: best.tune, load: best.load, cost: costAt(cur) };
-  for (let k = 0; k < 12 && !convergedAt(cur) && !stop(); k++) {
+  let z = zAt(cur);
+  for (let k = 0; k < 18 && !convergedAt(cur) && !stop(); k++) {
     let moved = false;
-    for (const [dt, dl] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as Array<[number, number]>) {
-      const nt = clampCap(best.tune + dt), nl = clampCap(best.load + dl);
-      if (nt === best.tune && nl === best.load) continue;
-      const s = await probe(nt, nl);
-      if (visit(nt, nl, s) < best.cost - EPS) { best = { tune: nt, load: nl, cost: costAt(s) }; cur = s; moved = true; break; }
+    const step = z ? solve2x2(J, [50 - z.re, -z.im]) : null;
+    if (step) {
+      const norm = Math.max(Math.abs(step[0]), Math.abs(step[1]), 1e-9);
+      for (let scale = Math.min(1, 4 / norm); scale * norm >= 0.5; scale *= 0.5) {
+        const nt = clampCap(best.tune + Math.round(step[0] * scale));
+        const nl = clampCap(best.load + Math.round(step[1] * scale));
+        if (nt === best.tune && nl === best.load) continue;
+        const s = await probe(nt, nl);
+        const tz = zAt(s);
+        if (visit(nt, nl, s) < best.cost - EPS) {
+          if (tz && z) { // Broyden rank-1 update of J from the observed Δcap → ΔZ
+            const dc = [nt - best.tune, nl - best.load];
+            const dz = [tz.re - z.re, tz.im - z.im];
+            const den = dc[0] * dc[0] + dc[1] * dc[1] || 1;
+            for (let r = 0; r < 2; r++) {
+              const corr = (dz[r] - (J[r][0] * dc[0] + J[r][1] * dc[1])) / den;
+              J[r][0] += corr * dc[0]; J[r][1] += corr * dc[1];
+            }
+          }
+          best = { tune: nt, load: nl, cost: costAt(s) }; cur = s; z = tz; moved = true; break;
+        }
+      }
+    }
+    if (!moved) { // ±1 axial/diagonal fallback (accept first improving)
+      for (const [dt, dl] of [[0, -1], [0, 1], [-1, 0], [1, 0], [-1, 1], [1, -1], [-1, -1], [1, 1]] as Array<[number, number]>) {
+        const nt = clampCap(best.tune + dt), nl = clampCap(best.load + dl);
+        if (nt === best.tune && nl === best.load) continue;
+        const s = await probe(nt, nl);
+        if (visit(nt, nl, s) < best.cost - EPS) { best = { tune: nt, load: nl, cost: costAt(s) }; cur = s; z = zAt(s); moved = true; break; }
+      }
     }
     if (!moved) break;
   }
