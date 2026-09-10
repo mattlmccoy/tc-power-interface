@@ -96,6 +96,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const [bandwidth, setBandwidth] = useState<number | null>(null);
   const [bwOptions, setBwOptions] = useState<number[]>([]);
   const bwRef = useRef<number | null>(null); // desired IF bandwidth, re-applied after a self-heal reconnect
+  const lastBwFixRef = useRef(0); // throttle for the slow-bandwidth self-heal
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { controllableRef.current = controllable; }, [controllable]);
@@ -156,6 +157,13 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
       }
       lastReadMsRef.current = Math.round(performance.now() - t0);
       setReadMs(lastReadMsRef.current);
+      // Self-heal a slow IF bandwidth: the one-shot set on connect sometimes silently fails (or a reopen
+      // resets it), leaving sweeps at ~840 ms instead of ~180. If we asked for a fast filter but reads are
+      // slow, re-apply it (throttled). Once it takes, readMs drops and this stops firing.
+      if (bwRef.current && bwRef.current >= 1000 && lastReadMsRef.current > 400 && Date.now() - lastBwFixRef.current > 4000) {
+        lastBwFixRef.current = Date.now();
+        try { await conn.setBandwidth(bwRef.current); } catch { /* leave as-is */ }
+      }
       if (res.points.length) setSweep(res.points); // keep the last good trace if a read comes back empty
       return res.points;
     } finally {
