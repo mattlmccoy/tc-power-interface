@@ -22,8 +22,9 @@ import { formatTouchstone } from "../lib/vna/touchstone.ts";
 // this is safe. A saved log shows the actual returned count → we tune the window/resolution from data.
 const SWEEP_START = 11e6;
 const SWEEP_STOP = 16e6;
-const POINTS = 201; // fewer points = faster device read (the native NanoVNA app sweeps ~this many). The
-                    // dip frequency is parabola-refined below the bin (dipOf) so the tuner stays precise.
+const POINTS = 401; // 12.5 kHz/pt — the resolution the sensitive match needs. Sweep speed is set by the
+                    // IF BANDWIDTH (set fast on connect, adjustable in the UI), not the point count.
+const DEFAULT_BW_HZ = 4000; // widest IF filter = fastest sweep (what keeps the native tool responsive)
 const HEARTBEAT_MS = 2000;
 const LIVE_GAP_MS = 30;
 const LOG_CAP = 6000;
@@ -60,6 +61,9 @@ export interface VnaController {
   iter: number;
   logCount: number;
   readMs: number;
+  bandwidth: number | null;
+  bwOptions: number[];
+  changeBandwidth: (hz: number) => void;
   connect: () => Promise<void>;
   endSession: () => Promise<void>;
   doSweep: () => Promise<SweepPoint[] | null>;
@@ -89,6 +93,8 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const [iter, setIter] = useState(0);
   const [logCount, setLogCount] = useState(0);
   const [readMs, setReadMs] = useState(0);
+  const [bandwidth, setBandwidth] = useState<number | null>(null);
+  const [bwOptions, setBwOptions] = useState<number[]>([]);
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { controllableRef.current = controllable; }, [controllable]);
@@ -172,6 +178,15 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
       setMsg("");
       await api.vnaBegin();
       startHeartbeat();
+      // Set the widest IF bandwidth for the fastest sweep (the lever behind the native tool's speed).
+      // Best-effort: some firmware lacks bandwidth control. Pick the fastest option the device offers.
+      try {
+        const opts = await conn.getBandwidths();
+        setBwOptions(opts);
+        const fast = opts.includes(DEFAULT_BW_HZ) ? DEFAULT_BW_HZ : Math.max(...opts);
+        await conn.setBandwidth(fast);
+        setBandwidth(fast);
+      } catch { /* device without bandwidth control — leave as-is */ }
       liveRef.current = true;
       void liveLoop();
     } catch (e) {
@@ -280,6 +295,13 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
 
   function stop() { runningRef.current = false; setRunning(false); }
 
+  async function changeBandwidth(hz: number) {
+    const conn = connRef.current;
+    if (!conn) return;
+    try { await conn.setBandwidth(hz); setBandwidth(hz); }
+    catch (e) { setMsg(`bandwidth ${hz} Hz not accepted: ${(e as Error).message}`); }
+  }
+
   function download(name: string, text: string, type: string) {
     const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
@@ -306,7 +328,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   function clearLog() { logRef.current = []; setLogCount(0); }
 
   return {
-    supported, connected, sweep, running, msg, iter, logCount, readMs,
+    supported, connected, sweep, running, msg, iter, logCount, readMs, bandwidth, bwOptions, changeBandwidth,
     connect, endSession, doSweep, runAutoTune, stop, saveTouchstone, saveLog, clearLog,
   };
 }

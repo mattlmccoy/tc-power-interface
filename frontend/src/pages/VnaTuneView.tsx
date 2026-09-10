@@ -90,9 +90,23 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
             <div>VSWR: <strong>{sw != null && Number.isFinite(sw) ? fmt(sw, 2) : "∞"}</strong></div>
             <div>Z: <strong>{fmt(z?.re ?? null, 1)}</strong> {z && z.im >= 0 ? "+" : "−"} j<strong>{fmt(z ? Math.abs(z.im) : null, 1)}</strong> Ω</div>
             <div>RL: <strong>{fmt(rl, 1)}</strong> dB</div>
-            <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "var(--muted)" }}>
-              sweep read: <strong>{vna.readMs ? `${vna.readMs} ms` : "—"}</strong>
-              {vna.readMs ? ` · ${(1000 / vna.readMs).toFixed(1)} /s` : ""} — if this jumps when other USB devices are busy, it's hub contention
+            <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>sweep: <strong>{vna.readMs ? `${vna.readMs} ms` : "—"}</strong>{vna.readMs ? ` · ${(1000 / vna.readMs).toFixed(1)}/s` : ""}</span>
+              {vna.bwOptions.length > 0 && (
+                <span>
+                  · IF bw{" "}
+                  <select
+                    value={vna.bandwidth ?? ""}
+                    onChange={(e) => vna.changeBandwidth(Number(e.target.value))}
+                    style={{ ...textInputStyle, padding: "1px 4px", fontSize: 12 }}
+                  >
+                    {vna.bwOptions.map((hz) => (
+                      <option key={hz} value={hz}>{hz} Hz</option>
+                    ))}
+                  </select>{" "}
+                  <span style={{ opacity: 0.7 }}>(higher = faster, noisier)</span>
+                </span>
+              )}
             </div>
           </div>
 
