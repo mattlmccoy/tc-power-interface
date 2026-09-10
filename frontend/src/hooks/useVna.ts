@@ -9,7 +9,7 @@ import type { Status } from "../lib/telemetry.ts";
 import { api } from "../lib/api.ts";
 import { clampCap, capSettled } from "../lib/instrument.ts";
 import { NanoVNAConnection } from "../lib/vna/nanovna.ts";
-import { BUILD_ID } from "../version.ts";
+import { VERSION_FULL } from "../version.ts";
 import { impedance, magnitude, nearestPointByFrequency, type SweepPoint } from "../lib/vna/rf.ts";
 import { F0 } from "../lib/vna/autotune.ts";
 import { shapeTune, dipOf } from "../lib/vna/autotune_shape.ts";
@@ -279,7 +279,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
 
   function saveLog() {
     if (!logRef.current.length) return;
-    const data = { savedAt: new Date().toISOString(), build: BUILD_ID, window: { start: SWEEP_START, stop: SWEEP_STOP, points: POINTS }, entries: logRef.current };
+    const data = { savedAt: new Date().toISOString(), build: VERSION_FULL, window: { start: SWEEP_START, stop: SWEEP_STOP, points: POINTS }, entries: logRef.current };
     download(`vna-log-${Date.now()}.json`, JSON.stringify(data), "application/json");
   }
 

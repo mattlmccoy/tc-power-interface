@@ -23,7 +23,8 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .topbar .brand { font-weight: 600; color: var(--fg-strong); letter-spacing: 0.02em; }
 .topbar .brand .amp { color: var(--accent); }
 .topbar .device { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
-.topbar .build { color: var(--muted); opacity: 0.6; font-family: var(--font-mono); font-size: 11px; }
+.topbar .build { color: var(--muted); opacity: 0.55; font-family: var(--font-mono); font-size: 11px; }
+.topbar .build .ver { color: var(--fg-strong); opacity: 0.9; font-weight: 600; }
 .topbar .spacer { flex: 1; }
 .viewtabs { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius);
   overflow: hidden; margin-right: calc(var(--space) * 2); }

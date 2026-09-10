@@ -1,6 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+// Human-readable app version — the single source of truth is package.json "version" (bump it per release).
+const APP_VERSION: string = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
 
 // Build identity: git short SHA (+ "*" if the tree is dirty) and the build date. Injected as __BUILD_ID__
 // so the running app and every saved log can report exactly which build they are. Built in the served
@@ -20,7 +24,7 @@ function buildId(): string {
 // Dev server proxies API + WebSocket to the Python operator on :8010 (T&C's default; 8000 is FLIR).
 export default defineConfig({
   base: process.env.VITE_BASE ?? "/",
-  define: { __BUILD_ID__: JSON.stringify(buildId()) },
+  define: { __BUILD_ID__: JSON.stringify(buildId()), __APP_VERSION__: JSON.stringify(APP_VERSION) },
   plugins: [react()],
   server: {
     port: 5174,

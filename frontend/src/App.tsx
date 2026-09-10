@@ -11,7 +11,7 @@ import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { VnaTuneView } from "./pages/VnaTuneView.tsx";
 import { useVna } from "./hooks/useVna.ts";
-import { BUILD_ID } from "./version.ts";
+import { VERSION_LABEL, BUILD_ID, VERSION_FULL } from "./version.ts";
 
 export function App() {
   const op = useOperator();
@@ -43,8 +43,8 @@ export function App() {
           {device?.id ? `${device.id} · ${device.serial ?? ""}` : "no device"}
           {device?.frequency_hz ? ` · ${(device.frequency_hz / 1e6).toFixed(2)} MHz` : ""}
         </span>
-        <span className="build" title="Build (git SHA · date) — matches the 'build' field in saved logs">
-          {BUILD_ID}
+        <span className="build" title={`${VERSION_FULL} — matches the 'build' field in saved logs`}>
+          <span className="ver">{VERSION_LABEL}</span> · {BUILD_ID.split(" · ")[0]}
         </span>
         <span className="spacer" />
         {!inVna && (
