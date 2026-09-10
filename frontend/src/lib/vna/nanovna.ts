@@ -389,7 +389,7 @@ export class NanoVNAConnection {
       // device hiccup falls back quickly instead of stalling on the full command timeout (that was the
       // v0.7.0 "30 s" lag). Columns: freq, S11 re, S11 im, S21 re, S21 im. [upstream to nanovna-web]
       try {
-        const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 8000);
+        const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 2500); // a real sweep is ~180ms; short timeout so a rare hang self-heals fast (not an 11s stall)
         const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 5 && row.every(Number.isFinite));
         if (values.length >= points / 2) {
           return values.map((row) => ({ frequency: row[0], s11: { re: row[1], im: row[2] }, s21: { re: row[3], im: row[4] } }));
