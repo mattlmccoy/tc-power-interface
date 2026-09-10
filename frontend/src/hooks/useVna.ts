@@ -95,6 +95,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const [readMs, setReadMs] = useState(0);
   const [bandwidth, setBandwidth] = useState<number | null>(null);
   const [bwOptions, setBwOptions] = useState<number[]>([]);
+  const bwRef = useRef<number | null>(null); // desired IF bandwidth, re-applied after a self-heal reconnect
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { controllableRef.current = controllable; }, [controllable]);
@@ -144,7 +145,13 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
         // A command timeout nulls the serial reader (readUntilPrompt), which otherwise freezes the chart
         // until a manual reconnect. Reopen the already-granted port (device settings persist) and retry
         // once, so the live view AND the tuner self-heal.
-        if (!conn.isAlive) { setMsg("NanoVNA stream stalled — reconnecting…"); await conn.reconnect(); setMsg(""); res = await conn.sweep(SWEEP_START, SWEEP_STOP, POINTS); }
+        if (!conn.isAlive) {
+          setMsg("NanoVNA stream stalled — reconnecting…");
+          await conn.reconnect();
+          if (bwRef.current) { try { await conn.setBandwidth(bwRef.current); } catch { /* keep default */ } } // reopen resets IF bandwidth
+          setMsg("");
+          res = await conn.sweep(SWEEP_START, SWEEP_STOP, POINTS);
+        }
         else throw e;
       }
       lastReadMsRef.current = Math.round(performance.now() - t0);
@@ -194,7 +201,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
         setBwOptions(opts);
         const fast = opts.includes(DEFAULT_BW_HZ) ? DEFAULT_BW_HZ : Math.max(...opts);
         await conn.setBandwidth(fast);
-        setBandwidth(fast);
+        setBandwidth(fast); bwRef.current = fast;
       } catch { /* device without bandwidth control — leave as-is */ }
       liveRef.current = true;
       void liveLoop();
@@ -302,7 +309,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   async function changeBandwidth(hz: number) {
     const conn = connRef.current;
     if (!conn) return;
-    try { await conn.setBandwidth(hz); setBandwidth(hz); }
+    try { await conn.setBandwidth(hz); setBandwidth(hz); bwRef.current = hz; }
     catch (e) { setMsg(`bandwidth ${hz} Hz not accepted: ${(e as Error).message}`); }
   }
 

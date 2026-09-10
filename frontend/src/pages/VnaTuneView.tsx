@@ -8,7 +8,7 @@ import type { VnaController } from "../hooks/useVna.ts";
 import { VnaSmith } from "../components/VnaSmith.tsx";
 import { VnaS11Plot } from "../components/VnaS11Plot.tsx";
 import { magnitude, vswr, impedance, db } from "../lib/vna/rf.ts";
-import { interpS11At, F0 } from "../lib/vna/autotune_shape.ts";
+import { interpS11At, dipOf, F0 } from "../lib/vna/autotune_shape.ts";
 
 const fmt = (v: number | null, d = 2) => (v == null || !Number.isFinite(v) ? "—" : v.toFixed(d));
 
@@ -27,6 +27,20 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
   const z = s ? impedance(s, 50) : null;
   const sw = s ? vswr(s) : null;
   const rl = s ? db(s) : null;
+
+  // Guided manual finish: TUNE moves the dip frequency (→ nulls X), LOAD moves R. Tell the operator
+  // which way to nudge each cap to reach the exact 13.56 match, and confirm when it's there.
+  const dip = vna.sweep.length ? dipOf(vna.sweep) : null;
+  const matched = gm != null && gm < 0.1;
+  const guide: string | null = (() => {
+    if (!z || !dip) return null;
+    if (matched) return "✓ matched";
+    const bits: string[] = [];
+    const dkHz = (dip.freqHz - F0) / 1e3;
+    if (Math.abs(dkHz) > 6) bits.push(`dip ${dkHz > 0 ? "high" : "low"} → Tune ${dkHz > 0 ? "+" : "−"}`);
+    if (Math.abs(z.re - 50) > 6) bits.push(`R ${z.re > 50 ? "high" : "low"} → Load ${z.re > 50 ? "+" : "−"}`);
+    return bits.length ? bits.join("     ") : "almost — nudge Tune to null X";
+  })();
 
   const capDisabled = !controllable || vna.running || capBusy != null;
 
@@ -111,6 +125,13 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
               )}
             </div>
           </div>
+
+          {guide && (
+            <div style={{ fontSize: 15, fontWeight: 600, color: matched ? "var(--live)" : "var(--accent)" }}
+              title="Tune moves the resonance dip (nulls reactance X); Load sets the resistance R. Nudge as shown to reach the exact 13.56 match.">
+              {matched ? guide : `finish → ${guide}`}
+            </div>
+          )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {capRow("Tune", tune, bumpTune, tuneVIn, setTuneVIn, applyTuneVolts)}
