@@ -22,8 +22,8 @@ import { formatTouchstone } from "../lib/vna/touchstone.ts";
 // this is safe. A saved log shows the actual returned count → we tune the window/resolution from data.
 const SWEEP_START = 11e6;
 const SWEEP_STOP = 16e6;
-const POINTS = 201; // 25 kHz/pt over the wide span — ~2× faster live refresh than 401; the dip frequency
-                    // is parabola-refined below the bin size (see dipOf) so Phase A stays precise.
+const POINTS = 401; // 12.5 kHz/pt over the wide span. Affordable again now that a read is ONE hardware
+                    // sweep (nanovna readSegment mask 0b111), not two; dip is parabola-refined below the bin.
 const HEARTBEAT_MS = 2000;
 const LIVE_GAP_MS = 30;
 const LOG_CAP = 6000;
@@ -236,8 +236,13 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     let curT = start.tune, curL = start.load;
 
     const probe = async (tune: number, load: number): Promise<SweepPoint[]> => {
-      if (tune !== curT) { await driveCap("tune", tune); curT = tune; }
-      if (load !== curL) { await driveCap("load", load); curL = load; }
+      let moved = false;
+      if (tune !== curT) { await driveCap("tune", tune); curT = tune; moved = true; }
+      if (load !== curL) { await driveCap("load", load); curL = load; moved = true; }
+      // After a cap move, waitCapSettle only confirms the cap READBACK arrived — the network + VNA still
+      // settle for a moment. Sweeping too soon reads a mid-transition trace and the tuner overshoots. So
+      // discard one sweep (its ~duration covers the settle), then use the next, fully-settled one.
+      if (moved) await doSweep();
       const points = (await doSweep()) ?? [];
       if (points.length) logSweep("auto", points, true);
       return points;

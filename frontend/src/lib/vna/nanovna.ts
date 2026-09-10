@@ -349,16 +349,21 @@ export class NanoVNAConnection {
 
   private async readSegment(start: number, stop: number, points: number): Promise<SweepPoint[]> {
     if (this.supportsScanMask) {
-      const frequencies = (await this.command(`scan ${start} ${stop} ${points} 0b001`, 15000))
-        .map(Number).filter(Number.isFinite);
-      const rows = await this.command(`scan ${start} ${stop} ${points} 0b110`, 15000);
-      const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 4 && row.every(Number.isFinite));
-      if (frequencies.length !== values.length) throw new Error(`Device returned ${frequencies.length} frequencies and ${values.length} data rows.`);
-      return frequencies.map((frequency, index) => ({
-        frequency,
-        s11: { re: values[index][0], im: values[index][1] },
-        s21: { re: values[index][2], im: values[index][3] },
-      }));
+      // ONE sweep returning freq + S11 + S21 together (mask 0b111). The previous code issued two scans
+      // (0b001 then 0b110), each of which re-swept the hardware — doubling every read's latency (the
+      // dominant live-view lag). Columns per row: freq, S11 re, S11 im, S21 re, S21 im. On any shape
+      // mismatch we fall through to the compatibility path below rather than break the sweep.
+      // [local perf fix — upstream to nanovna-web]
+      const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 15000);
+      const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 5 && row.every(Number.isFinite));
+      if (values.length) {
+        return values.map((row) => ({
+          frequency: row[0],
+          s11: { re: row[1], im: row[2] },
+          s21: { re: row[3], im: row[4] },
+        }));
+      }
+      // else: combined mask returned nothing usable → fall through to the two-step path.
     }
 
     await this.command(`${this.supportsScan ? 'scan' : 'sweep'} ${start} ${stop} ${points}`, 15000);
