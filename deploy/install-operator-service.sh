@@ -12,6 +12,10 @@ set -euo pipefail
 
 LABEL="com.tcpower.operator"
 PORT="${TCP_PORT:-8010}"
+# FLIR run-logger base the operator posts RF edges + control/power telemetry to. Baked in at boot so
+# the link is enabled+correct on every start (survives restarts) — a blank URL is the silent failure
+# mode where nothing reaches FLIR. Override with TCP_FLIR_URL=... ; set to "" to boot with it off.
+FLIR_URL="${TCP_FLIR_URL:-http://127.0.0.1:8000}"
 
 # Resolve paths from this script's location (portable — no hardcoded home path).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +47,8 @@ cat > "$PLIST" <<PLIST
         <string>127.0.0.1</string>
         <string>--port</string>
         <string>$PORT</string>
+        <string>--flir-url</string>
+        <string>$FLIR_URL</string>
     </array>
     <key>WorkingDirectory</key> <string>$BACKEND_DIR</string>
     <key>EnvironmentVariables</key>
@@ -58,9 +64,22 @@ cat > "$PLIST" <<PLIST
 PLIST
 
 # (Re)load it. bootstrap/bootout are the modern launchctl verbs; fall back to load/unload.
+# bootout is ASYNC — bootstrapping the same label before the old job is fully torn down fails with
+# "Input/output error" (5), leaving the service DOWN. So wait for the old job to disappear, then
+# bootstrap with a couple of retries.
 GUI="gui/$(id -u)"
 launchctl bootout "$GUI/$LABEL" 2>/dev/null || launchctl unload "$PLIST" 2>/dev/null || true
-launchctl bootstrap "$GUI" "$PLIST" 2>/dev/null || launchctl load "$PLIST"
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  launchctl print "$GUI/$LABEL" >/dev/null 2>&1 || break  # gone -> safe to bootstrap
+  sleep 0.5
+done
+for attempt in 1 2 3 4 5; do
+  if launchctl bootstrap "$GUI" "$PLIST" 2>/dev/null || launchctl load "$PLIST" 2>/dev/null; then
+    break
+  fi
+  echo "  (launchctl load attempt $attempt failed; retrying…)" >&2
+  sleep 1
+done
 
 echo "Installed + started $LABEL"
 echo "  plist:  $PLIST"
