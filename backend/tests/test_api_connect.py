@@ -85,6 +85,42 @@ def test_disconnect_stops_running_features(tmp_path):
         assert c.get("/api/status").json()["ramp"]["running"] is False
 
 
+def test_link_drop_hook_halts_features_and_clears_device(tmp_path):
+    """The controller's on_link_dropped hook (fired when the generator is turned off / unplugged) is
+    wired to the same cleanup as the manual disconnect — halt every driver AND clear the device
+    metadata — so an auto-dropped link can't leave a ramp 'running' or the top bar naming an absent
+    generator."""
+    with _idle_client(tmp_path) as c:
+        _connect_and_arm(c)
+        c.post("/api/ramp/start")
+        assert c.get("/api/status").json()["ramp"]["running"] is True
+        assert c.get("/api/status").json()["device"] != {}  # a generator is named while connected
+        hook = c.app.state.controller.on_link_dropped
+        assert hook is not None  # the app wired the cleanup on link loss
+        hook()  # simulate the controller auto-dropping a lost link
+        s = c.get("/api/status").json()
+        assert s["ramp"]["running"] is False  # driver halted
+        assert s["device"] == {}  # top bar no longer names the (now absent) generator
+
+
+def test_clear_fault_endpoint_leaves_fault_when_healthy(tmp_path):
+    """POST /api/clear-fault clears a latched FAULT once telemetry is healthy again (the UI button).
+    RF stays off; `cleared` reports the outcome."""
+    with _idle_client(tmp_path) as c:
+        _connect_and_arm(c)
+        ctrl = c.app.state.controller
+        # wait for the poll loop to establish a non-tripping latest_decision on the benign sim
+        deadline = time.monotonic() + 3
+        while ctrl.latest_decision is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        ctrl._enter_fault(("transient stale telemetry",))  # latch a fault whose cause has cleared
+        assert c.get("/api/status").json()["controller"]["state"] == "fault"
+        r = c.post("/api/clear-fault").json()
+        assert r["cleared"] is True
+        assert r["state"] == "connected"
+        assert c.get("/api/status").json()["controller"]["state"] == "connected"
+
+
 def test_disarm_stops_running_features(tmp_path):
     """Disarming drops control, so any running driver (ramp/pulse/…) stops too."""
     with _idle_client(tmp_path) as c:

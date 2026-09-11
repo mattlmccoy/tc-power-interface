@@ -42,11 +42,27 @@ class Controller:
         limits: SafetyLimits | None = None,
         poll_interval_s: float = 0.5,
         clock: Callable[[], float] = time.monotonic,
+        link_loss_reads: int = 3,
+        stale_trip_reads: int = 2,
     ) -> None:
         self.device = device
         self.limits = limits or SafetyLimits()
         self.poll_interval_s = poll_interval_s
         self._clock = clock
+        #: Consecutive failed telemetry reads that mean "the link is gone" (generator off / cable
+        #: pulled) while IDLE — debounces a single flaky USB read before tearing the link down. The
+        #: RF-ON case never waits for this: it faults on the first failure (protection).
+        self.link_loss_reads = link_loss_reads
+        self._read_failures = 0
+        #: Consecutive LATE-but-successful reads (idle gap > telemetry_timeout_s) needed before the
+        #: staleness watchdog faults. Debounces a single stalled poll cycle (e.g. a disk/flush
+        #: hiccup) so it never faults a healthy run; 1 restores the original trip-on-first behavior.
+        self.stale_trip_reads = stale_trip_reads
+        self._stale_ticks = 0
+        #: Optional hook the app wires to halt its drivers (ramp/timer/thermal/tuner) when the
+        #: controller auto-drops a lost link — the driver objects live in the API layer, so the
+        #: controller cannot reach them directly. Mirrors what POST /api/disconnect does manually.
+        self.on_link_dropped: Callable[[], None] | None = None
         #: Backend name ("simulated"/"serial"), set by the app; the thermal loop's arming gate
         #: allows auto-drive freely in sim but requires an explicit arm on real hardware.
         self.backend = "simulated"
@@ -250,10 +266,11 @@ class Controller:
         try:
             with self._io_lock:
                 telemetry = self.device.read_telemetry()
-        except Exception as exc:  # noqa: BLE001 - any read failure is a protection event
-            self._enter_fault((f"telemetry read failed: {exc}",))
+        except Exception as exc:  # noqa: BLE001 - a read failure is a lost link, or (RF-on) a protection event
+            self._on_read_failure(exc)
             self._notify()
             return
+        self._read_failures = 0  # a good read clears the link-loss debounce
 
         # Staleness = the IDLE GAP between reads (a stalled/starved poll loop), NOT the duration of
         # the read itself. A single real read is three sequential CXN round-trips over a slow, flaky
@@ -265,7 +282,24 @@ class Controller:
         age = 0.0 if last is None else read_start - last
         self._last_sample_monotonic = self._clock()  # this read's completion time
 
-        decision = evaluate(telemetry, self.limits, telemetry_age_s=age)
+        # Staleness is owned HERE, not in evaluate(), so it can be DEBOUNCED: a single stalled poll
+        # cycle (e.g. a slow disk flush from the recorder) must not fault a healthy run — only a
+        # SUSTAINED loss trips. evaluate() is given age 0 so it judges only the instantaneous safety
+        # conditions (reflected power, temperature, status bits), which always trip on the first bad
+        # sample; the staleness reason is added here after stale_trip_reads consecutive late reads.
+        base = evaluate(telemetry, self.limits, telemetry_age_s=0.0)
+        if age > self.limits.telemetry_timeout_s:
+            self._stale_ticks += 1
+        else:
+            self._stale_ticks = 0
+        reasons = list(base.reasons)
+        if self._stale_ticks >= self.stale_trip_reads:
+            reasons.append(
+                f"telemetry stale/timeout ({age:.2f}s > {self.limits.telemetry_timeout_s:.2f}s)"
+            )
+        decision = SafetyDecision(
+            trip=bool(reasons), reasons=tuple(reasons), warnings=base.warnings
+        )
         with self._lock:
             self.latest_telemetry = telemetry
             self.latest_decision = decision
@@ -283,12 +317,73 @@ class Controller:
             self.state = ControllerState.FAULT
             self.fault_reasons = reasons
 
-    def clear_fault(self) -> None:
-        """Attempt to leave FAULT; only succeeds if the latest sample is not tripping."""
+    def clear_fault(self) -> bool:
+        """Leave FAULT if the latest sample is no longer tripping (the UI's 'Clear fault' button).
+        Returns True if the controller is not (or no longer) faulted; False if a live trip condition
+        still holds it in FAULT. RF stays off — the operator re-enables it explicitly."""
         with self._lock:
+            if self.state is not ControllerState.FAULT:
+                return True
             if self.latest_decision is not None and not self.latest_decision.trip:
                 self.state = ControllerState.CONNECTED
                 self.fault_reasons = ()
+                return True
+            return False
+
+    def _on_read_failure(self, exc: Exception) -> None:
+        """Classify a telemetry read failure — the fix for a turned-off generator latching a stuck
+        FAULT. If the last known sample had RF ON, the generator may still be delivering power with
+        no telemetry: latch a loud FAULT at once (protection; no debounce). Otherwise it is a benign
+        lost link (generator off / cable pulled) — debounce one flaky read, then go DISCONNECTED so
+        the UI shows the truth and the state is cleanly re-attachable, not a fault that can never be
+        cleared while reads keep failing."""
+        self._read_failures += 1
+        last = self.latest_telemetry
+        if last is not None and last.rf_on:
+            self._enter_fault(
+                (
+                    "link lost while RF was ON — the generator may still be live; "
+                    f"kill power at the console ({exc})",
+                )
+            )
+            return
+        if self._read_failures >= self.link_loss_reads:
+            self._drop_link()
+
+    def _drop_link(self) -> None:
+        """Tear down a lost link from INSIDE the poll loop and return to DISCONNECTED (re-attachable
+        for a reconnect). Signals the loop to stop — it runs ON this thread, so it must NEVER join
+        itself the way
+        :meth:`detach_device` does — then forces RF off and closes the transport best-effort and
+        clears published state. Finally fires :attr:`on_link_dropped` (outside the locks) so the app
+        halts its drivers, matching the manual Disconnect path."""
+        self._stop.set()  # let _loop() exit after this tick; do not join our own thread
+        with self._io_lock:
+            dev = self.device
+            if dev is not None:
+                try:
+                    dev.set_rf(False)
+                except Exception:  # noqa: BLE001 - best-effort RF-off; the link is already gone
+                    pass
+                try:
+                    dev.close()
+                except Exception:  # noqa: BLE001 - best-effort close; frees the port for reconnect
+                    pass
+        with self._lock:
+            self.device = None
+            self.armed = False
+            self.state = ControllerState.DISCONNECTED
+            self.latest_telemetry = None
+            self.latest_decision = None
+            self.fault_reasons = ()
+        self._last_sample_monotonic = None
+        self._read_failures = 0
+        hook = self.on_link_dropped
+        if hook is not None:
+            try:
+                hook()
+            except Exception:  # noqa: BLE001 - a driver-halt hook must never break link teardown
+                logger.exception("on_link_dropped hook failed")
 
     # --- guarded commands ------------------------------------------------------------------
     def enable_rf(self) -> None:

@@ -369,6 +369,10 @@ def create_app(
                 device_info = {}
 
         app.state.controller = controller
+        # When the controller auto-drops a lost link (generator off / cable pulled while idle), run
+        # the same cleanup as the manual POST /api/disconnect — halt every driver and clear the
+        # device metadata — so nothing is left "running" with no device or naming a gone generator.
+        controller.on_link_dropped = _on_link_dropped
         app.state.recorder = recorder
         app.state.device_info = device_info
         app.state.backend = backend
@@ -451,6 +455,16 @@ def create_app(
                 stop()
             except Exception:  # noqa: BLE001 - best-effort halt; never block disconnect/disarm
                 pass
+
+    def _on_link_dropped() -> None:
+        """Fired by the controller when it auto-drops a lost link (generator turned off / unplugged
+        while idle). Mirror the app-state cleanup of the manual POST /api/disconnect: halt the
+        drivers AND clear the device metadata, so the UI shows a clean 'no device / disconnected'
+        instead of the pill going grey while the top bar still names the (now absent) generator."""
+        _stop_all_features()
+        app.state.backend = "none"
+        app.state.connected_port = None
+        app.state.device_info = {}
 
     def _presets_payload() -> dict[str, Any]:
         return {
@@ -919,6 +933,17 @@ def create_app(
         _stop_all_features()
         _record_event("estop")
         return {"ok": True, "rf": "off"}
+
+    @app.post("/api/clear-fault")
+    def clear_fault() -> dict[str, Any]:
+        """Clear a latched FAULT once telemetry is healthy again (the UI's 'Clear fault' button). RF
+        stays off — re-enable it explicitly. A no-op if a live trip condition still holds; `cleared`
+        reports whether it left FAULT, and `fault_reasons` shows what still holds it if not."""
+        cleared = _controller().clear_fault()
+        if cleared:
+            _record_event("fault_cleared")
+        snap = _controller().snapshot()
+        return {"cleared": cleared, "state": snap["state"], "fault_reasons": snap["fault_reasons"]}
 
     @app.post("/api/match/manual")
     def match_manual(_req: ManualModeRequest) -> dict[str, Any]:

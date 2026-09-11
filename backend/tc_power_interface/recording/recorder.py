@@ -12,14 +12,19 @@ import csv
 import enum
 import hashlib
 import json
+import logging
 import platform
+import queue
 import re
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
 from tc_power_interface import __version__
+
+logger = logging.getLogger(__name__)
 
 _TELEMETRY_FIELDS = [
     "host_timestamp_ns",
@@ -74,6 +79,12 @@ class TelemetryRecorder:
         self._events: list[dict[str, Any]] = []
         self._sample_count = 0
         self._started_monotonic = 0.0
+        # Disk writes run on a background thread so a slow flush (e.g. Dropbox syncing the csv) can
+        # NEVER block the caller — the controller poll loop records from its own thread, and a
+        # stalled write there would trip the staleness watchdog. record() only enqueues.
+        self._queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._writer_thread: threading.Thread | None = None
+        self._writer_stop = threading.Event()
 
     def start(self, name: str, metadata: dict[str, Any]) -> Path:
         if self.state is RecorderState.RECORDING:
@@ -110,12 +121,21 @@ class TelemetryRecorder:
         self._events = []
         self._sample_count = 0
         self._started_monotonic = time.monotonic()
+        # Start the background writer that drains the row queue (fresh queue per run).
+        self._queue = queue.Queue()
+        self._writer_stop.clear()
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop, name="tcp-recorder-writer", daemon=True
+        )
+        self._writer_thread.start()
         self.state = RecorderState.RECORDING
         self.event("recording_started", {"name": name})
         return run_dir
 
     def record(self, snapshot: dict[str, Any]) -> None:
-        if self.state is not RecorderState.RECORDING or self._csv_writer is None:
+        """Enqueue one row for the background writer. Builds the row (cheap, CPU-only) and returns
+        immediately — NEVER touches the disk on the caller's thread."""
+        if self.state is not RecorderState.RECORDING:
             return
         telemetry = snapshot.get("telemetry")
         if telemetry is None:
@@ -125,10 +145,27 @@ class TelemetryRecorder:
         thermal = snapshot.get("thermal") or {}
         for col, key in _THERMAL_FIELDS.items():
             row[col] = thermal.get(key)
-        self._csv_writer.writerow(row)
-        if self._csv_file is not None:
-            self._csv_file.flush()
+        self._queue.put(row)  # unbounded; rows are tiny and a stall lasts only seconds
         self._sample_count += 1
+
+    def _write_row(self, row: dict[str, Any]) -> None:
+        """Actually write+flush one row to disk. Runs ONLY on the writer thread (seam for tests)."""
+        if self._csv_writer is not None:
+            self._csv_writer.writerow(row)
+            if self._csv_file is not None:
+                self._csv_file.flush()
+
+    def _writer_loop(self) -> None:
+        """Drain the row queue to disk until stopped AND empty, so no queued row is lost on stop."""
+        while not self._writer_stop.is_set() or not self._queue.empty():
+            try:
+                row = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self._write_row(row)
+            except Exception:  # noqa: BLE001 - a failed write must not kill the writer thread
+                logger.exception("telemetry recorder write failed")
 
     def event(self, label: str, data: dict[str, Any] | None = None) -> None:
         self._events.append(
@@ -144,6 +181,14 @@ class TelemetryRecorder:
             return None
         run_dir = self._dir
         self.event("recording_stopped", {"sample_count": self._sample_count})
+
+        # Stop new rows enqueuing, then let the writer drain everything already queued before we
+        # close the file and checksum it — so the manifest hashes the COMPLETE telemetry.csv.
+        self.state = RecorderState.IDLE
+        if self._writer_thread is not None:
+            self._writer_stop.set()
+            self._writer_thread.join(timeout=5.0)
+            self._writer_thread = None
 
         if self._csv_file is not None:
             self._csv_file.close()

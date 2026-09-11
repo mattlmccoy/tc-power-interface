@@ -125,36 +125,106 @@ class TestProtection:
         with pytest.raises(RuntimeError):
             c.enable_rf()
 
-    def test_read_exception_faults_and_commands_rf_off(self):
-        class ExplodingDevice:
-            def __init__(self):
-                self.rf_off_calls = 0
+    def test_idle_link_loss_disconnects_not_faults(self):
+        """Generator turned off / cable pulled while IDLE (RF off): after a short debounce the link
+        is declared lost and the controller goes DISCONNECTED (re-attachable) — NOT a sticky FAULT.
+        This is the reported bug: turning the generator off threw a fault that thought it was still
+        connected."""
+        dev = _FlakyDevice(rf_on=False)
+        c = Controller(dev, poll_interval_s=0.01, link_loss_reads=3)
+        c.connect()
+        c._tick()  # one good read: latest sample shows RF off
+        assert c.state is ControllerState.CONNECTED
+        dev.fail = True
+        c._tick()  # failure 1 — a single flaky read must NOT tear the link down
+        assert c.state is ControllerState.CONNECTED
+        c._tick()  # failure 2 — still within the debounce
+        assert c.state is ControllerState.CONNECTED
+        c._tick()  # failure 3 — link declared lost
+        assert c.state is ControllerState.DISCONNECTED
+        assert c.device is None  # torn down so it is cleanly re-attachable
+        assert c.fault_reasons == ()  # no stuck fault to clear
+        assert dev.rf_off_calls >= 1  # RF commanded off on the way down (defense in depth)
 
-            def request_control(self):
-                return True
+    def test_rf_on_link_loss_faults_immediately(self):
+        """Losing the link while RF was ON is a protection event, not a benign disconnect: the
+        generator may still be delivering power with no telemetry. Latch a loud FAULT at once (no
+        debounce) and keep the device attached so the operator sees it and kills power."""
+        dev = _FlakyDevice(rf_on=True)
+        c = Controller(dev, poll_interval_s=0.01, link_loss_reads=3)
+        c.connect()
+        c._tick()  # good read: last known state is RF ON
+        assert c.state is ControllerState.CONNECTED
+        dev.fail = True
+        c._tick()  # first failure while RF was on -> immediate FAULT
+        assert c.state is ControllerState.FAULT
+        assert any("RF was ON" in r for r in c.fault_reasons)
+        assert c.device is not None  # NOT torn down — the loud fault must persist
+        assert dev.rf_off_calls >= 1
 
-            def force_manual_mode(self):
-                pass
-
-            def read_telemetry(self):
-                raise RuntimeError("cable yanked")
-
-            def set_rf(self, on):
-                if on is False:
-                    self.rf_off_calls += 1
-
-            def set_setpoint(self, w):
-                pass
-
-            def release_control(self):
-                return True
-
-        dev = ExplodingDevice()
-        c = Controller(dev, poll_interval_s=0.01)
+    def test_transient_read_hiccup_recovers_without_disconnect(self):
+        """A good read resets the debounce, so a flaky USB link that recovers never spuriously
+        disconnects a healthy session."""
+        dev = _FlakyDevice(rf_on=False)
+        c = Controller(dev, poll_interval_s=0.01, link_loss_reads=3)
         c.connect()
         c._tick()
+        dev.fail = True
+        c._tick()
+        c._tick()  # 2 consecutive failures (< 3)
+        assert c.state is ControllerState.CONNECTED
+        dev.fail = False
+        c._tick()  # recovered — counter resets
+        dev.fail = True
+        c._tick()
+        c._tick()  # only 2 failures since the recovery -> still connected
+        assert c.state is ControllerState.CONNECTED
+
+    def test_link_drop_fires_hook_to_halt_drivers(self):
+        """On an idle link drop the controller fires ``on_link_dropped`` so the app can halt its
+        drivers (ramp/timer/thermal), exactly as the manual Disconnect does."""
+        dev = _FlakyDevice(rf_on=False)
+        c = Controller(dev, poll_interval_s=0.01, link_loss_reads=1)
+        halted = {"n": 0}
+        c.on_link_dropped = lambda: halted.__setitem__("n", halted["n"] + 1)
+        c.connect()
+        c._tick()  # good read
+        dev.fail = True
+        c._tick()  # failure 1 == threshold -> drop
+        assert c.state is ControllerState.DISCONNECTED
+        assert halted["n"] == 1
+
+
+class TestClearFault:
+    """clear_fault() lets the operator leave a latched FAULT once the sample is healthy again — the
+    UI's 'Clear fault' button. It refuses while a live trip condition still holds."""
+
+    def test_clear_fault_succeeds_when_not_tripping(self):
+        c = make_controller()  # benign sim (no trip)
+        c.connect()
+        c._tick()  # latest_decision is now non-tripping
+        c._enter_fault(("transient stale",))  # latch a fault whose condition has since cleared
         assert c.state is ControllerState.FAULT
-        assert dev.rf_off_calls >= 1
+        assert c.clear_fault() is True
+        assert c.state is ControllerState.CONNECTED
+        assert c.fault_reasons == ()
+
+    def test_clear_fault_refused_while_tripping(self):
+        c = make_controller(reflected_fraction=0.5)  # high reflection -> real trip
+        c.connect()
+        c.set_setpoint(150)
+        c.enable_rf()
+        c._tick()  # trips: latest_decision.trip is True
+        assert c.state is ControllerState.FAULT
+        assert c.clear_fault() is False  # a live condition still holds it faulted
+        assert c.state is ControllerState.FAULT
+
+    def test_clear_fault_noop_when_not_faulted(self):
+        c = make_controller()
+        c.connect()
+        c._tick()
+        assert c.clear_fault() is True  # nothing to clear
+        assert c.state is ControllerState.CONNECTED
 
 
 def _benign_telemetry() -> Telemetry:
@@ -171,6 +241,41 @@ def _benign_telemetry() -> Telemetry:
         operation_mode="",
         tuner="",
     )
+
+
+class _FlakyDevice:
+    """Fake generator whose reads succeed until ``.fail`` is set, then raise a ``TimeoutError`` (a
+    lost link — generator off / cable pulled, mirroring ``SerialCxnTransport.read``). ``rf_on`` sets
+    the last-known RF state so a test can drive the idle vs RF-on link-loss branches."""
+
+    def __init__(self, rf_on: bool):
+        self._rf_on = rf_on
+        self.fail = False
+        self.rf_off_calls = 0
+
+    def request_control(self) -> bool:
+        return True
+
+    def force_manual_mode(self) -> None:
+        pass
+
+    def read_telemetry(self) -> Telemetry:
+        if self.fail:
+            raise TimeoutError("serial read timed out: got 0 of 1 bytes")
+        return replace(_benign_telemetry(), rf_on=self._rf_on)
+
+    def set_rf(self, on: bool) -> None:
+        if on is False:
+            self.rf_off_calls += 1
+
+    def set_setpoint(self, w: int) -> None:
+        pass
+
+    def release_control(self) -> bool:
+        return True
+
+    def close(self) -> None:
+        pass
 
 
 class _SlowReadDevice:
@@ -213,7 +318,24 @@ class TestStaleTelemetryWatchdog:
         assert c.state is not ControllerState.FAULT
         assert dev.rf_off_calls == 0
 
-    def test_genuine_stall_still_trips(self):
+    def test_single_stale_sample_does_not_trip_with_debounce(self):
+        """A single stalled poll cycle (e.g. one slow disk flush) must NOT fault a healthy run —
+        the staleness watchdog is debounced (default 2 consecutive stale reads)."""
+        holder = {"t": 0.0}
+        dev = _SlowReadDevice(holder, read_s=0.05)
+        c = Controller(
+            dev,
+            limits=SafetyLimits(telemetry_timeout_s=1.5),
+            poll_interval_s=0.5,
+            clock=lambda: holder["t"],
+        )
+        c._tick()  # first sample: age 0
+        holder["t"] += 2.0  # ONE stalled cycle
+        c._tick()  # idle gap 2.0 s > 1.5 s, but only the 1st consecutive stale -> no fault
+        assert c.state is not ControllerState.FAULT
+
+    def test_sustained_stall_still_trips(self):
+        """A genuinely sustained loss of telemetry still trips, after the debounce count."""
         holder = {"t": 0.0}
         dev = _SlowReadDevice(holder, read_s=0.05)  # fast reads
         c = Controller(
@@ -223,11 +345,51 @@ class TestStaleTelemetryWatchdog:
             clock=lambda: holder["t"],
         )
         c._tick()  # first sample: age 0
-        holder["t"] += 2.0  # the poll loop stalled 2 s WITHOUT reading (thread starved / hung)
-        c._tick()  # idle gap 2.0 s > 1.5 s -> genuine staleness
+        holder["t"] += 2.0
+        c._tick()  # stale #1 -> no fault yet (debounced)
+        assert c.state is not ControllerState.FAULT
+        holder["t"] += 2.0
+        c._tick()  # stale #2 (consecutive) -> genuine staleness trips
         assert c.state is ControllerState.FAULT
         assert any("stale" in r for r in c.fault_reasons)
         assert dev.rf_off_calls >= 1
+
+    def test_stale_debounce_is_configurable_to_one(self):
+        """stale_trip_reads=1 reproduces the original single-sample trip (no debounce)."""
+        holder = {"t": 0.0}
+        dev = _SlowReadDevice(holder, read_s=0.05)
+        c = Controller(
+            dev,
+            limits=SafetyLimits(telemetry_timeout_s=1.5),
+            poll_interval_s=0.5,
+            clock=lambda: holder["t"],
+            stale_trip_reads=1,
+        )
+        c._tick()
+        holder["t"] += 2.0
+        c._tick()  # first stale sample trips immediately when debounce is 1
+        assert c.state is ControllerState.FAULT
+        assert any("stale" in r for r in c.fault_reasons)
+
+    def test_recovered_read_resets_stale_debounce(self):
+        """One stale cycle followed by a healthy read must clear the debounce, so intermittent
+        single hiccups never accumulate into a trip."""
+        holder = {"t": 0.0}
+        dev = _SlowReadDevice(holder, read_s=0.05)
+        c = Controller(
+            dev,
+            limits=SafetyLimits(telemetry_timeout_s=1.5),
+            poll_interval_s=0.5,
+            clock=lambda: holder["t"],
+        )
+        c._tick()
+        holder["t"] += 2.0
+        c._tick()  # stale #1
+        holder["t"] += 0.5
+        c._tick()  # healthy gap (0.5 s) -> resets the counter
+        holder["t"] += 2.0
+        c._tick()  # stale #1 again (not #2) -> still no fault
+        assert c.state is not ControllerState.FAULT
 
 
 class TestListeners:
