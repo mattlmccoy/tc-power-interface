@@ -5,10 +5,11 @@ interface BannersProps {
   handshake: Handshake | null;
   faulted: boolean;
   ctrl: Snapshot | undefined;
+  clearFault: () => void;
   vnaSession?: { active: boolean; stale: boolean; age_s: number | null };
 }
 
-export function Banners({ handshake, faulted, ctrl, vnaSession }: BannersProps) {
+export function Banners({ handshake, faulted, ctrl, clearFault, vnaSession }: BannersProps) {
   return (
     <>
       {handshake && handshake.level !== "ok" ? (
@@ -19,6 +20,9 @@ export function Banners({ handshake, faulted, ctrl, vnaSession }: BannersProps) 
       {faulted ? (
         <div className="banner fault">
           <strong>FAULT — RF disabled.</strong> {ctrl?.fault_reasons.join("; ")}
+          <button className="banner-action" onClick={clearFault} title="Clear the fault once telemetry is healthy again (RF stays off)">
+            Clear fault
+          </button>
         </div>
       ) : ctrl && ctrl.warnings.length > 0 ? (
         <div className="banner warn">

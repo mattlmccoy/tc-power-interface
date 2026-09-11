@@ -103,7 +103,7 @@ export function App() {
           rfOff={rfOff}
           disarmDevice={disarmDevice}
         />
-        <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} vnaSession={op.status?.vna_session} />
+        <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} clearFault={op.clearFault} vnaSession={op.status?.vna_session} />
       </div>
 
       <ErrorBoundary key={inVna ? "vna" : view}>

@@ -476,6 +476,18 @@ export function useOperator() {
     await api.estop();
     flash("E-STOP — RF off, setpoint 0, all drivers halted", "warn");
   }
+  // Clear a latched FAULT once telemetry is healthy again. If a live trip condition still holds, the
+  // operator refuses and reports why — so the toast tells the user it couldn't clear, not a false OK.
+  async function clearFault() {
+    try {
+      const res = await api.clearFault();
+      const j = (await res.json()) as { cleared: boolean; fault_reasons: string[] };
+      if (j.cleared) flash("fault cleared — RF is off, re-enable when ready", "ok");
+      else flash(`can't clear — still active: ${j.fault_reasons.join("; ")}`, "warn");
+    } catch {
+      flash("clear fault failed: could not reach the operator");
+    }
+  }
   // Send a forward-power setpoint and reflect what the server actually applied. The input jumps to
   // the requested value immediately (so the live −/+ feels responsive), then corrects to applied_w
   // only if the server clamped. `announce` gives the explicit Apply a confirmation toast; the live
@@ -774,7 +786,7 @@ export function useOperator() {
     maxRefl, reflW, zone, reflFillPct, powerCeil, fwdCaution, fwdDanger, requested, textInputStyle,
     base, baseInput, setBaseInput, applyBase, showConnect, setShowConnect, ports, connectBusy,
     connectErr, setPorts, setConnectErr, scanPorts, connectPort, disconnectDevice, armDevice,
-    disarmDevice,
+    disarmDevice, clearFault,
   };
 }
 

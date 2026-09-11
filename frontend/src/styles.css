@@ -88,6 +88,11 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .banner.fault { background: var(--err-bg); color: var(--err); border-bottom: 1px solid var(--err); }
 .banner.warn { background: var(--warn-bg); color: var(--warn); border-bottom: 1px solid var(--warn); }
 .banner strong { font-family: var(--font-mono); }
+/* Inline action inside a fault banner (e.g. "Clear fault") — a compact button in the banner's color. */
+.banner-action { margin-left: calc(var(--space) * 2); padding: 2px 10px; font-size: 12px;
+  font-weight: 600; cursor: pointer; color: var(--err); background: transparent;
+  border: 1px solid var(--err); border-radius: var(--radius); }
+.banner-action:hover { background: var(--err); color: var(--err-bg); }
 /* Startup-order guidance (shown while disconnected): a bordered card, not a bottom-border strip. */
 .banner.startup { background: var(--warn-bg); color: var(--fg); border: 1px solid var(--warn);
   border-radius: var(--radius); margin: 0 0 12px; line-height: 1.5; }
