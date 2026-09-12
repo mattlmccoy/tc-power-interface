@@ -415,6 +415,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   cursor: pointer; margin-right: calc(var(--space) * 2); }
 .help-toggle:hover { color: var(--fg); }
 .help-toggle.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+/* Alerts toggle while the alarm is actively sounding: pulse in the fault color as a visual echo. */
+.help-toggle.alarming { color: var(--err); border-color: var(--err); animation: alerts-pulse 0.9s steps(1) infinite; }
+@keyframes alerts-pulse { 50% { background: var(--err); color: var(--err-bg); border-color: var(--err); } }
 .help-off .hint:not(.mono) { display: none; }
 .help-off .help-text { display: none; }
 

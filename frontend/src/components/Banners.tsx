@@ -6,10 +6,12 @@ interface BannersProps {
   faulted: boolean;
   ctrl: Snapshot | undefined;
   clearFault: () => void;
+  alarmActive: boolean;
+  silence: () => void;
   vnaSession?: { active: boolean; stale: boolean; age_s: number | null };
 }
 
-export function Banners({ handshake, faulted, ctrl, clearFault, vnaSession }: BannersProps) {
+export function Banners({ handshake, faulted, ctrl, clearFault, alarmActive, silence, vnaSession }: BannersProps) {
   return (
     <>
       {handshake && handshake.level !== "ok" ? (
@@ -20,6 +22,11 @@ export function Banners({ handshake, faulted, ctrl, clearFault, vnaSession }: Ba
       {faulted ? (
         <div className="banner fault">
           <strong>FAULT — RF disabled.</strong> {ctrl?.fault_reasons.join("; ")}
+          {alarmActive ? (
+            <button className="banner-action" onClick={silence} title="Silence the alarm (the fault stays until you clear it)">
+              🔕 Silence
+            </button>
+          ) : null}
           <button className="banner-action" onClick={clearFault} title="Clear the fault once telemetry is healthy again (RF stays off)">
             Clear fault
           </button>

@@ -11,6 +11,7 @@ import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { VnaTuneView } from "./pages/VnaTuneView.tsx";
 import { useVna } from "./hooks/useVna.ts";
+import { useAudioAlerts } from "./hooks/useAudioAlerts.ts";
 import { VERSION_LABEL, BUILD_ID, VERSION_FULL } from "./version.ts";
 
 export function App() {
@@ -22,6 +23,7 @@ export function App() {
     ctrl, toast, showStartup, setShowStartup, estop, rfOff, disarmDevice, armed,
   } = op;
   const vna = useVna(op);
+  const alerts = useAudioAlerts(op);
   const inVna = !!op.status?.vna_session?.active;
   // VNA mode: auto-arm the generator once so the AIT caps are drivable (RF stays interlocked off — the
   // arm gate never enables RF and the VNA session refuses enable_rf). A manual disarm afterwards sticks.
@@ -64,6 +66,17 @@ export function App() {
           </span>
         )}
         <button
+          className={`help-toggle ${alerts.enabled ? "on" : ""} ${alerts.alarmActive ? "alarming" : ""}`}
+          onClick={() => alerts.enable(!alerts.enabled)}
+          title={
+            alerts.enabled
+              ? "Audible alerts ON — alarm on faults, chime on reflected-power warnings. Click to mute."
+              : "Turn on audible alerts (alarm on faults, chime on reflected-power warnings)"
+          }
+        >
+          {alerts.enabled ? "🔔" : "🔕"} Alerts
+        </button>
+        <button
           className={`help-toggle ${showHelp ? "on" : ""}`}
           onClick={toggleHelp}
           title={showHelp ? "Hide explanatory text" : "Show explanatory text"}
@@ -103,7 +116,15 @@ export function App() {
           rfOff={rfOff}
           disarmDevice={disarmDevice}
         />
-        <Banners handshake={handshake} faulted={faulted} ctrl={ctrl} clearFault={op.clearFault} vnaSession={op.status?.vna_session} />
+        <Banners
+          handshake={handshake}
+          faulted={faulted}
+          ctrl={ctrl}
+          clearFault={op.clearFault}
+          alarmActive={alerts.alarmActive}
+          silence={alerts.dismiss}
+          vnaSession={op.status?.vna_session}
+        />
       </div>
 
       <ErrorBoundary key={inVna ? "vna" : view}>
