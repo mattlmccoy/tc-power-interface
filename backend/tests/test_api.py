@@ -6,7 +6,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from tc_power_interface.api.app import create_app
+from tc_power_interface.api.app import _read_frontend_version, create_app
 
 
 @pytest.fixture
@@ -38,6 +38,37 @@ class TestHealth:
         body = r.json()
         assert body["backend"] == "simulated"
         assert "version" in body
+
+    def test_health_reports_frontend_app_version(self, tmp_path):
+        # package.json sits next to the dist dir (mirrors frontend/{dist,package.json}); operator
+        # reports THAT version as app_version, compared to the site's baked version.
+        (tmp_path / "package.json").write_text(json.dumps({"version": "9.9.9"}))
+        app = create_app(backend="none", experiments_root=tmp_path, frontend_dist=tmp_path / "dist")
+        with TestClient(app) as c:
+            assert c.get("/api/health").json()["app_version"] == "9.9.9"
+
+    def test_health_app_version_null_when_package_json_missing(self, tmp_path):
+        # No package.json -> app_version is null (never a stale/fabricated value); the banner treats
+        # unknown as "not behind" and never nags.
+        app = create_app(backend="none", experiments_root=tmp_path, frontend_dist=tmp_path / "dist")
+        with TestClient(app) as c:
+            assert c.get("/api/health").json()["app_version"] is None
+
+
+def test_read_frontend_version_reads_package_json(tmp_path):
+    pkg = tmp_path / "package.json"
+    pkg.write_text(json.dumps({"name": "x", "version": "1.2.3"}))
+    assert _read_frontend_version(pkg) == "1.2.3"
+
+
+def test_read_frontend_version_none_on_missing_bad_or_absent_version(tmp_path):
+    assert _read_frontend_version(tmp_path / "nope.json") is None
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ not json")
+    assert _read_frontend_version(bad) is None
+    nov = tmp_path / "nover.json"
+    nov.write_text(json.dumps({"name": "x"}))
+    assert _read_frontend_version(nov) is None
 
 
 class TestStatus:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import platform
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -55,6 +56,18 @@ from tc_power_interface.recording.recorder import RecorderState, TelemetryRecord
 
 API_VERSION = "0.1"
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2].parent / "frontend" / "dist"
+
+
+def _read_frontend_version(package_json: Path) -> str | None:
+    """The frontend release version from package.json — the single per-release source of truth the
+    site also bakes into __APP_VERSION__. Reported as health.app_version so the banner can compare
+    operator vs site like-for-like. None (never a stale/guessed value) if it can't be read; the
+    banner treats unknown as 'not behind' and never nags."""
+    try:
+        version = json.loads(package_json.read_text()).get("version")
+    except Exception:  # noqa: BLE001 - missing/unreadable/invalid package.json -> unknown version
+        return None
+    return version if isinstance(version, str) and version else None
 
 # Cross-origin protection (mirrors FLIR): the site-mode UI talks to the LOCAL operator, so a
 # state-changing request from any other origin must carry X-TCP-Client. The operator-served UI
@@ -216,6 +229,11 @@ def create_app(
 ) -> FastAPI:
     """Build the FastAPI app. The controller/device start in the lifespan."""
     experiments_root = Path(experiments_root or (Path.cwd() / "experiments"))
+    # The frontend release version this operator was deployed with (package.json sits next to dist),
+    # read once at startup and reported as health.app_version for the update-available banner.
+    app_version = _read_frontend_version(
+        (frontend_dist or _DEFAULT_FRONTEND_DIST).parent / "package.json"
+    )
     # Explicit `limits` (tests) win; otherwise load the persisted, hard-bounded limits.
     active_limits = limits if limits is not None else load_limits(experiments_root)
 
@@ -477,6 +495,7 @@ def create_app(
     def health() -> dict[str, Any]:
         return {
             "version": __version__,
+            "app_version": app_version,  # frontend release version -> update banner
             "api_version": API_VERSION,
             "backend": app.state.backend,
             "platform": platform.platform(),
