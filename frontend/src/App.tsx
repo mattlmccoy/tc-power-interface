@@ -5,6 +5,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { StartupModal } from "./components/StartupModal.tsx";
 import { SafetyRail } from "./components/SafetyRail.tsx";
 import { Toast } from "./components/Toast.tsx";
+import { UpdateBanner } from "./components/UpdateBanner.tsx";
 import { useOperator } from "./hooks/useOperator.ts";
 import { ClosedLoopPage } from "./pages/ClosedLoopPage.tsx";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
@@ -37,6 +38,7 @@ export function App() {
   }, [inVna, connected, armed]);
   return (
     <div className={`app ${showHelp ? "" : "help-off"}`}>
+      <UpdateBanner />
       <header className="topbar">
         <span className="brand">
           T<span className="amp">&amp;</span>C Power Interface

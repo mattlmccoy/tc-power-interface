@@ -42,6 +42,8 @@ export interface Discovery {
 /** GET /api/health — the operator's app version and the API version it speaks. */
 export interface Health {
   version: string;
+  /** The frontend release version the operator was deployed with (drives the update banner). */
+  app_version?: string | null;
   api_version?: string;
   backend?: string;
   platform?: string;
