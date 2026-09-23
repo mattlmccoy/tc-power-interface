@@ -484,3 +484,27 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 @media (max-width: 900px) {
   .hero-body, .closed-loop .main { grid-template-columns: 1fr; }
 }
+
+/* Site-mode "operator not running" panel — shown IN PLACE of the tab views when the local operator
+   can't be reached (see App.tsx + shouldShowSetupHelp). It is the sole occupant of the content row. */
+.setup-help { overflow: auto; padding: calc(var(--space) * 6) calc(var(--space) * 4);
+  display: flex; justify-content: center; align-items: flex-start; }
+.setup-card { max-width: 620px; width: 100%; }
+.setup-card h1 { margin: 10px 0 8px; font-size: 18px; font-weight: 600; color: var(--fg-strong); }
+.setup-card code { font-family: var(--font-mono); color: var(--fg-strong); }
+.setup-card .field-label { margin: 4px 0 8px; }
+.setup-status { display: inline-flex; align-items: center; gap: var(--space); padding: 3px 10px;
+  border-radius: 999px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--err); border: 1px solid var(--err); background: var(--err-bg); }
+.setup-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err);
+  animation: tcp-blink 1s infinite; }
+/* Explanatory copy that must ALWAYS show — unlike .hint, which .help-off hides. */
+.setup-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 16px; }
+/* A copyable command line; the command scrolls inside its own box, never the page. */
+.setup-cmd { display: flex; align-items: stretch; gap: 6px; }
+.setup-cmd-text { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 10px 12px;
+  background: var(--bg-deep); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  font-size: 12px; color: var(--fg-strong); }
+.setup-cmd-copy { flex: 0 0 auto; }
+.setup-card .connect-row input { flex: 1; min-width: 0; padding: 8px 10px; color: var(--fg);
+  background: var(--bg-deep); border: 1px solid var(--line-control); border-radius: var(--radius); }

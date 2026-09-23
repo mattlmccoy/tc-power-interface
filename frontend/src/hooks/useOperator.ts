@@ -37,6 +37,10 @@ export function useOperator() {
   // additionally requires a device to be attached — with idle boot the operator is reachable long
   // before any generator is connected.
   const [reachable, setReachable] = useState(false);
+  // How many times the telemetry WS has failed to (re)connect since it was last open. Drives the
+  // site-mode "operator not running" panel off a COUNT rather than a setTimeout — a hidden/backgrounded
+  // tab throttles timers, so a timer-gated reveal can silently never fire. Reset to 0 on every open.
+  const [wsFails, setWsFails] = useState(0);
   const [health, setHealth] = useState<Health | null>(null);
   const [toast, setToast] = useState<{ msg: string; tone: "ok" | "err" | "warn" } | null>(null);
   const [view, setView] = useState<"dashboard" | "settings" | "closed-loop">("dashboard");
@@ -248,7 +252,10 @@ export function useOperator() {
     let retry: ReturnType<typeof setTimeout> | undefined;
     const connect = () => {
       ws = new WebSocket(wsUrl(base, "/ws/telemetry"));
-      ws.onopen = () => setReachable(true);
+      ws.onopen = () => {
+        setReachable(true);
+        setWsFails(0);
+      };
       ws.onmessage = (ev) => {
         const s = JSON.parse(ev.data) as Status;
         setStatus(s);
@@ -289,6 +296,7 @@ export function useOperator() {
       };
       ws.onclose = () => {
         setReachable(false);
+        setWsFails((f) => f + 1);
         if (!closed) retry = setTimeout(connect, 1000);
       };
       ws.onerror = () => ws?.close();
@@ -768,7 +776,7 @@ export function useOperator() {
   } as const;
 
   return {
-    status, reachable, health, toast, flash, view, setView, showGauges, toggleGauges,
+    status, reachable, wsFails, health, toast, flash, view, setView, showGauges, toggleGauges,
     showRoiOverlay, toggleRoiOverlay, heroTrace, roiTrace, showHelp,
     toggleHelp, showStartup, setShowStartup, setpointInput, setSetpointInput, setpointRef,
     applySetpoint, nudgeSetpoint, onSetpointKey, rfOn, rfOff, estop, rampForm, setRampForm,

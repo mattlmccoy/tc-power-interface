@@ -2,11 +2,14 @@ import { useEffect, useRef } from "react";
 import { Banners } from "./components/Banners.tsx";
 import { ConnectBar } from "./components/ConnectBar.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
+import { SetupHelp } from "./components/SetupHelp.tsx";
 import { StartupModal } from "./components/StartupModal.tsx";
 import { SafetyRail } from "./components/SafetyRail.tsx";
 import { Toast } from "./components/Toast.tsx";
 import { UpdateBanner } from "./components/UpdateBanner.tsx";
 import { useOperator } from "./hooks/useOperator.ts";
+import { SITE_MODE } from "./lib/api.ts";
+import { shouldShowSetupHelp } from "./lib/setupHelp.ts";
 import { ClosedLoopPage } from "./pages/ClosedLoopPage.tsx";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
@@ -19,13 +22,17 @@ export function App() {
   const op = useOperator();
   const {
     device, view, setView, showHelp, toggleHelp, pillState, showConnect, setShowConnect, ports,
-    scanPorts, baseInput, setBaseInput, applyBase, setPorts, setConnectErr, connected,
-    disconnectDevice, connectBusy, connectErr, connectPort, health, reachable, handshake, faulted,
-    ctrl, toast, showStartup, setShowStartup, estop, rfOff, disarmDevice, armed,
+    scanPorts, base, baseInput, setBaseInput, applyBase, setPorts, setConnectErr, connected,
+    disconnectDevice, connectBusy, connectErr, connectPort, health, reachable, wsFails, handshake,
+    faulted, ctrl, toast, showStartup, setShowStartup, estop, rfOff, disarmDevice, armed,
   } = op;
   const vna = useVna(op);
   const alerts = useAudioAlerts(op);
   const inVna = !!op.status?.vna_session?.active;
+  // Site mode only: when the local operator can't be reached after repeated WS-connect failures (e.g.
+  // the PC rebooted and nothing restarted it), replace the tab views with a panel that shows the
+  // command to start it.
+  const showSetup = shouldShowSetupHelp({ siteMode: SITE_MODE, reachable, wsFails });
   // VNA mode: auto-arm the generator once so the AIT caps are drivable (RF stays interlocked off — the
   // arm gate never enables RF and the VNA session refuses enable_rf). A manual disarm afterwards sticks.
   const autoArmedRef = useRef(false);
@@ -129,25 +136,37 @@ export function App() {
         />
       </div>
 
-      <ErrorBoundary key={inVna ? "vna" : view}>
-        {() => (
-          <>
-            {inVna ? (
-              <VnaTuneView op={op} vna={vna} />
-            ) : view === "dashboard" ? (
-              <DashboardPage op={op} />
-            ) : view === "settings" ? (
-              <SettingsPage op={op} />
-            ) : (
-              <ClosedLoopPage op={op} />
-            )}
-          </>
-        )}
+      <ErrorBoundary key={showSetup ? "setup" : inVna ? "vna" : view}>
+        {() =>
+          showSetup ? (
+            <SetupHelp
+              operatorBase={base}
+              baseInput={baseInput}
+              setBaseInput={setBaseInput}
+              applyBase={applyBase}
+            />
+          ) : (
+            <>
+              {inVna ? (
+                <VnaTuneView op={op} vna={vna} />
+              ) : view === "dashboard" ? (
+                <DashboardPage op={op} />
+              ) : view === "settings" ? (
+                <SettingsPage op={op} />
+              ) : (
+                <ClosedLoopPage op={op} />
+              )}
+            </>
+          )
+        }
       </ErrorBoundary>
 
       <Toast toast={toast} />
 
-      <StartupModal open={showStartup} onClose={() => setShowStartup(false)} />
+      {/* Held back while the "operator not running" panel is up: the power-on-order reminder is about
+          generator/AIT sequencing, which only matters once an operator is running — and it would
+          otherwise cover the start instructions. It appears as soon as the operator connects. */}
+      <StartupModal open={showStartup && !showSetup} onClose={() => setShowStartup(false)} />
     </div>
   );
 }
