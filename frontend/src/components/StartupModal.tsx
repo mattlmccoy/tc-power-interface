@@ -19,8 +19,10 @@ export function StartupModal({ open, onClose }: StartupModalProps) {
               </button>
             </div>
             <p className="modal-lead">
-              <strong>Turn the generator ON before the AIT (matching network).</strong> Powering the
-              AIT first shifts the caps and ruins the tune.
+              <strong>Power on BOTH the generator and the AIT (matching network) before connecting in
+              this software</strong> — generator first, then the AIT. Turning the AIT on first, or
+              after the generator is connected over USB, moves the tune and load caps and ruins the
+              tune.
             </p>
             <ol className="modal-steps">
               <li>Load the part into the electrodes inside the chamber.</li>
@@ -31,6 +33,10 @@ export function StartupModal({ open, onClose }: StartupModalProps) {
               <li>Confirm everything is in place and safe.</li>
               <li>
                 <strong>Turn on the generator → wait for boot → turn on the AIT.</strong>
+              </li>
+              <li>
+                <strong>Only then connect the generator here</strong> (Connect → Scan → Connect). If you
+                ever need to power-cycle the AIT, disconnect here first.
               </li>
             </ol>
             <button className="btn accent full" onClick={onClose}>

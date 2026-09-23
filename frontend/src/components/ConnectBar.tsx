@@ -93,6 +93,15 @@ export function ConnectBar(props: ConnectBarProps) {
                   </button>
                 </div>
 
+                {!connected ? (
+                  // Always visible (NOT .hint, which Help-off hides): this is the moment the caps can
+                  // get moved — the AIT must already be ON when the generator is connected over USB.
+                  <div className="connect-warn">
+                    Power on the generator, then the AIT, <strong>before</strong> connecting. Turning
+                    the AIT on after connecting moves the tune and load caps.
+                  </div>
+                ) : null}
+
                 {connected ? (
                   <div className="connect-current">
                     <span>Connected{device?.id ? ` — ${device.id}` : ""}</span>

@@ -66,6 +66,9 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .pop-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
 .connect-sec { display: flex; flex-direction: column; gap: 6px; }
 .connect-sec .field-label { margin: 0 0 2px; }
+/* Power-on-order warning above the Connect buttons — always shown (unlike .hint), in the warn color. */
+.connect-warn { font-size: 11px; line-height: 1.4; color: var(--warn); padding: 6px 8px;
+  border: 1px solid var(--warn); border-radius: 4px; background: var(--warn-bg); }
 .connect-row { display: flex; gap: 6px; align-items: center; }
 .connect-row > input { flex: 1; min-width: 0; }
 .connect-row-head { justify-content: space-between; }
