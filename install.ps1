@@ -19,8 +19,24 @@
 
 function Install-TcpOperator {
     $RepoUrl = 'https://github.com/mattlmccoy/tc-power-interface.git'
-    $Dest = if ($env:TCP_DIR) { $env:TCP_DIR } else { Join-Path $HOME 'tc-power-interface' }
     $TaskName = 'TCPowerOperator'
+    # Where to install/update. TCP_DIR wins. Otherwise, if the task is ALREADY installed, update the
+    # checkout it runs from (read back from its -File argument) -- re-running this is the "update"
+    # command and must not quietly move the operator to a new clone. First install: $HOME default.
+    $Dest = $null
+    if ($env:TCP_DIR) {
+        $Dest = $env:TCP_DIR
+    } else {
+        $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if ($existing) {
+            $m = [regex]::Match([string]$existing.Actions[0].Arguments, '-File "([^"]+)\\deploy\\windows\\run-operator\.ps1"')
+            if ($m.Success -and (Test-Path (Join-Path $m.Groups[1].Value '.git'))) {
+                $Dest = $m.Groups[1].Value
+                Write-Host "Found the installed '$TaskName' task; updating its checkout at $Dest"
+            }
+        }
+    }
+    if (-not $Dest) { $Dest = Join-Path $HOME 'tc-power-interface' }
     $Port = 8010
     $FlirUrl = 'http://127.0.0.1:8000'
 
