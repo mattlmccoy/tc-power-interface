@@ -1,7 +1,7 @@
 // Operator update detection: is the local operator running OLDER code than the version this site was
-// built from, and what command re-installs (updates + restarts) it. TC-POWER's operator is macOS-only
-// (launchd + install.sh); there is no install.ps1, so only macOS gets a command — everything else is
-// pointed at a manual update rather than a link that would 404.
+// built from, and what command re-installs (updates + restarts) it. macOS uses install.sh (launchd
+// service); Windows uses install.ps1 (per-user Scheduled Task + supervisor loop). Linux/other have no
+// installer, so they get a manual note rather than a link that would 404.
 
 export type Os = "mac" | "windows" | "linux" | "other";
 
@@ -40,13 +40,15 @@ export function detectOs(userAgent: string): Os {
   return "other";
 }
 
-/** The update one-liner for an OS. Re-running install.sh git-pulls the repo and re-runs the service
- *  installer (which reloads the operator). macOS only — `command` is null on every other OS (there is
- *  no install.ps1 / Linux installer), so the banner shows a manual-update note instead. */
+/** The install/update one-liner for an OS. Re-running either installer git-pulls the repo and
+ *  restarts the operator service. `command` is null on Linux/other (no installer), so the banner
+ *  shows a manual-update note instead. */
 export function updateCommand(os: Os): { label: string; command: string | null } {
   if (os === "mac") {
     return { label: "macOS", command: `curl -fsSL ${REPO}/install.sh | bash` };
   }
-  const label = os === "windows" ? "Windows" : os === "linux" ? "Linux" : "your OS";
-  return { label, command: null };
+  if (os === "windows") {
+    return { label: "Windows PowerShell", command: `irm ${REPO}/install.ps1 | iex` };
+  }
+  return { label: os === "linux" ? "Linux" : "your OS", command: null };
 }

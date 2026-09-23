@@ -64,11 +64,28 @@ cd frontend && npm run dev                       # http://127.0.0.1:5174 (proxie
 
 The operator UI is also published at **https://mattlmccoy.github.io/tc-power-interface/** (a
 static, site-mode build). It controls nothing on its own — it connects back to a **local** operator
-you run on the machine wired to the generator:
+you run on the machine wired to the generator. Install it as an always-on background service (starts
+at login, restarts itself if it stops, survives reboots; re-running also updates it):
+
+```bash
+# macOS (Terminal) — launchd LaunchAgent
+curl -fsSL https://raw.githubusercontent.com/mattlmccoy/tc-power-interface/main/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell) — per-user Scheduled Task 'TCPowerOperator' + supervisor loop; needs git + uv
+irm https://raw.githubusercontent.com/mattlmccoy/tc-power-interface/main/install.ps1 | iex
+```
+
+Or run it by hand in the foreground (keep the window open):
 
 ```bash
 cd backend && uv run tcp-serve      # API on 127.0.0.1:8010; allows the Pages origin by default
 ```
+
+If the hosted page can't reach an operator it shows these commands for your OS. Windows logs go to
+`%LOCALAPPDATA%\tcpower\operator.log`; remove the Windows service with
+`deploy\windows\uninstall-operator-service.ps1` (macOS: `deploy/uninstall-operator-service.sh`).
 
 Open the hosted page, leave the `operator` field at `http://localhost:8010`, and it drives your
 local generator. The operator is localhost-bound and only accepts cross-origin control from the

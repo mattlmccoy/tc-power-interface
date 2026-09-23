@@ -31,8 +31,17 @@ test("updateCommand: macOS gets the install.sh one-liner", () => {
   assert.match(c.command as string, /^curl -fsSL https:\/\/raw\.githubusercontent\.com\/mattlmccoy\/tc-power-interface\/main\/install\.sh \| bash$/);
 });
 
-test("updateCommand: non-macOS gets a manual note, NOT a broken command (there is no install.ps1)", () => {
-  for (const os of ["windows", "linux", "other"] as const) {
+test("updateCommand: Windows gets the install.ps1 one-liner (re-running it updates + restarts)", () => {
+  const c = updateCommand("windows");
+  assert.equal(
+    c.command,
+    "irm https://raw.githubusercontent.com/mattlmccoy/tc-power-interface/main/install.ps1 | iex",
+  );
+  assert.match(c.label, /PowerShell/);
+});
+
+test("updateCommand: Linux/other get a manual note, NOT a command (no installer for them)", () => {
+  for (const os of ["linux", "other"] as const) {
     assert.equal(updateCommand(os).command, null);
     assert.ok(updateCommand(os).label); // still labels the OS for the manual-update note
   }
