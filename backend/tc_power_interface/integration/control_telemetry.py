@@ -37,6 +37,7 @@ def build_control_telemetry(
         "reflected_fraction": telemetry.get("reflected_fraction", 0.0),
         "error_c": target_c - measured_c,
         "roi": roi,
+        **_cap_readback(telemetry),
     }
 
 
@@ -53,6 +54,17 @@ def build_power_heartbeat(*, telemetry: dict[str, Any], ts: str) -> dict[str, An
         "forward_w": telemetry.get("forward_w", 0.0),
         "reverse_w": telemetry.get("reverse_w", 0.0),
         "reflected_fraction": telemetry.get("reflected_fraction", 0.0),
+        **_cap_readback(telemetry),
+    }
+
+
+def _cap_readback(telemetry: dict[str, Any]) -> dict[str, Any]:
+    """AIT tune/load cap readback (percent, from the generator's GT block) for both bodies. Additive
+    keys agreed with the FLIR session — FLIR >= 0.4.52 records them in the run's events and
+    exports/control.csv; older FLIR ignores unknown keys. None means unknown."""
+    return {
+        "tune_cap_percent": telemetry.get("tune_cap_percent"),
+        "load_cap_percent": telemetry.get("load_cap_percent"),
     }
 
 

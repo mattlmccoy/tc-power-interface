@@ -29,6 +29,9 @@ def test_build_power_heartbeat_has_only_the_power_keys_and_mode_manual():
         "forward_w": 118.5,
         "reverse_w": 2.1,
         "reflected_fraction": 0.018,
+        # AIT cap readback (FLIR >= 0.4.52 records these; unknown -> null). Absent here -> None.
+        "tune_cap_percent": None,
+        "load_cap_percent": None,
     }
     # No thermal-loop keys leak into a manual heartbeat (FLIR labels these "RF: <W>", not "loop:").
     thermal_keys = {"setpoint_c", "measured_c", "applied_w", "recommended_w", "phase", "roi"}
@@ -70,6 +73,8 @@ def test_build_control_telemetry_maps_the_exact_contract_keys():
         "reflected_fraction": 0.018,
         "error_c": 35.0,  # target_c - control_temp_c
         "roi": "circle_medium_small",
+        "tune_cap_percent": None,  # absent from TELEMETRY -> unknown
+        "load_cap_percent": None,
     }
 
 
@@ -79,6 +84,18 @@ def test_applied_w_null_passes_through_when_advisory():
         thermal=thermal, telemetry=TELEMETRY, roi="r", ts="t",
     )
     assert body["applied_w"] is None
+
+
+def test_both_bodies_carry_the_ait_cap_readback():
+    """Additive contract agreed with the FLIR session (FLIR 0.4.52 writes them to control.csv):
+    both the manual heartbeat and the closed-loop row carry the AIT tune/load cap readback, so
+    FLIR's run record shows the matching network alongside RF power (2026-09-24 follow-up)."""
+    tel = {**TELEMETRY, "tune_cap_percent": 41.5, "load_cap_percent": 63.0}
+    hb = build_power_heartbeat(telemetry=tel, ts="t")
+    row = build_control_telemetry(thermal=THERMAL, telemetry=tel, roi="r", ts="t")
+    for body in (hb, row):
+        assert body["tune_cap_percent"] == 41.5
+        assert body["load_cap_percent"] == 63.0
 
 
 class _FakePost:

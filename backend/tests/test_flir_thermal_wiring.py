@@ -123,7 +123,13 @@ def test_power_heartbeat_posts_when_connected_but_thermal_loop_stopped(tmp_path)
         poster.join()
         manual = [b for b in posted if b.get("mode") == "manual"]
         assert manual, "expected a power-only heartbeat while the loop is stopped"
-        assert set(manual[-1]) == {"ts", "mode", "forward_w", "reverse_w", "reflected_fraction"}
+        assert set(manual[-1]) == {
+            "ts", "mode", "forward_w", "reverse_w", "reflected_fraction",
+            "tune_cap_percent", "load_cap_percent",  # AIT cap readback (FLIR >= 0.4.52)
+        }
+        # The live wiring carries the REAL readback from the generator sample, not a placeholder.
+        assert isinstance(manual[-1]["tune_cap_percent"], float)
+        assert isinstance(manual[-1]["load_cap_percent"], float)
 
 
 def test_no_heartbeat_while_the_thermal_loop_runs_only_the_full_row(tmp_path):
