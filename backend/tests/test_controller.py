@@ -569,3 +569,60 @@ class TestArm:
                 c.set_setpoint(50)  # control blocked again
         finally:
             c.detach_device()
+
+
+class TestCapCommandEvents:
+    """Every tune/load cap command fires on_cap_command (the app records it as a run event) with its
+    source, the requested value, the readback just before, and the RF context — so a run can be
+    reconstructed after the fact (a 2026-09-24 in-run Load retune preceded a transformer-core
+    runaway, and nothing recorded which cap moves came when)."""
+
+    def test_event_carries_source_request_readback_before_and_rf_context(self):
+        c = make_controller()
+        c.connect()
+        c._tick()  # latest sample -> readback_before
+        before = c.latest_telemetry.load_cap_percent
+        seen: list[dict] = []
+        c.on_cap_command = seen.append
+        c.set_load_capacity(40.0, source="operator")
+        assert len(seen) == 1
+        ev = seen[0]
+        assert ev["axis"] == "load"
+        assert ev["source"] == "operator"
+        assert ev["requested"] == 40.0
+        assert ev["readback_before"] == before
+        assert ev["rf_on"] is False
+        assert "forward_w" in ev and "reverse_w" in ev
+
+    def test_source_defaults_to_unspecified(self):
+        c = make_controller()
+        c.connect()
+        c._tick()
+        seen: list[dict] = []
+        c.on_cap_command = seen.append
+        c.set_tune_capacity(20.0)
+        assert seen[0]["axis"] == "tune"
+        assert seen[0]["source"] == "unspecified"
+
+    def test_refused_command_records_nothing(self):
+        c = make_controller()
+        c.connect()
+        c.disarm()
+        seen: list[dict] = []
+        c.on_cap_command = seen.append
+        with pytest.raises(RuntimeError):
+            c.set_tune_capacity(10.0, source="operator")
+        assert seen == []
+
+    def test_hook_failure_never_breaks_the_command(self):
+        c = make_controller()
+        c.connect()
+        c._tick()
+
+        def boom(_ev: dict) -> None:
+            raise RuntimeError("recorder down")
+
+        c.on_cap_command = boom
+        c.set_tune_capacity(33.0, source="operator")  # must not raise
+        c._tick()
+        assert c.latest_telemetry.tune_cap_percent == pytest.approx(33.0, abs=1.0)

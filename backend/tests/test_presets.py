@@ -9,15 +9,18 @@ from tc_power_interface.control.presets import PresetStore
 class FakeController:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
+        self.sources: list[object] = []
 
     def set_manual_mode(self, on: bool) -> None:
         self.calls.append(("manual", on))
 
-    def set_tune_capacity(self, p: int) -> None:
+    def set_tune_capacity(self, p: int, source: object = None) -> None:
         self.calls.append(("tune", p))
+        self.sources.append(source)
 
-    def set_load_capacity(self, p: int) -> None:
+    def set_load_capacity(self, p: int, source: object = None) -> None:
         self.calls.append(("load", p))
+        self.sources.append(source)
 
 
 def test_save_and_list(tmp_path):
@@ -36,6 +39,16 @@ def test_recall_applies_caps_in_manual_mode_first(tmp_path):
     assert applied == {"tune_cap_percent": 40, "load_cap_percent": 60}
     # manual mode set FIRST (never ATUNE), then caps
     assert fake.calls == [("manual", True), ("tune", 40), ("load", 60)]
+
+
+def test_recall_tags_its_cap_commands_as_preset(tmp_path):
+    """A recall's cap moves are logged as source="preset", so the run record can tell them apart
+    from operator and auto-tuner moves (post-incident reconstruction, 2026-09-24)."""
+    s = PresetStore(tmp_path)
+    s.save(4, tune=30, load=55)
+    fake = FakeController()
+    s.recall(4, fake)
+    assert fake.sources == ["preset", "preset"]
 
 
 def test_recall_empty_slot_is_noop(tmp_path):

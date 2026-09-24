@@ -239,9 +239,9 @@ class MatchTuner:
         cur = tune if axis == "tune" else load
         target = self._clamp(cur + commanded)
         if axis == "tune":
-            self.controller.set_tune_capacity(target)
+            self.controller.set_tune_capacity(target, source="match_tuner")
         else:
-            self.controller.set_load_capacity(target)
+            self.controller.set_load_capacity(target, source="match_tuner")
 
     def snapshot(self) -> dict[str, Any]:
         return {

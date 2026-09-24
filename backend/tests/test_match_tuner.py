@@ -47,11 +47,14 @@ class FakeController:
         self.t_opt = t_opt
         self.l_opt = l_opt
         self.rf_enabled_calls = 0
+        self.sources: list[object] = []
 
-    def set_tune_capacity(self, p):
+    def set_tune_capacity(self, p, source=None):
+        self.sources.append(source)
         self.tune = max(0.0, min(100.0, p))
 
-    def set_load_capacity(self, p):
+    def set_load_capacity(self, p, source=None):
+        self.sources.append(source)
         self.load = max(0.0, min(100.0, p))
 
     def enable_rf(self):  # must never be called by the tuner
@@ -82,14 +85,14 @@ class BacklashController:
         self.l_opt = l_opt
         self.rf_enabled_calls = 0
 
-    def set_tune_capacity(self, p):
+    def set_tune_capacity(self, p, source=None):
         p = max(0.0, min(100.0, p))
         self._tphys, self._tdir = backlash_position(
             phys=self._tphys, engaged_dir=self._tdir, prev_cmd=self.tune, cmd=p, lash=self.lash
         )
         self.tune = p
 
-    def set_load_capacity(self, p):
+    def set_load_capacity(self, p, source=None):
         p = max(0.0, min(100.0, p))
         self._lphys, self._ldir = backlash_position(
             phys=self._lphys, engaged_dir=self._ldir, prev_cmd=self.load, cmd=p, lash=self.lash
@@ -197,3 +200,16 @@ def test_caps_stay_in_bounds():
     for _ in range(300):
         mt.tick(0.5, _telemetry(fake))
     assert 0.0 <= fake.tune <= 100.0 and 0.0 <= fake.load <= 100.0
+
+
+def test_auto_cap_moves_are_tagged_match_tuner():
+    """Every cap command the auto-tuner issues is tagged source="match_tuner", so the run log can
+    tell automatic moves from operator moves (post-incident reconstruction, 2026-09-24)."""
+    fake = FakeController()
+    mt = MatchTuner(fake, plan=MatchTunerPlan(mode="auto"))
+    mt.start()
+    mt.arm()
+    for _ in range(10):
+        mt.tick(0.5, _telemetry(fake))
+    assert fake.sources, "the tuner made no cap moves in auto mode"
+    assert set(fake.sources) == {"match_tuner"}

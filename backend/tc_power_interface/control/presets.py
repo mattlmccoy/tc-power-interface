@@ -76,8 +76,8 @@ class PresetStore:
             return None
         # Manual mode FIRST — this recall never engages the forbidden ATUNE preset path.
         controller.set_manual_mode(True)
-        controller.set_tune_capacity(entry["tune_cap_percent"])
-        controller.set_load_capacity(entry["load_cap_percent"])
+        controller.set_tune_capacity(entry["tune_cap_percent"], source="preset")
+        controller.set_load_capacity(entry["load_cap_percent"], source="preset")
         return dict(entry)
 
     def list(self) -> dict[int, dict[str, int] | None]:

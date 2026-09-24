@@ -391,6 +391,9 @@ def create_app(
         # the same cleanup as the manual POST /api/disconnect — halt every driver and clear the
         # device metadata — so nothing is left "running" with no device or naming a gone generator.
         controller.on_link_dropped = _on_link_dropped
+        # Every tune/load cap command (operator, preset, auto match-tuner) becomes a run event with
+        # its source + the readback just before, so in-run cap moves can be reconstructed later.
+        controller.on_cap_command = lambda ev: _record_event("cap_command", ev)
         app.state.recorder = recorder
         app.state.device_info = device_info
         app.state.backend = backend
@@ -973,7 +976,7 @@ def create_app(
     @app.post("/api/match/tune")
     def match_tune(req: CapacityRequest) -> dict[str, Any]:
         try:
-            _controller().set_tune_capacity(req.percent)
+            _controller().set_tune_capacity(req.percent, source="operator")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:  # not armed / no device
@@ -983,7 +986,7 @@ def create_app(
     @app.post("/api/match/load")
     def match_load(req: CapacityRequest) -> dict[str, Any]:
         try:
-            _controller().set_load_capacity(req.percent)
+            _controller().set_load_capacity(req.percent, source="operator")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:  # not armed / no device
@@ -1084,10 +1087,10 @@ def create_app(
         except WebSocketDisconnect:
             return
 
-    def _record_event(label: str) -> None:
+    def _record_event(label: str, data: dict[str, Any] | None = None) -> None:
         rec = _recorder()
         if rec.state is RecorderState.RECORDING:
-            rec.event(label)
+            rec.event(label, data)
 
     # --- static frontend -------------------------------------------------------------------
     dist = frontend_dist or _DEFAULT_FRONTEND_DIST

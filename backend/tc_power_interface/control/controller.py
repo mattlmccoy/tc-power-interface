@@ -63,6 +63,10 @@ class Controller:
         #: controller auto-drops a lost link — the driver objects live in the API layer, so the
         #: controller cannot reach them directly. Mirrors what POST /api/disconnect does manually.
         self.on_link_dropped: Callable[[], None] | None = None
+        #: Optional hook fired after every SUCCESSFUL tune/load cap command, with {axis, source,
+        #: requested, readback_before, rf_on, forward_w, reverse_w}. The app records it as a run
+        #: event so in-run cap moves can be reconstructed (the settled "after" is in the CSV).
+        self.on_cap_command: Callable[[dict[str, Any]], None] | None = None
         #: Backend name ("simulated"/"serial"), set by the app; the thermal loop's arming gate
         #: allows auto-drive freely in sim but requires an explicit arm on real hardware.
         self.backend = "simulated"
@@ -423,17 +427,48 @@ class Controller:
         with self._io_lock:
             self.device.force_manual_mode()
 
-    def set_tune_capacity(self, percent: float) -> None:
+    def set_tune_capacity(self, percent: float, source: str = "unspecified") -> None:
+        """Move the tune cap. ``source`` tags who asked (operator / preset / match_tuner) in the run
+        log; the command itself is identical whatever the source."""
         self._require_device()
         self._require_armed()
+        before = self._cap_context("tune_cap_percent")
         with self._io_lock:
             self.device.set_tune_capacity(percent)
+        self._emit_cap_command("tune", percent, source, before)
 
-    def set_load_capacity(self, percent: float) -> None:
+    def set_load_capacity(self, percent: float, source: str = "unspecified") -> None:
+        """Move the load cap. ``source`` tags who asked (see :meth:`set_tune_capacity`)."""
         self._require_device()
         self._require_armed()
+        before = self._cap_context("load_cap_percent")
         with self._io_lock:
             self.device.set_load_capacity(percent)
+        self._emit_cap_command("load", percent, source, before)
+
+    def _cap_context(self, cap_field: str) -> dict[str, Any]:
+        """The latest sample's readback of this cap + RF context, taken just BEFORE a command."""
+        with self._lock:
+            t = self.latest_telemetry
+        if t is None:
+            return {"readback_before": None, "rf_on": None, "forward_w": None, "reverse_w": None}
+        return {
+            "readback_before": getattr(t, cap_field),
+            "rf_on": t.rf_on,
+            "forward_w": t.forward_w,
+            "reverse_w": t.reverse_w,
+        }
+
+    def _emit_cap_command(
+        self, axis: str, requested: float, source: str, context: dict[str, Any]
+    ) -> None:
+        hook = self.on_cap_command
+        if hook is None:
+            return
+        try:
+            hook({"axis": axis, "source": source, "requested": requested, **context})
+        except Exception:  # noqa: BLE001 - logging a cap move must never break the move itself
+            logger.exception("on_cap_command hook failed")
 
     # --- VNA pre-run auto-tune session (RF interlock) --------------------------------------
     def begin_vna_session(self) -> None:

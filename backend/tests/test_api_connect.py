@@ -154,3 +154,27 @@ def test_connect_is_disarmed_until_armed(tmp_path):
         assert c.post("/api/disarm").status_code == 200
         assert c.get("/api/status").json()["controller"]["armed"] is False
         c.post("/api/disconnect")
+
+
+def test_operator_cap_move_is_recorded_as_a_run_event(tmp_path):
+    """POST /api/match/load while recording lands a cap_command event (source operator) in the run's
+    events.json, so in-run cap moves can be reconstructed afterwards."""
+    import json
+
+    with _idle_client(tmp_path) as c:
+        _connect_and_arm(c)
+        ctrl = c.app.state.controller
+        deadline = time.monotonic() + 3
+        while ctrl.latest_telemetry is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        r = c.post("/api/recording/start", json={"name": "capmove", "notes": ""})
+        assert r.status_code == 200
+        assert c.post("/api/match/load", json={"percent": 41}).status_code == 200
+        assert c.post("/api/recording/stop").status_code == 200
+    events_files = list(tmp_path.glob("*capmove*/events.json"))
+    assert len(events_files) == 1
+    caps = [e for e in json.loads(events_files[0].read_text()) if e["label"] == "cap_command"]
+    assert len(caps) == 1
+    assert caps[0]["data"]["axis"] == "load"
+    assert caps[0]["data"]["source"] == "operator"
+    assert caps[0]["data"]["requested"] == 41
