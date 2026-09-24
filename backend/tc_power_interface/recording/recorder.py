@@ -49,7 +49,11 @@ _THERMAL_FIELDS = {
     "thermal_recommended_w": "recommended_w",
     "thermal_applied_w": "applied_w",
 }
-_CSV_FIELDS = [*_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS]
+#: Matching-network / generator readback (the CXN GT block, read every sample). APPENDED after all
+#: pre-existing columns so readers keyed on the old layout are unaffected. Added 2026-09-24: an
+#: in-run Load retune preceded a transformer-core runaway and the log had no tune/load positions.
+_MATCH_FIELDS = ["tune_cap_percent", "load_cap_percent", "manual_mode", "dc_voltage", "preset_slot"]
+_CSV_FIELDS = [*_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS]
 
 
 class RecorderState(enum.Enum):
@@ -145,6 +149,8 @@ class TelemetryRecorder:
         thermal = snapshot.get("thermal") or {}
         for col, key in _THERMAL_FIELDS.items():
             row[col] = thermal.get(key)
+        for key in _MATCH_FIELDS:
+            row[key] = telemetry.get(key)
         self._queue.put(row)  # unbounded; rows are tiny and a stall lasts only seconds
         self._sample_count += 1
 

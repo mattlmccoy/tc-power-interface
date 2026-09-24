@@ -137,3 +137,39 @@ def test_slug_sanitizes_name(tmp_path):
     rec.stop()
     assert "My_Run" in path.name
     assert "!" not in path.name and "#" not in path.name
+
+
+#: The CSV header as it was before the match-readback columns were added (captured from the recorder
+#: on main @ a087703). External readers (FLIR, geo-prewarp rig_calibration) key on column NAMES, but
+#: new columns must still be APPENDED, never inserted, so nothing positional can shift.
+_LEGACY_HEADER = [
+    "host_timestamp_ns", "forward_w", "reverse_w", "load_w", "reflected_fraction", "rf_on",
+    "temperature_c", "operation_mode", "tuner", "status", "controller_state",
+    "thermal_phase", "thermal_mode", "thermal_armed", "thermal_control_temp_c", "thermal_target_c",
+    "thermal_recommended_w", "thermal_applied_w",
+]
+
+
+def test_records_match_readback_columns_appended_after_existing(tmp_path):
+    """The AIT tune/load cap positions (and manual mode, DC probe, preset slot) are recorded every
+    sample — a 2026-09-24 run could not be reconstructed because the CSV had no T/L positions."""
+    rec = TelemetryRecorder(tmp_path)
+    path = rec.start("match", {})
+    s = snap(fwd=200.0, rf=True)
+    s["telemetry"].update(
+        tune_cap_percent=35.6, load_cap_percent=62.6, manual_mode=True, dc_voltage=0.0,
+        preset_slot=1,
+    )
+    rec.record(s)
+    rec.stop()
+    rows = (path / "telemetry.csv").read_text().strip().splitlines()
+    header = rows[0].split(",")
+    assert header[: len(_LEGACY_HEADER)] == _LEGACY_HEADER  # existing order untouched
+    assert header[len(_LEGACY_HEADER):] == [
+        "tune_cap_percent", "load_cap_percent", "manual_mode", "dc_voltage", "preset_slot",
+    ]
+    data = dict(zip(header, rows[1].split(","), strict=True))
+    assert data["tune_cap_percent"] == "35.6"
+    assert data["load_cap_percent"] == "62.6"
+    assert data["manual_mode"] == "True"
+    assert data["preset_slot"] == "1"
