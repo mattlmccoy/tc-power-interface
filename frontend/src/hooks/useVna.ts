@@ -14,16 +14,21 @@ import { impedance, magnitude, type SweepPoint } from "../lib/vna/rf.ts";
 import { F0 } from "../lib/vna/autotune.ts";
 import { shapeTune, dipOf, interpS11At } from "../lib/vna/autotune_shape.ts";
 import { formatTouchstone } from "../lib/vna/touchstone.ts";
+import { centredSweep, f0GridOffsetHz } from "../lib/vna/sweep.ts";
 
 // Wide window (covers differently-tuned setups) with enough points to resolve the ~140 kHz match loop.
 // A narrow 1 MHz scan returned NO data from the NanoVNA-H4 (the device took the range but the read came
-// back empty), so we stay wide — which is also what the bench needs. 11–16 MHz / 401 pts = 12.5 kHz/pt
-// (~11 points on the loop). If the firmware caps the point count it returns fewer (still matched), so
-// this is safe. A saved log shows the actual returned count → we tune the window/resolution from data.
-const SWEEP_START = 11e6;
-const SWEEP_STOP = 16e6;
-const POINTS = 401; // 12.5 kHz/pt — the resolution the sensitive match needs. Sweep speed is set by the
-                    // IF BANDWIDTH (set fast on connect, adjustable in the UI), not the point count.
+// back empty), so we stay wide — which is also what the bench needs. 401 pts over 5 MHz = 12.5 kHz/pt
+// (~11 points on the loop). The window is CENTRED on 13.56 MHz (11.06–16.06 MHz) so 13.56 MHz is an
+// actual measured point (#200) instead of being interpolated between 13.5500 and 13.5625 MHz, which
+// read a 41.6 dB match as 36.6 dB. If the firmware caps the point count it returns fewer (still
+// matched); every logged sweep records f0OffsetHz, the distance from 13.56 MHz to the nearest returned
+// point, so a saved log shows whether the device grid really contains it (0 Hz).
+const WINDOW = centredSweep(F0, 12.5e3, 401);
+const SWEEP_START = WINDOW.start;
+const SWEEP_STOP = WINDOW.stop;
+const POINTS = WINDOW.points; // 12.5 kHz/pt. Sweep speed is set by the IF BANDWIDTH (set fast on
+                              // connect, adjustable in the UI), not the point count.
 const DEFAULT_BW_HZ = 4000; // widest IF filter = fastest sweep (what keeps the native tool responsive)
 const HEARTBEAT_MS = 2000;
 const LIVE_GAP_MS = 30;
@@ -42,6 +47,7 @@ interface LogEntry {
   R: number | null;
   X: number | null;
   readMs?: number; // device read latency for this sweep (isolates USB/device time from render/loop time)
+  f0OffsetHz?: number | null; // |13.56 MHz - nearest returned point|; 0 = measured there, not interpolated
   sweep?: Array<{ f: number; re: number; im: number }>;
 }
 
@@ -118,7 +124,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   function logSweep(phase: "live" | "auto", points: SweepPoint[], full = false) {
     const tel = statusRef.current?.controller?.telemetry;
     const dip = dipOf(points);
-    const s11 = interpS11At(points, F0); // value at EXACTLY 13.56 (interpolated), matching the readout/tuner
+    const s11 = interpS11At(points, F0); // value at EXACTLY 13.56 (a measured point when f0OffsetHz is 0)
     const z = s11 ? impedance(s11, 50) : null;
     const e: LogEntry = {
       t: Date.now(), phase,
@@ -126,6 +132,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
       dipHz: dip?.freqHz ?? null, gammaMin: dip?.gammaMin ?? null,
       g1356: s11 ? magnitude(s11) : null, R: z ? z.re : null, X: z ? z.im : null,
       readMs: lastReadMsRef.current,
+      f0OffsetHz: f0GridOffsetHz(points, F0),
     };
     if (full) e.sweep = points.map((s) => ({ f: s.frequency, re: s.s11.re, im: s.s11.im }));
     logRef.current.push(e);

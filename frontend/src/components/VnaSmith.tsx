@@ -11,7 +11,7 @@ const FR = { cx: 100, cy: 100, r: 90 };
 
 export function VnaSmith({ sweep, size = 200 }: { sweep: SweepPoint[]; size?: number }) {
   const clipId = `smith-${useId()}`;
-  const s11 = sweep.length ? interpS11At(sweep, F0) : null; // marker at exactly 13.56 (interpolated)
+  const s11 = sweep.length ? interpS11At(sweep, F0) : null; // marker at exactly 13.56 (a measured grid point on the centred live window)
   const tracePts = sweep
     .map((pt) => gammaToXY(pt.s11, FR))
     .map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`)
