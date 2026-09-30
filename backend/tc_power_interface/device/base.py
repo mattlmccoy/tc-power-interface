@@ -53,6 +53,14 @@ class Transport(ABC):
         :raises TimeoutError: if ``n`` bytes are not available in time.
         """
 
+    def discard_input(self) -> None:  # noqa: B027 - optional hook, deliberately a no-op
+        """Drop any bytes already waiting to be read (stale bytes from an earlier exchange).
+
+        The CXN link is strict request/response, so anything queued BEFORE a request is left over
+        from a previous exchange (e.g. the late tail of a response whose read timed out). Reading
+        it as the new ACK/response desyncs the framing for every later command. Default: no-op.
+        """
+
     @abstractmethod
     def close(self) -> None:
         """Release the underlying resource."""

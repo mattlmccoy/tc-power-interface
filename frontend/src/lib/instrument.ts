@@ -158,3 +158,37 @@ export function needleAngle(value: number | null | undefined, max: number, theta
   if (value == null || !Number.isFinite(value)) return null;
   return gaugeAngle(value, 0, max, -theta, theta);
 }
+
+/** How long after a software cap command the UI holds the commanded value before mirroring the
+ *  device readback again (long enough to cover the command round-trip + next telemetry sample). */
+export const CAP_HOLD_MS = 1500;
+/** How long a commanded cap target counts as "still travelling" (matches the Set's settle wait). */
+export const CAP_TRAVEL_MS = 12000;
+
+/** Milliseconds left in the post-command hold (0 = mirror the readback now). The hook re-syncs
+ *  when this reaches 0, even if the readback never changes — otherwise a command the device did
+ *  not follow left the UI frozen on the commanded value instead of showing where the cap really is. */
+export function capHoldRemaining(touchedAt: number, now: number, holdMs = CAP_HOLD_MS): number {
+  return Math.max(0, touchedAt + holdMs - now);
+}
+
+export type CapTarget = { target: number; at: number } | null;
+
+/** The position a +/- step should start from. While the last commanded target is still travelling
+ *  (slow AIT motor: readback not yet there, within ``travelMs``), step from that target so repeated
+ *  clicks keep going the same way instead of stepping back from a mid-travel readback. Otherwise
+ *  step from the live readback — the truth — falling back to ``fallback`` (the displayed value)
+ *  when there is no readback yet. */
+export function capStepBase(
+  read: number | null,
+  pending: CapTarget,
+  now: number,
+  fallback: number,
+  travelMs = CAP_TRAVEL_MS,
+): number {
+  if (pending && now - pending.at < travelMs && !capSettled(read, pending.target, 0)) {
+    return pending.target;
+  }
+  if (read == null || Number.isNaN(read)) return clampCap(fallback);
+  return clampCap(read);
+}
