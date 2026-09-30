@@ -1,10 +1,10 @@
 """Packaging guard: every third-party module the RUNTIME code imports must be a declared runtime
 dependency in pyproject.toml.
 
-Why: the installers (install.sh / install.ps1) make a fresh clone and `uv sync`, which installs only
-[project].dependencies — not the `dev` extra. httpx was imported by the FLIR link at runtime but only
-declared under `dev`, so every fresh install crashed on startup (ModuleNotFoundError), while the dev
-checkout worked because httpx had been installed there by hand for tests.
+Why: the installers (install.sh / install.ps1) make a fresh clone and `uv sync`, which installs
+only [project].dependencies — not the `dev` extra. httpx was imported by the FLIR link at runtime
+but only declared under `dev`, so every fresh install crashed on startup (ModuleNotFoundError),
+while the dev checkout worked because httpx had been installed there by hand for tests.
 """
 
 import ast

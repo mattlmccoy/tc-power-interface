@@ -897,7 +897,8 @@ def create_app(
 
     @app.post("/api/vna-session/end")
     def vna_session_end() -> dict[str, Any]:
-        """Leave VNA-tune mode; RF is allowed again (arm/connected/not-faulted gates still apply)."""
+        """Leave VNA-tune mode; RF is allowed again (arm/connected/not-faulted gates still
+        apply)."""
         _controller().end_vna_session()
         _record_event("vna_session_end")
         return _status_payload()

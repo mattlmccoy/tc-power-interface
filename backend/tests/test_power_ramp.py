@@ -64,7 +64,8 @@ def test_stopped_ramp_does_not_drive():
 
 def test_ramp_holds_until_rf_on():
     """The switch may be armed before RF-on, but the ramp must NOT advance the setpoint until RF is
-    actually energised (matching the AG generator's native RAMP, which only ramps while RF is on)."""
+    actually energised (matching the AG generator's native RAMP, which only ramps while RF is
+    on)."""
     fake = FakeController()
     rc = RampController(fake, plan=RampPlan(init_w=0, target_w=200, rate_w_per_s=50))
     rc.start()
