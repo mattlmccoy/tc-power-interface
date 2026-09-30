@@ -38,8 +38,9 @@ class TestConnect:
 
 
 class _ModeDevice:
-    """Fake generator that reports a fixed manual_mode and records force_manual_mode calls, so we can
-    prove connect() does NOT reset the caps (via force-manual) when the device is already manual."""
+    """Fake generator that reports a fixed manual_mode and records force_manual_mode calls, so we
+    can prove connect() does NOT reset the caps (via force-manual) when the device is already
+    manual."""
 
     def __init__(self, manual_mode: bool):
         self._manual = manual_mode
@@ -52,7 +53,12 @@ class _ModeDevice:
         self.forced += 1
 
     def read_telemetry(self) -> Telemetry:
-        return replace(_benign_telemetry(), manual_mode=self._manual, tune_cap_percent=35.0, load_cap_percent=66.0)
+        return replace(
+            _benign_telemetry(),
+            manual_mode=self._manual,
+            tune_cap_percent=35.0,
+            load_cap_percent=66.0,
+        )
 
     def set_rf(self, on: bool) -> None:
         pass
@@ -63,8 +69,8 @@ class _ModeDevice:
 
 class TestConnectPreservesCaps:
     def test_already_manual_does_not_force_manual(self):
-        """The AG resets the cap DACs when told to enter manual mode; if it is ALREADY manual we must
-        not send that command, or a hand-tuned AIT match would be wiped on connect."""
+        """The AG resets the cap DACs when told to enter manual mode; if it is ALREADY manual we
+        must not send that command, or a hand-tuned AIT match would be wiped on connect."""
         dev = _ModeDevice(manual_mode=True)
         c = Controller(dev, poll_interval_s=0.01)
         c.connect()
@@ -72,8 +78,8 @@ class TestConnectPreservesCaps:
         assert dev.forced == 0  # caps left exactly where they were
 
     def test_not_manual_forces_manual(self):
-        """If the generator is NOT in manual (could be the forbidden ATUNE), we must force manual even
-        though it resets the caps — the interlock wins over preserving a position."""
+        """If the generator is NOT in manual (could be the forbidden ATUNE), we must force manual
+        even though it resets the caps — the interlock wins over preserving a position."""
         dev = _ModeDevice(manual_mode=False)
         c = Controller(dev, poll_interval_s=0.01)
         c.connect()

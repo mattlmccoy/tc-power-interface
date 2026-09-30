@@ -9,7 +9,8 @@ Invariants under test (fail-safe by construction):
 - A stale heartbeat is REPORTED in the snapshot but must NOT clear the session — only ``end`` does.
 
 Helper note: the controller boots armed + CONNECTED via ``connect()`` on a simulated CXN
-(``CxnDevice(SimulatedCxnTransport())``), matching the real device API used across ``test_controller``;
+(``CxnDevice(SimulatedCxnTransport())``), matching the real device API used across
+``test_controller``;
 telemetry is driven deterministically with ``_tick()`` (no background poll thread).
 """
 

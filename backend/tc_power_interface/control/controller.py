@@ -112,17 +112,18 @@ class Controller:
 
     # --- lifecycle -------------------------------------------------------------------------
     def connect(self) -> None:
-        """Acquire the control lease and ensure MANUAL tuning (never the forbidden auto-tuner) — WITHOUT
-        disturbing the cap positions. Sending the manual-mode command resets the AG 0613's cap DACs,
-        which would wipe a hand-tuned AIT match, so only force it when the generator is NOT already in
-        manual mode. If it already is, it is safe and we leave the caps exactly where they are. If the
-        mode cannot be read, force it (never risk a live ATUNE)."""
+        """Acquire the control lease and ensure MANUAL tuning (never the forbidden auto-tuner) —
+        WITHOUT disturbing the cap positions. Sending the manual-mode command resets the AG 0613's
+        cap DACs, which would wipe a hand-tuned AIT match, so only force it when the generator is
+        NOT already in manual mode. If it already is, it is safe and we leave the caps exactly where
+        they are. If the mode cannot be read, force it (never risk a live ATUNE)."""
         with self._io_lock:
             granted = self.device.request_control()
         if not granted:
             raise RuntimeError("generator denied control request")
-        # SAFETY: the built-in auto-tuner must never run. Forcing manual mode guarantees that, but it
-        # also zeroes the caps — so only do it if we can't confirm the generator is already manual.
+        # SAFETY: the built-in auto-tuner must never run. Forcing manual mode guarantees that, but
+        # it also zeroes the caps — so only do it if we can't confirm the generator is already
+        # manual.
         already_manual = False
         with self._io_lock:
             try:

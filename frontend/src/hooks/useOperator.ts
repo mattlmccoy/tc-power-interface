@@ -8,7 +8,18 @@ import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState }
 import { api, detail, operatorBase, setOperatorBase } from "../lib/api.ts";
 import type { FlirLink, Health, SerialPort } from "../lib/api.ts";
 import { reflectedZone } from "../lib/format.ts";
-import { approachFromBelow, capPercentForVolts, capSettled, clampCap, LOAD_CAL, stepSetpoint, TUNE_CAL } from "../lib/instrument.ts";
+import {
+  approachFromBelow,
+  capHoldRemaining,
+  capPercentForVolts,
+  capSettled,
+  capStepBase,
+  clampCap,
+  LOAD_CAL,
+  stepSetpoint,
+  TUNE_CAL,
+  type CapTarget,
+} from "../lib/instrument.ts";
 import { checkHandshake, UI_API_VERSION, wsUrl } from "../lib/operator.ts";
 import {
   LIMITS_KEY,
@@ -114,6 +125,10 @@ export function useOperator() {
   // Live cap readback (kept in a ref so the backlash-comp Set can POLL the freshest device position
   // from inside an async handler — React state is a stale snapshot inside a closure).
   const capReadRef = useRef<{ tune: number | null; load: number | null }>({ tune: null, load: null });
+  // Last commanded cap targets, so +/- keeps stepping from the target while the slow motor travels.
+  const capTargetRef = useRef<{ tune: CapTarget; load: CapTarget }>({ tune: null, load: null });
+  // Bumped to force a readback re-sync (hold expired, or a cap command failed).
+  const [capSync, setCapSync] = useState(0);
   // Which cap (if any) is mid backlash-compensated Set — gates the Set buttons/inputs so a second
   // press can't interleave with the two-step motion on a live matching network.
   const [capBusy, setCapBusy] = useState<null | "tune" | "load">(null);
@@ -455,14 +470,22 @@ export function useOperator() {
   const faulted = state === "fault";
 
   // Mirror the device's ACTUAL cap positions into the input/slider (unless the operator drove a cap
-  // from software within the last 1.5 s). The AIT is tuned physically, so the readback is the truth
+  // from software within the hold window). The AIT is tuned physically, so the readback is the truth
   // — the UI must show where the caps really are, not a stale default. setTune/setLoad to an equal
   // value is a no-op, so this can run every telemetry tick without looping.
+  // When the hold is active we schedule a re-sync for the moment it ends. Previously this effect only
+  // re-ran when the readback CHANGED, so if the device had not moved (command refused, NACKed, or
+  // already there) the display stayed frozen on the commanded value and +/- kept stepping from it.
   useEffect(() => {
-    if (!connected || Date.now() - capsTouchedAt.current < 1500) return;
+    if (!connected) return;
+    const wait = capHoldRemaining(capsTouchedAt.current, Date.now());
+    if (wait > 0) {
+      const id = setTimeout(() => setCapSync((n) => n + 1), wait);
+      return () => clearTimeout(id);
+    }
     if (t?.tune_cap_percent != null) setTune(clampCap(t.tune_cap_percent));
     if (t?.load_cap_percent != null) setLoad(clampCap(t.load_cap_percent));
-  }, [t?.tune_cap_percent, t?.load_cap_percent, connected]);
+  }, [t?.tune_cap_percent, t?.load_cap_percent, connected, capSync]);
   const maxRefl = limits?.max_reflected_w ?? 25;
   const reflW = t?.reverse_w ?? 0;
   const zone = t ? reflectedZone(reflW, maxRefl * 0.5, maxRefl) : "ok";
@@ -604,20 +627,53 @@ export function useOperator() {
   async function stopPulse() {
     await api.pulseStop();
   }
-  async function sendTune(v: number) {
-    capsTouchedAt.current = Date.now();
-    setTune(v);
-    await api.tune(v);
+  // Command a cap. Throws with the operator's reason if it was refused (409 not armed, 400 NACK) or
+  // unreachable — fetch() does not reject on HTTP errors, so without the ok-check a refused move
+  // looked accepted and the display sat on a value the device never took.
+  async function sendCap(which: "tune" | "load", v: number): Promise<void> {
+    const now = Date.now();
+    capsTouchedAt.current = now;
+    capTargetRef.current[which] = { target: v, at: now };
+    (which === "tune" ? setTune : setLoad)(v);
+    let err: string | null = null;
+    try {
+      const res = await (which === "tune" ? api.tune(v) : api.load(v));
+      if (!res.ok) err = await detail(res);
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    }
+    if (err !== null) {
+      // Drop the hold and snap back to the live readback so the UI shows where the cap really is.
+      capsTouchedAt.current = 0;
+      capTargetRef.current[which] = null;
+      setCapSync((n) => n + 1);
+      throw new Error(err);
+    }
   }
-  async function sendLoad(v: number) {
-    capsTouchedAt.current = Date.now();
-    setLoad(v);
-    await api.load(v);
+  // UI entry points (slider/input): a refused move is shown, never an unhandled rejection.
+  async function sendCapUi(which: "tune" | "load", v: number): Promise<void> {
+    try {
+      await sendCap(which, v);
+    } catch (e) {
+      flash(`${which} cap move refused: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
+  const sendTune = (v: number) => sendCapUi("tune", v);
+  const sendLoad = (v: number) => sendCapUi("load", v);
   // Cap steppers are single-click, 1% each (the generator's real resolution). No hold-to-repeat:
-  // an auto-repeating cap stepper is a hazard on a live matching network.
-  const bumpTune = (d: number) => sendTune(clampCap(tune + d));
-  const bumpLoad = (d: number) => sendLoad(clampCap(load + d));
+  // an auto-repeating cap stepper is a hazard on a live matching network. Each step starts from the
+  // live readback (or the still-travelling target), never from a stale display value.
+  async function bumpCap(which: "tune" | "load", d: number): Promise<void> {
+    const base = capStepBase(
+      capReadRef.current[which],
+      capTargetRef.current[which],
+      Date.now(),
+      which === "tune" ? tune : load,
+    );
+    await sendCapUi(which, clampCap(base + d));
+  }
+  const bumpTune = (d: number) => bumpCap("tune", d);
+  const bumpLoad = (d: number) => bumpCap("load", d);
   const bumpActive = (d: number) => (activeCap === "tune" ? bumpTune(d) : bumpLoad(d));
 
   // Voltage-driven cap tuning: type the target control voltage from the VNA, snap to the nearest
@@ -649,7 +705,7 @@ export function useOperator() {
     const v = Number(vin);
     if (Number.isNaN(v) || vin.trim() === "") return flash(`enter a ${which} voltage`);
     if (capBusy) return; // a Set is already in flight
-    const send = which === "tune" ? sendTune : sendLoad;
+    const send = (pct: number) => sendCap(which, pct); // throws on refusal -> aborts before step 2
     const setVin = which === "tune" ? setTuneVIn : setLoadVIn;
     const [pre, target] = approachFromBelow(capPercentForVolts(v, cal));
     setVin("");
@@ -658,8 +714,8 @@ export function useOperator() {
       await send(pre); // step 1: drop below the target (takes up backlash in the down direction)
       await waitCapSettle(which, pre); // wait out the slow motor
       await send(target); // step 2: finish UP onto the target
-    } catch {
-      flash(`${which} cap set failed`);
+    } catch (e) {
+      flash(`${which} cap set failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setCapBusy(null);
     }
