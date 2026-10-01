@@ -36,9 +36,11 @@ const LOG_CAP = 6000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+type LogPhase = "live" | "auto" | "map";
+
 interface LogEntry {
   t: number;
-  phase: "live" | "auto";
+  phase: LogPhase;
   tune: number | null;
   load: number | null;
   dipHz: number | null;
@@ -78,6 +80,11 @@ export interface VnaController {
   saveTouchstone: () => void;
   saveLog: () => void;
   clearLog: () => void;
+  /** Run `fn` with exclusive use of the NanoVNA link (the live loop pauses), like auto-tune. Null if
+   *  something already holds it. `stop()` clears the hold, which `isRunning()` reports to `fn`. */
+  exclusive: <T>(fn: () => Promise<T>) => Promise<T | null>;
+  isRunning: () => boolean;
+  logMapSweep: (points: SweepPoint[]) => void;
 }
 
 export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): VnaController {
@@ -121,7 +128,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
 
   // Append one sweep to the session log with the current caps + shape metrics. Captures manual tuning
   // (the live loop logs each sweep as the caps change) and auto tuning ('auto', with the full sweep).
-  function logSweep(phase: "live" | "auto", points: SweepPoint[], full = false) {
+  function logSweep(phase: LogPhase, points: SweepPoint[], full = false) {
     const tel = statusRef.current?.controller?.telemetry;
     const dip = dipOf(points);
     const s11 = interpS11At(points, F0); // value at EXACTLY 13.56 (a measured point when f0OffsetHz is 0)
@@ -321,6 +328,20 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
 
   function stop() { runningRef.current = false; setRunning(false); }
 
+  async function exclusive<T>(fn: () => Promise<T>): Promise<T | null> {
+    if (runningRef.current || !connRef.current) return null;
+    runningRef.current = true;
+    setRunning(true);
+    for (let i = 0; i < 80 && sweepingRef.current; i++) await sleep(25); // let an in-flight live sweep drain
+    try {
+      return await fn();
+    } finally {
+      runningRef.current = false; // the persistent live loop resumes on its own
+      setRunning(false);
+      if (connRef.current && !inLiveRef.current) { liveRef.current = true; void liveLoop(); }
+    }
+  }
+
   async function changeBandwidth(hz: number) {
     const conn = connRef.current;
     if (!conn) return;
@@ -356,5 +377,6 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   return {
     supported, connected, sweep, running, msg, iter, logCount, readMs, bandwidth, bwOptions, changeBandwidth,
     connect, endSession, doSweep, runAutoTune, stop, saveTouchstone, saveLog, clearLog,
+    exclusive, isRunning: () => runningRef.current, logMapSweep: (points) => logSweep("map", points, true),
   };
 }

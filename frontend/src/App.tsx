@@ -16,6 +16,8 @@ import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { VnaTuneView } from "./pages/VnaTuneView.tsx";
 import { useVna } from "./hooks/useVna.ts";
 import { useAudioAlerts } from "./hooks/useAudioAlerts.ts";
+import { useMatchAid } from "./hooks/useMatchAid.ts";
+import { useMapCapture } from "./hooks/useMapCapture.ts";
 import { VERSION_LABEL, BUILD_ID, VERSION_FULL } from "./version.ts";
 
 export function App() {
@@ -28,6 +30,8 @@ export function App() {
   } = op;
   const vna = useVna(op);
   const alerts = useAudioAlerts(op);
+  const aid = useMatchAid(op.t); // App level: readings survive tab switches
+  const mapCapture = useMapCapture(op, vna);
   const inVna = !!op.status?.vna_session?.active;
   // Site mode only: when the local operator can't be reached after repeated WS-connect failures (e.g.
   // the PC rebooted and nothing restarted it), replace the tab views with a panel that shows the
@@ -148,13 +152,13 @@ export function App() {
           ) : (
             <>
               {inVna ? (
-                <VnaTuneView op={op} vna={vna} />
+                <VnaTuneView op={op} vna={vna} mapCapture={mapCapture} />
               ) : view === "dashboard" ? (
-                <DashboardPage op={op} />
+                <DashboardPage op={op} aid={aid} />
               ) : view === "settings" ? (
                 <SettingsPage op={op} />
               ) : (
-                <ClosedLoopPage op={op} />
+                <ClosedLoopPage op={op} aid={aid} />
               )}
             </>
           )

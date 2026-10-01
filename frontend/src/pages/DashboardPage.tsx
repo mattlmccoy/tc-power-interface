@@ -3,12 +3,14 @@ import { GeneratorPanel } from "../components/GeneratorPanel.tsx";
 import { HistoryPanel } from "../components/HistoryPanel.tsx";
 import { MatchingNetworkPanel } from "../components/MatchingNetworkPanel.tsx";
 import { MatchTunerPanel } from "../components/MatchTunerPanel.tsx";
+import { MatchAidPanel } from "../components/MatchAidPanel.tsx";
+import type { MatchAid } from "../hooks/useMatchAid.ts";
 import { RecordingPanel } from "../components/RecordingPanel.tsx";
 import { RfPowerPanel } from "../components/RfPowerPanel.tsx";
 import { TelemetryPanel } from "../components/TelemetryPanel.tsx";
 import { TimerPanel } from "../components/TimerPanel.tsx";
 
-export function DashboardPage({ op }: { op: Operator }) {
+export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
   const { activeCap, applyLoadVolts, applySetpoint, applyTuneVolts, armDevice, armMatchTuner, armed, bumpActive, bumpLoad, bumpTune, capBusy, clearPreset, connected, controllable, device, disarmDevice, disarmMatchTuner, estop, faulted, flash, fmtDelta, fwdCaution, fwdDanger, lastRun, limits, load, loadVIn, maxRefl, mt, nudgeSetpoint, onSetpointKey, plot, powerCeil, presetEntries, presets, ramp, rampForm, recallPreset, recording, reflFillPct, requested, revPct, rfOff, rfOn, runName, savePreset, saveSlot, sendLoad, sendTune, setActiveCap, setLoadVIn, setMatchMode, setRampForm, setRunName, setSaveSlot, setSetpointInput, setTimerMin, setTuneVIn, setpointInput, setpointRef, showGauges, startMatchTuner, startRamp, startTimer, stopMatchTuner, stopRamp, stopTimer, t, textInputStyle, timer, timerMin, toggleGauges, tune, tuneVIn, zone } = op;
   return (
           <div className="main">
@@ -87,6 +89,8 @@ export function DashboardPage({ op }: { op: Operator }) {
               clearPreset={clearPreset}
               recallPreset={recallPreset}
             />
+
+            <MatchAidPanel aid={aid} t={t} />
 
             <MatchTunerPanel
               controllable={controllable}

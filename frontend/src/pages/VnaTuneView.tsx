@@ -3,7 +3,9 @@
 // 13.56 MHz, manual tune/load cap controls, and Auto-tune / Sweep / Save / End. Cap-drive and cap
 // state come from useOperator; the connection + sweep + auto-tune loop come from useVna.
 
+import { useState } from "react";
 import type { Operator } from "../hooks/useOperator.ts";
+import type { MapCapture } from "../hooks/useMapCapture.ts";
 import type { VnaController } from "../hooks/useVna.ts";
 import { VnaSmith } from "../components/VnaSmith.tsx";
 import { VnaS11Plot } from "../components/VnaS11Plot.tsx";
@@ -12,7 +14,8 @@ import { interpS11At, dipOf, F0 } from "../lib/vna/autotune_shape.ts";
 
 const fmt = (v: number | null, d = 2) => (v == null || !Number.isFinite(v) ? "—" : v.toFixed(d));
 
-export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
+export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaController; mapCapture: MapCapture }) {
+  const [mapLabel, setMapLabel] = useState("");
   const {
     controllable, tune, load, bumpTune, bumpLoad, capBusy, connected, armed, armDevice, disarmDevice,
     tuneVIn, setTuneVIn, applyTuneVolts, loadVIn, setLoadVIn, applyLoadVolts, textInputStyle,
@@ -162,6 +165,48 @@ export function VnaTuneView({ op, vna }: { op: Operator; vna: VnaController }) {
           {(vna.msg || vna.running) && (
             <div className="help-text">{vna.msg}{vna.running ? ` · step ${vna.iter}` : ""}</div>
           )}
+
+          {/* Cold match map for the in-run aid: step the caps around this match and record how each
+              move shifts it at exactly 13.56 MHz. Same exclusive-link rules as auto-tune. */}
+          <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <strong>Match map</strong>
+            <div className="help-text" style={{ margin: 0 }}>
+              Once matched, capture a map: the caps step Tune −1/0/+1 % × Load −4…+4 % around this point (each
+              approached from below), the VNA averages 3 sweeps at each, then the caps return here. About 2–3 min.
+              The in-run Match map panel uses it to show where the match has drifted.
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input style={{ ...textInputStyle, width: 200 }} placeholder="network label, e.g. 218-2core_v2"
+                value={mapLabel} onChange={(e) => setMapLabel(e.target.value)} disabled={mapCapture.busy} />
+              {!mapCapture.busy ? (
+                <button className="btn accent" onClick={() => void mapCapture.start(mapLabel)}
+                  disabled={!controllable || rfOn || vna.running || !vna.connected}
+                  title={!controllable ? "arm the generator (RF off) first" : rfOn ? "RF must be off" : ""}>
+                  Capture map
+                </button>
+              ) : (
+                <button className="btn" onClick={vna.stop}>Stop capture</button>
+              )}
+              {mapCapture.result && (
+                <button className="btn" onClick={mapCapture.download}>Save map JSON</button>
+              )}
+            </div>
+            {mapCapture.progress && (
+              <div className="aid-note" style={{ margin: 0 }}>
+                point {Math.min(mapCapture.progress.done + 1, mapCapture.progress.total)} / {mapCapture.progress.total} · {mapCapture.progress.label}
+              </div>
+            )}
+            {mapCapture.result && (
+              <div className="readout" style={{ fontSize: 13, padding: 8 }}>
+                {mapCapture.result.points.length} points · {mapCapture.result.fit.kind} fit · RMS {mapCapture.result.fit.rmsOhm.toFixed(1)} Ω ·
+                held-out {mapCapture.result.fit.looRmsOhm?.toFixed(1) ?? "—"} Ω ·
+                cold match T {mapCapture.result.coldMatch.tune.toFixed(1)} % / L {mapCapture.result.coldMatch.load.toFixed(1)} %
+                (|Γ| {mapCapture.result.coldMatch.gamma.toFixed(3)})
+                {mapCapture.driftOhm != null && <> · drift during capture {mapCapture.driftOhm.toFixed(1)} Ω</>}
+              </div>
+            )}
+            {mapCapture.msg && <div className="aid-note" style={{ margin: 0 }}>{mapCapture.msg}</div>}
+          </div>
         </div>
       </div>
     </div>

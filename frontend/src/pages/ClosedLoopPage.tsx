@@ -2,6 +2,8 @@ import type { Operator } from "../hooks/useOperator.ts";
 import { HistoryPanel } from "../components/HistoryPanel.tsx";
 import { MatchingNetworkPanel } from "../components/MatchingNetworkPanel.tsx";
 import { MatchTunerPanel } from "../components/MatchTunerPanel.tsx";
+import { MatchAidPanel } from "../components/MatchAidPanel.tsx";
+import type { MatchAid } from "../hooks/useMatchAid.ts";
 import { RfPowerPanel } from "../components/RfPowerPanel.tsx";
 import { TelemetryPanel } from "../components/TelemetryPanel.tsx";
 import { ThermalHero } from "../components/ThermalHero.tsx";
@@ -9,7 +11,7 @@ import { ThermalHero } from "../components/ThermalHero.tsx";
 // The Closed-loop page: the thermal loop as the hero, with a compact band that reuses the SAME
 // Dashboard panels (so nothing the operator needs mid-run is behind another tab), plus a reserved
 // Calibration slot for the sibling calibration-routine session.
-export function ClosedLoopPage({ op }: { op: Operator }) {
+export function ClosedLoopPage({ op, aid }: { op: Operator; aid: MatchAid }) {
   return (
     <div className="closed-loop">
       <ThermalHero op={op} />
@@ -87,6 +89,8 @@ export function ClosedLoopPage({ op }: { op: Operator }) {
             clearPreset={op.clearPreset}
             recallPreset={op.recallPreset}
           />
+
+          <MatchAidPanel aid={aid} t={op.t} />
 
           <MatchTunerPanel
             controllable={op.controllable}

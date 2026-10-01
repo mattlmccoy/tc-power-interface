@@ -503,6 +503,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   animation: tcp-blink 1s infinite; }
 /* Explanatory copy that must ALWAYS show — unlike .hint, which .help-off hides. */
 .setup-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 16px; }
+/* Match-map aid: the safety caveat and legend must show even with Help off. */
+.aid-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 8px; }
+.aid-legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 11px; margin-top: 6px; }
+.aid-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 /* A copyable command line; the command scrolls inside its own box, never the page. */
 .setup-cmd { display: flex; align-items: stretch; gap: 6px; }
 .setup-cmd-text { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 10px 12px;
