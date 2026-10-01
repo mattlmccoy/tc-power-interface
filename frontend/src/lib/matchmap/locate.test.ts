@@ -63,7 +63,7 @@ const capAt = (tune: number, load: number): Reading => {
   return { tune, load, fwd: 100, rev, g: Math.sqrt(rev / 100), gLo: Math.sqrt(Math.max(0, rev - 0.05) / 100), gHi: Math.sqrt((rev + 0.05) / 100), tFirst: 0, tLast: 0 };
 };
 
-const capRun = (moves: number[][], from = capCold) =>
+const capRun = (moves: number[][], from: { tune: number; load: number } = capCold) =>
   locateMatch(capFit, capCold, moves.map(([dt, dl]) => capAt(from.tune + dt, from.load + dl)));
 
 test("a Load move then a Tune move pin the drifted match down well enough to act on", () => {
