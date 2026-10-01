@@ -30,6 +30,9 @@ test("default grid: 3 Tune x 5 Load points plus a repeat of the start", () => {
   assert.ok(last.kind === "record" && last.repeat === true);
   assert.equal(last.kind === "record" && last.tune, 29); // the start rounds to whole-percent commands
   assert.equal(last.kind === "record" && last.load, 24);
+  // Load is broad (~4 Ohm per % vs Tune's ~17 on 218-2core_v2), so it is sampled in 2 % steps over ±4 %
+  const loads = [...new Set(r.filter((x) => x.kind === "record" && !x.repeat).map((x) => (x.kind === "record" ? x.load : 0)))];
+  assert.deepEqual(loads, [20, 22, 24, 26, 28]);
 });
 
 test("every recorded point is approached from below on both caps", () => {
