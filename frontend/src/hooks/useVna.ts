@@ -15,6 +15,7 @@ import { F0 } from "../lib/vna/autotune.ts";
 import { shapeTune, dipOf, interpS11At } from "../lib/vna/autotune_shape.ts";
 import { formatTouchstone } from "../lib/vna/touchstone.ts";
 import { centredSweep, f0GridOffsetHz } from "../lib/vna/sweep.ts";
+import { initialReadPolicy, isStaleRepeat, nextReadPolicy, untilFresh, type ReadPolicy } from "../lib/vna/freshness.ts";
 
 // Wide window (covers differently-tuned setups) with enough points to resolve the ~140 kHz match loop.
 // A narrow 1 MHz scan returned NO data from the NanoVNA-H4 (the device took the range but the read came
@@ -31,7 +32,7 @@ const POINTS = WINDOW.points; // 12.5 kHz/pt. Sweep speed is set by the IF BANDW
                               // connect, adjustable in the UI), not the point count.
 const DEFAULT_BW_HZ = 4000; // widest IF filter = fastest sweep (what keeps the native tool responsive)
 const HEARTBEAT_MS = 2000;
-const LIVE_GAP_MS = 30;
+const FRESH_TIMEOUT_MS = 12000; // a measurement (auto-tune probe, map point) waits this long for a fresh sweep
 const LOG_CAP = 6000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -50,6 +51,8 @@ interface LogEntry {
   X: number | null;
   readMs?: number; // device read latency for this sweep (isolates USB/device time from render/loop time)
   f0OffsetHz?: number | null; // |13.56 MHz - nearest returned point|; 0 = measured there, not interpolated
+  stale?: boolean; // this read repeated the previous sweep (freshness.ts) — not a new measurement
+  path?: "fast" | "reliable"; // which device read produced it
   sweep?: Array<{ f: number; re: number; im: number }>;
 }
 
@@ -85,6 +88,11 @@ export interface VnaController {
   exclusive: <T>(fn: () => Promise<T>) => Promise<T | null>;
   isRunning: () => boolean;
   logMapSweep: (points: SweepPoint[]) => void;
+  /** Read until a sweep that is NOT a repeat of the previous one arrives (throws after a timeout). */
+  doFreshSweep: () => Promise<SweepPoint[]>;
+  lastStale: boolean;
+  readPath: "fast" | "reliable";
+  stalePct: number; // share of the last 50 reads that were stale
 }
 
 export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): VnaController {
@@ -98,6 +106,10 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const statusRef = useRef(status);
   const controllableRef = useRef(controllable);
   const logRef = useRef<LogEntry[]>([]);
+  const lastPointsRef = useRef<SweepPoint[] | null>(null); // previous sweep, for the stale-read guard
+  const policyRef = useRef<ReadPolicy>(initialReadPolicy());
+  const lastStaleRef = useRef(false);
+  const staleHistRef = useRef<boolean[]>([]);
 
   const [connected, setConnected] = useState(false);
   const [sweep, setSweep] = useState<SweepPoint[]>([]);
@@ -107,6 +119,9 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   const [logCount, setLogCount] = useState(0);
   const [readMs, setReadMs] = useState(0);
   const [bandwidth, setBandwidth] = useState<number | null>(null);
+  const [lastStale, setLastStale] = useState(false);
+  const [readPath, setReadPath] = useState<"fast" | "reliable">("fast");
+  const [stalePct, setStalePct] = useState(0);
   const [bwOptions, setBwOptions] = useState<number[]>([]);
   const bwRef = useRef<number | null>(null); // desired IF bandwidth, re-applied after a self-heal reconnect
   const lastBwFixRef = useRef(0); // throttle for the slow-bandwidth self-heal
@@ -140,6 +155,8 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
       g1356: s11 ? magnitude(s11) : null, R: z ? z.re : null, X: z ? z.im : null,
       readMs: lastReadMsRef.current,
       f0OffsetHz: f0GridOffsetHz(points, F0),
+      stale: lastStaleRef.current,
+      path: policyRef.current.fast ? "fast" : "reliable",
     };
     if (full) e.sweep = points.map((s) => ({ f: s.frequency, re: s.s11.re, im: s.s11.im }));
     logRef.current.push(e);
@@ -178,7 +195,23 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
         lastBwFixRef.current = Date.now();
         try { await conn.setBandwidth(bwRef.current); } catch { /* leave as-is */ }
       }
-      if (res.points.length) setSweep(res.points); // keep the last good trace if a read comes back empty
+      // Stale-read guard: a sweep identical to the last one is the device repeating itself, not a new
+      // measurement (freshness.ts). Adapt the read path / pacing, and flag it for logging and callers.
+      if (res.points.length) {
+        const stale = isStaleRepeat(lastPointsRef.current, res.points);
+        const path = policyRef.current.fast ? "fast" : "reliable";
+        lastStaleRef.current = stale;
+        policyRef.current = nextReadPolicy(policyRef.current, stale);
+        conn.fastScan = policyRef.current.fast;
+        lastPointsRef.current = res.points;
+        const hist = staleHistRef.current;
+        hist.push(stale);
+        if (hist.length > 50) hist.shift();
+        setLastStale(stale);
+        setReadPath(path);
+        setStalePct(Math.round((100 * hist.filter(Boolean).length) / hist.length));
+        if (!stale) setSweep(res.points); // keep the last good trace if a read comes back empty or stale
+      }
       return res.points;
     } finally {
       sweepingRef.current = false;
@@ -199,7 +232,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
         } catch (e) {
           if (++fails === 3) setMsg(`sweep error: ${(e as Error).message} — retrying…`);
         }
-        await sleep(fails > 2 ? 500 : LIVE_GAP_MS); // a transient bad read must not blank the display or stop the loop
+        await sleep(fails > 2 ? 500 : policyRef.current.gapMs); // stale reads back the gap off (freshness.ts)
       }
     } finally {
       inLiveRef.current = false;
@@ -299,7 +332,7 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     const probe = async (tune: number, load: number): Promise<SweepPoint[]> => {
       if (tune !== curT) { await driveCap("tune", tune); curT = tune; }
       if (load !== curL) { await driveCap("load", load); curL = load; }
-      const points = (await doSweep()) ?? [];
+      const points = await doFreshSweep(); // never decide on a repeated (stale) sweep
       if (points.length) logSweep("auto", points, true);
       return points;
     };
@@ -327,6 +360,20 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
   }
 
   function stop() { runningRef.current = false; setRunning(false); }
+
+  async function doFreshSweep(): Promise<SweepPoint[]> {
+    const r = await untilFresh({
+      readOnce: async () => {
+        const points = (await doSweep()) ?? [];
+        return { points, stale: !points.length || lastStaleRef.current };
+      },
+      gapMs: () => policyRef.current.gapMs,
+      sleep,
+      timeoutMs: FRESH_TIMEOUT_MS,
+      now: () => Date.now(),
+    });
+    return r.points;
+  }
 
   async function exclusive<T>(fn: () => Promise<T>): Promise<T | null> {
     if (runningRef.current || !connRef.current) return null;
@@ -378,5 +425,6 @@ export function useVna({ status, controllable, sendTune, sendLoad }: VnaDeps): V
     supported, connected, sweep, running, msg, iter, logCount, readMs, bandwidth, bwOptions, changeBandwidth,
     connect, endSession, doSweep, runAutoTune, stop, saveTouchstone, saveLog, clearLog,
     exclusive, isRunning: () => runningRef.current, logMapSweep: (points) => logSweep("map", points, true),
+    doFreshSweep, lastStale, readPath, stalePct,
   };
 }

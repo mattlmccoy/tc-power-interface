@@ -111,6 +111,10 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
             <div>RL: <strong>{fmt(rl, 1)}</strong> dB</div>
             <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "var(--muted)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span>sweep: <strong>{vna.readMs ? `${vna.readMs} ms` : "—"}</strong>{vna.readMs ? ` · ${(1000 / vna.readMs).toFixed(1)}/s` : ""}</span>
+              <span title="Stale = the NanoVNA returned its previous sweep again (not a new measurement). The read path switches to the reliable two-command read and slows down until reads are fresh.">
+                · read {vna.readPath} · stale {vna.stalePct}%
+                {vna.lastStale && <strong style={{ color: "var(--warn)" }}> · STALE — waiting for a fresh sweep</strong>}
+              </span>
               {vna.bwOptions.length > 0 && (
                 <span>
                   · IF bw{" "}

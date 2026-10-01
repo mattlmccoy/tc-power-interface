@@ -155,6 +155,10 @@ export class NanoVNAConnection {
   calibration = 'Unknown';
   supportsScan = false;
   supportsScanMask = false;
+  /** Use the fast combined `scan … 0b111` read. TC-POWER's stale-read guard (freshness.ts) turns this
+   *  off when that read returns a repeated (stale) sweep; the two-command read below was fresh in every
+   *  logged session. [TC-POWER local change, 2026-10-01] */
+  fastScan = true;
   commands = new Set<string>();
   capabilities: NanoVNACapabilities = { scan: false, scanMask: false, currentData: false, calibration: false, calibrationSlots: false, pauseResume: false, bandwidth: false };
 
@@ -384,17 +388,19 @@ export class NanoVNAConnection {
 
   private async readSegment(start: number, stop: number, points: number): Promise<SweepPoint[]> {
     if (this.supportsScanMask) {
-      // FAST path (what makes the native tool responsive): ONE combined scan returning freq + S11 + S21
-      // (mask 0b111) — ~200 ms vs ~1.5 s for the four-command read below. A SHORT timeout means a rare
-      // device hiccup falls back quickly instead of stalling on the full command timeout (that was the
-      // v0.7.0 "30 s" lag). Columns: freq, S11 re, S11 im, S21 re, S21 im. [upstream to nanovna-web]
-      try {
-        const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 2500); // a real sweep is ~180ms; short timeout so a rare hang self-heals fast (not an 11s stall)
-        const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 5 && row.every(Number.isFinite));
-        if (values.length >= points / 2) {
-          return values.map((row) => ({ frequency: row[0], s11: { re: row[1], im: row[2] }, s21: { re: row[3], im: row[4] } }));
-        }
-      } catch { /* fall through to the reliable two-scan path */ }
+      if (this.fastScan) {
+        // FAST path (what makes the native tool responsive): ONE combined scan returning freq + S11 + S21
+        // (mask 0b111) — ~200 ms vs ~1.5 s for the four-command read below. A SHORT timeout means a rare
+        // device hiccup falls back quickly instead of stalling on the full command timeout (that was the
+        // v0.7.0 "30 s" lag). Columns: freq, S11 re, S11 im, S21 re, S21 im. [upstream to nanovna-web]
+        try {
+          const rows = await this.command(`scan ${start} ${stop} ${points} 0b111`, 2500); // a real sweep is ~180ms; short timeout so a rare hang self-heals fast (not an 11s stall)
+          const values = rows.map((line) => line.trim().split(/\s+/).map(Number)).filter((row) => row.length >= 5 && row.every(Number.isFinite));
+          if (values.length >= points / 2) {
+            return values.map((row) => ({ frequency: row[0], s11: { re: row[1], im: row[2] }, s21: { re: row[3], im: row[4] } }));
+          }
+        } catch { /* fall through to the reliable two-scan path */ }
+      }
       // RELIABLE fallback: two scans (frequencies, then S11+S21) — the original vendored behavior.
       const frequencies = (await this.command(`scan ${start} ${stop} ${points} 0b001`, 8000)).map(Number).filter(Number.isFinite);
       const rows = await this.command(`scan ${start} ${stop} ${points} 0b110`, 8000);

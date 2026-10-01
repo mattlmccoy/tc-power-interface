@@ -13,7 +13,8 @@ import type { Complex } from "../lib/vna/rf.ts";
 import { settingsStorage } from "../lib/settings_store.ts";
 import { VERSION_FULL } from "../version.ts";
 import { capturePlan, DEFAULT_LOAD_OFFSETS, DEFAULT_TUNE_OFFSETS } from "../lib/matchmap/plan.ts";
-import { averageGamma, isStable, median, repeatDriftOhm, runCapture, type ReadSample } from "../lib/matchmap/capture.ts";
+import { isStable, median, repeatDriftOhm, runCapture, type ReadSample } from "../lib/matchmap/capture.ts";
+import { medianGamma } from "../lib/vna/freshness.ts";
 import { MAP_EVENT, parseMap, saveActiveMap, serializeMap, type LoadedMap } from "../lib/matchmap/store.ts";
 
 const SETTLE_WINDOW_MS = 1500; // readback must hold this long…
@@ -63,25 +64,25 @@ export function useMapCapture(op: Operator, vna: VnaController): MapCapture {
     }
   }
 
+  // Three FRESH sweeps per point (a repeated/stale sweep is not a measurement — freshness.ts), combined
+  // by component-wise median so one glitched read can't drag the point.
   async function measure() {
     const gs: Complex[] = [], ts: number[] = [], ls: number[] = [];
-    for (let k = 0; k < SWEEPS_PER_POINT + 2 && gs.length < SWEEPS_PER_POINT; k++) {
-      const pts = await vna.doSweep();
-      if (!pts?.length) continue;
+    for (let k = 0; k < SWEEPS_PER_POINT; k++) {
+      const pts = await vna.doFreshSweep(); // throws if the VNA only repeats itself
       const off = f0GridOffsetHz(pts, F0);
       if (off == null || off > 1) {
         throw new Error(`13.56 MHz is not a measured sweep point (nearest is ${off} Hz away) — the map needs the exact value`);
       }
       const s = interpS11At(pts, F0);
       const tel = telRef.current;
-      if (!s || tel?.tune_cap_percent == null || tel?.load_cap_percent == null) continue;
+      if (!s || tel?.tune_cap_percent == null || tel?.load_cap_percent == null) throw new Error("no S11 or no cap readback at this point");
       vna.logMapSweep(pts);
       gs.push(s);
       ts.push(tel.tune_cap_percent);
       ls.push(tel.load_cap_percent);
     }
-    if (gs.length < SWEEPS_PER_POINT) throw new Error(`only ${gs.length} good sweeps at this point`);
-    return { tune: median(ts), load: median(ls), g: averageGamma(gs) };
+    return { tune: median(ts), load: median(ls), g: medianGamma(gs) };
   }
 
   async function start(label: string) {
