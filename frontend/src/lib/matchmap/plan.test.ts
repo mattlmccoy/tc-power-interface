@@ -45,3 +45,11 @@ test("commands stay inside 0..100 and duplicate points after clamping are droppe
   assert.equal(new Set(keys).size, keys.length);
   assert.equal(keys.length, 2 * 2); // tune {99,100}, load {0,1}
 });
+
+test("a cap already at its target is not left one step below it (single Load level)", () => {
+  const steps = capturePlan(29, 24, [0, 1], [0]);
+  assertApproachFromBelow(steps);
+  // the Load reached 24 from below once; later columns must not re-drop it and forget to come back
+  const loadMoves = steps.filter((s) => s.kind === "move" && s.axis === "load").map((s) => (s.kind === "move" ? s.value : 0));
+  assert.deepEqual(loadMoves, [23, 24]);
+});

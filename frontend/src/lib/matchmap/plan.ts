@@ -21,14 +21,21 @@ export function capturePlan(tune0: number, load0: number, tuneOffsets: number[],
   const tc = clampCap(tune0), lc = clampCap(load0);
   const steps: Step[] = [];
   const pos: Record<"tune" | "load", number | null> = { tune: null, load: null };
-  // Finish on `target` going up: step below first unless already below it. (At 0 there is no below.)
+  const upward: Record<"tune" | "load", boolean> = { tune: false, load: false }; // last arrival was upward
+  // Finish on `target` going up: step below first unless already below it, or already sitting on it
+  // after an upward arrival. (At 0 there is no below.)
   const moveUp = (axis: "tune" | "load", target: number) => {
     const cur = pos[axis];
-    if (cur === null || cur >= target) {
+    if (cur === target && upward[axis]) return;
+    if (cur !== null && cur < target) {
+      steps.push({ kind: "move", axis, value: target });
+      upward[axis] = true;
+    } else {
       const pre = Math.max(0, target - 1);
-      if (pre !== target && pre !== cur) steps.push({ kind: "move", axis, value: pre });
+      if (pre !== cur) steps.push({ kind: "move", axis, value: pre });
+      if (pre !== target) steps.push({ kind: "move", axis, value: target });
+      upward[axis] = pre < target;
     }
-    if (cur !== target) steps.push({ kind: "move", axis, value: target });
     pos[axis] = target;
   };
   for (const t of levels(tc, tuneOffsets)) {
