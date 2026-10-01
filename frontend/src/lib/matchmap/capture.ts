@@ -2,7 +2,7 @@
 // so the sequencing is testable without a NanoVNA or generator. useVna supplies the real actions.
 
 import type { Complex } from "../vna/rf.ts";
-import type { MapPoint } from "./fit.ts";
+import { zOfGamma, type MapPoint } from "./fit.ts";
 import type { Step } from "./plan.ts";
 
 export interface ReadSample { t: number; tune: number | null; load: number | null }
@@ -69,4 +69,14 @@ export async function runCapture(steps: Step[], deps: CaptureDeps): Promise<{ po
     deps.onProgress?.(points.length, total, s.label);
   }
   return { points, stopped: false };
+}
+
+/** Drift check: |ΔZ| (Ohm) between the closing repeat and the first visit to the same commanded point,
+ *  or null without a repeat. Larger than the map's own error means the network moved during capture. */
+export function repeatDriftOhm(points: CapturedPoint[]): number | null {
+  const rep = points.find((p) => p.repeat);
+  const first = rep && points.find((p) => !p.repeat && p.cmdTune === rep.cmdTune && p.cmdLoad === rep.cmdLoad);
+  if (!rep || !first) return null;
+  const a = zOfGamma(rep.g), b = zOfGamma(first.g);
+  return Math.hypot(a.re - b.re, a.im - b.im);
 }

@@ -58,3 +58,12 @@ test("runCapture: a measure failure rejects (the caller reports it; nothing half
   const { deps } = fakeDeps({ measure: async () => { throw new Error("sweep returned no data"); } });
   await assert.rejects(runCapture(capturePlan(29, 24, [0], [0]), deps), /no data/);
 });
+
+test("repeatDriftOhm: |dZ| between the repeat and the first visit to the same commanded point", async () => {
+  const { repeatDriftOhm } = await import("./capture.ts");
+  const p = (cmdTune: number, cmdLoad: number, g: { re: number; im: number }, repeat = false) =>
+    ({ tune: cmdTune, load: cmdLoad, g, label: "", cmdTune, cmdLoad, repeat, t: 0 });
+  // Γ = 0 is Z = 50; Γ = 0.2 is Z = 75
+  assert.equal(repeatDriftOhm([p(29, 24, { re: 0, im: 0 }), p(30, 24, { re: 0.5, im: 0 }), p(29, 24, { re: 0.2, im: 0 }, true)])?.toFixed(6), "25.000000");
+  assert.equal(repeatDriftOhm([p(29, 24, { re: 0, im: 0 })]), null);
+});
