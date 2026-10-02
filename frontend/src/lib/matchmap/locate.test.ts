@@ -31,7 +31,9 @@ test("no readings: nothing to say", () => {
 });
 
 test("one reading is a ring: the true live match is among the candidates, but the direction is ambiguous", () => {
-  const res = locateMatch(fit, cold, [at(cold.tune, cold.load)]);
+  const r = at(cold.tune - 0.3, cold.load); // far enough off the live match to read well above 0.25 %
+  assert.ok(r.g > 0.05, `g ${r.g}`);
+  const res = locateMatch(fit, cold, [r]);
   assert.equal(res.status, "ring");
   assert.equal(cellAt(res, live.tune, live.load), CELL.consistent);
 });
@@ -110,6 +112,16 @@ test("matched where the operator stands: guidance says hold", () => {
   const P = { tune: capLive.tune, load: capLive.load };
   const res = capRun([[0, 0], [0, -2], [1, -2]], P);
   assert.equal(res.status, "spot");
+  const g = guide(res, P);
+  assert.equal(g.tune.dir, "hold");
+  assert.equal(g.load.dir, "hold");
+});
+
+test("the operator's latest reading is already matched (≤ 0.25 % reflected): status matched, guidance hold — no move advice", () => {
+  const P = { tune: capLive.tune + 0.1, load: capLive.load };
+  const z: Reading = { tune: P.tune, load: P.load, fwd: 70, rev: 0.1, g: Math.sqrt(0.1 / 70), gLo: Math.sqrt(0.05 / 70), gHi: Math.sqrt(0.15 / 70), tFirst: 9, tLast: 9 };
+  const res = locateMatch(capFit, capCold, [capAt(capCold.tune, capCold.load), z]);
+  assert.equal(res.status, "matched");
   const g = guide(res, P);
   assert.equal(g.tune.dir, "hold");
   assert.equal(g.load.dir, "hold");

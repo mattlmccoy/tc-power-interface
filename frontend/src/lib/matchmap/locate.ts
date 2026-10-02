@@ -12,7 +12,12 @@ import { predictGammaMag, type MapFit } from "./fit.ts";
 import type { Reading } from "./track.ts";
 
 export const CELL = { inconsistent: 0, consistent: 1, outside: 2 } as const;
-export type LocateStatus = "none" | "ring" | "spot" | "nofit";
+export type LocateStatus = "none" | "matched" | "ring" | "spot" | "nofit";
+
+/** The latest reading at or below this |Γ| (0.25 % reflected) means the operator is on the match now:
+ *  any move advice from such readings is noise (2026-10-02 replay: "Tune ↑" right after a correct
+ *  downward retune, built from 0.0 W readings). */
+export const MATCHED_GAMMA = 0.05;
 
 export interface LocateResult {
   status: LocateStatus;
@@ -75,6 +80,10 @@ export function locateMatch(
   });
 
   const grid = { tune, load };
+  const latest = readings[readings.length - 1];
+  if (latest && latest.g <= MATCHED_GAMMA) {
+    return { status: "matched", grid, cells, estimate: { tune: latest.tune, load: latest.load }, sigma, worstGamma: latest.gHi, edge: false };
+  }
   if (!readings.length) return { status: "none", grid, cells, estimate: null, sigma, worstGamma: Infinity, edge: false };
   if (!n) return { status: "nofit", grid, cells, estimate: null, sigma, worstGamma: Infinity, edge: false };
   const estimate = { tune: sT / n, load: sL / n };
@@ -106,6 +115,7 @@ export const HOLD = { tune: 0.15, load: 0.5 }; // percent; below the whole-perce
  *  estimate. For a ring, only when every candidate lies on the same side; otherwise "unknown". */
 export function guide(res: LocateResult, P: { tune: number; load: number }): { tune: AxisGuide; load: AxisGuide } {
   const one = (ax: "tune" | "load"): AxisGuide => {
+    if (res.status === "matched") return { dir: "hold", amount: 0 };
     if (res.status === "none" || res.status === "nofit" || !res.estimate) return { dir: "unknown", amount: null };
     const hold = HOLD[ax];
     const c = res.estimate[ax] - P[ax];

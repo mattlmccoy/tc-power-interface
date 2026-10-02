@@ -45,3 +45,9 @@ test("edge and nofit are warnings that send the operator back to tuning by hand"
   assert.match(n.text, /by hand/);
   assert.equal(n.tone, "warn");
 });
+
+test("matched: hold, no move advice", () => {
+  const m = aidMessage(res({ status: "matched", estimate: { tune: 17.8, load: 8.6 }, worstGamma: 0.04 }), g("hold", "hold", 0, 0), 40, true);
+  assert.match(m.text, /Matched.*Hold/);
+  assert.equal(m.tone, "ok");
+});

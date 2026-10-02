@@ -21,6 +21,9 @@ export function aidMessage(
       ? { tone: "info", text: "Hold the caps still for ~2 s to take a reading." }
       : { tone: "info", text: "Readings start when RF is on (forward ≥ 10 W)." };
   }
+  if (res.status === "matched") {
+    return { tone: "ok", text: "Matched — reflected ≤ 0.25 % at the last held position. Hold." };
+  }
   if (res.status === "nofit") {
     return { tone: "warn", text: "Readings don't fit the cold map — the hot network has changed shape or the match moved beyond the map. Tune by hand; the map can't help here." };
   }
