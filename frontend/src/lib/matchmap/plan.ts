@@ -10,12 +10,25 @@ export type Step =
   | { kind: "move"; axis: "tune" | "load"; value: number }
   | { kind: "record"; label: string; tune: number; load: number; repeat: boolean };
 
-/** Tune is sharp (~17 Ohm per %), Load broad (~4.5 Ohm per %) on 218-2core, so Load is sampled in 2 %
- *  steps. The grid reaches mostly DOWN: on 2026-10-02 heating moved the match Tune −7 % and Load −3 %,
- *  one direction only, far outside the original ±1 % / ±4 % grid. 1 % Tune steps near the match,
- *  2 % beyond −4 %. 48 points ≈ 4 min. */
-export const DEFAULT_TUNE_OFFSETS = [-8, -6, -4, -3, -2, -1, 0, 1];
-export const DEFAULT_LOAD_OFFSETS = [-6, -4, -2, 0, 2, 4];
+/** Symmetric offsets: 1 % steps out to ±fine, then `step` % steps, always ending exactly at ±span. */
+export function gridOffsets(span: number, fine: number, step: number): number[] {
+  const out = new Set<number>([0]);
+  for (let o = 1; o <= Math.min(fine, span); o++) { out.add(o); out.add(-o); }
+  for (let o = Math.max(fine, 0) + step; o < span; o += step) { out.add(o); out.add(-o); }
+  out.add(span); out.add(-span);
+  return [...out].sort((x, y) => x - y);
+}
+
+/** Default capture grid: wide and SYMMETRIC. The network is still being changed between runs, so the
+ *  grid must not lean the way one run drifted (2026-10-02 went Tune −7 %, but that is one network on one
+ *  day). Tune is sharp (~17 Ohm per % on 218-2core) so it gets 1 % steps near the match; Load is broad
+ *  (~4.5 Ohm per %) so 2 % steps. 63 points ≈ 5 min; the VNA view can narrow or widen the spans. */
+export const DEFAULT_TUNE_SPAN = 6;
+export const DEFAULT_LOAD_SPAN = 6;
+export const tuneOffsets = (span: number) => gridOffsets(span, 2, 2);
+export const loadOffsets = (span: number) => gridOffsets(span, 0, 2);
+export const DEFAULT_TUNE_OFFSETS = tuneOffsets(DEFAULT_TUNE_SPAN);
+export const DEFAULT_LOAD_OFFSETS = loadOffsets(DEFAULT_LOAD_SPAN);
 
 const levels = (centre: number, offsets: number[]) =>
   [...new Set(offsets.map((o) => clampCap(centre + o)))].sort((a, b) => a - b);

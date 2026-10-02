@@ -22,21 +22,16 @@ function assertApproachFromBelow(steps: Step[]) {
   }
 }
 
-test("default grid is wide and reaches DOWN: Tune −8..+1, Load −6..+4 (48 points) plus a repeat", () => {
-  // 2026-10-02 full sweep: heating moved the match Tune −7 % and Load −3 % (one direction), far outside
-  // the old ±1 % / ±4 % grid, so the aid sat at "beyond the calibrated range" when it mattered.
+test("default grid is wide and symmetric (no direction baked in from one run): Tune ±6, Load ±6", () => {
   const steps = capturePlan(28.6, 23.6, DEFAULT_TUNE_OFFSETS, DEFAULT_LOAD_OFFSETS);
-  const r = records(steps);
-  assert.equal(r.length, 8 * 6 + 1);
-  const tunes = [...new Set(r.filter((x) => x.kind === "record" && !x.repeat).map((x) => (x.kind === "record" ? x.tune : 0)))];
-  assert.deepEqual(tunes, [21, 23, 25, 26, 27, 28, 29, 30]);
-  const last = r[r.length - 1];
-  assert.ok(last.kind === "record" && last.repeat === true);
-  assert.equal(last.kind === "record" && last.tune, 29); // the start rounds to whole-percent commands
-  assert.equal(last.kind === "record" && last.load, 24);
-  // Load is broad (~4 Ohm per % vs Tune's ~17 on 218-2core_v2), so it is sampled in 2 % steps
-  const loads = [...new Set(r.filter((x) => x.kind === "record" && !x.repeat).map((x) => (x.kind === "record" ? x.load : 0)))];
-  assert.deepEqual(loads, [18, 20, 22, 24, 26, 28]);
+  const r = records(steps).filter((x) => x.kind === "record" && !x.repeat);
+  const tunes = [...new Set(r.map((x) => (x.kind === "record" ? x.tune : 0)))];
+  const loads = [...new Set(r.map((x) => (x.kind === "record" ? x.load : 0)))];
+  assert.deepEqual(tunes, [23, 25, 27, 28, 29, 30, 31, 33, 35]);
+  assert.deepEqual(loads, [18, 20, 22, 24, 26, 28, 30]); // Load is broad: 2 % steps
+  assert.equal(records(steps).length, 9 * 7 + 1);
+  const last = records(steps).at(-1);
+  assert.ok(last?.kind === "record" && last.repeat && last.tune === 29 && last.load === 24);
 });
 
 test("every recorded point is approached from below on both caps", () => {
@@ -59,4 +54,12 @@ test("a cap already at its target is not left one step below it (single Load lev
   // the Load reached 24 from below once; later columns must not re-drop it and forget to come back
   const loadMoves = steps.filter((s) => s.kind === "move" && s.axis === "load").map((s) => (s.kind === "move" ? s.value : 0));
   assert.deepEqual(loadMoves, [23, 24]);
+});
+
+test("gridOffsets: symmetric, 1 % steps inside ±fine, coarser steps out to ±span", async () => {
+  const { gridOffsets } = await import("./plan.ts");
+  assert.deepEqual(gridOffsets(6, 2, 2), [-6, -4, -2, -1, 0, 1, 2, 4, 6]);
+  assert.deepEqual(gridOffsets(6, 0, 2), [-6, -4, -2, 0, 2, 4, 6]);
+  assert.deepEqual(gridOffsets(1, 1, 2), [-1, 0, 1]);
+  assert.deepEqual(gridOffsets(5, 2, 2), [-5, -4, -2, -1, 0, 1, 2, 4, 5]); // the span itself is always sampled
 });

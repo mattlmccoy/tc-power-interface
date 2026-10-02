@@ -30,7 +30,7 @@ export function App() {
   } = op;
   const vna = useVna(op);
   const alerts = useAudioAlerts(op);
-  const aid = useMatchAid(op.t); // App level: readings survive tab switches
+  const aid = useMatchAid(op.t, op.status?.recording?.run ?? null); // App level: survives tab switches; drift is per run
   const mapCapture = useMapCapture(op, vna);
   const inVna = !!op.status?.vna_session?.active;
   // Site mode only: when the local operator can't be reached after repeated WS-connect failures (e.g.

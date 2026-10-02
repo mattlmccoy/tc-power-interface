@@ -7,7 +7,7 @@ import type { Telemetry } from "../lib/telemetry.ts";
 import { settingsStorage } from "../lib/settings_store.ts";
 import { emptyTrack, trackSample, type Reading } from "../lib/matchmap/track.ts";
 import { locateMatch, guide, type LocateResult, type AxisGuide } from "../lib/matchmap/locate.ts";
-import { driftSample, driftSummary, emptyDrift, type DriftSummary } from "../lib/matchmap/drift.ts";
+import { driftSample, driftSummary, emptyDrift, withRun, type DriftSummary } from "../lib/matchmap/drift.ts";
 import { loadActiveMap, MAP_EVENT, MAP_KEY, parseMap, saveActiveMap, type LoadedMap } from "../lib/matchmap/store.ts";
 
 export interface MatchAid {
@@ -23,7 +23,8 @@ export interface MatchAid {
   resetDrift: () => void;
 }
 
-export function useMatchAid(t: Telemetry | null): MatchAid {
+/** `runId` = the current recording's run name (status.recording.run): drift history is per run. */
+export function useMatchAid(t: Telemetry | null, runId: string | null): MatchAid {
   const [map, setMap] = useState<LoadedMap | null>(() => loadActiveMap(settingsStorage()));
   const [readings, setReadings] = useState<Reading[]>([]);
   const [err, setErr] = useState("");
@@ -48,14 +49,14 @@ export function useMatchAid(t: Telemetry | null): MatchAid {
       tune: t.tune_cap_percent, load: t.load_cap_percent,
     };
     const next = trackSample(trackRef.current, sample);
-    const d = driftSample(driftRef.current, sample);
+    const d = driftSample(withRun(driftRef.current, runId), sample); // a new run starts a fresh history
     if (d.holds !== driftRef.current.holds || d.eWh !== driftRef.current.eWh) setDriftTick((n) => n + 1);
     driftRef.current = d;
     const prev = trackRef.current.readings;
     const same = next.readings.length === prev.length && next.readings.every((r, i) => r === prev[i]);
     if (!same) setReadings(next.readings); // expiry filtering makes a new array every sample
     trackRef.current = next;
-  }, [t]);
+  }, [t, runId]);
 
   const result = useMemo(() => (map ? locateMatch(map.fit, map.coldMatch, readings) : null), [map, readings]);
   const current = t?.tune_cap_percent != null && t?.load_cap_percent != null

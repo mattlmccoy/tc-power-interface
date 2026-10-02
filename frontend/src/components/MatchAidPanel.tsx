@@ -32,8 +32,8 @@ function DriftBlock({ d, fwd, reset }: { d: DriftSummary; fwd: number; reset: ()
       {row("Tune", d.tuneRate, d.tuneLeft, d.whToTuneFloor, d.minToTuneFloor)}
       {row("Load", d.loadRate, d.loadLeft, d.whToLoadFloor, d.minToLoadFloor)}
       <div className="aid-note" style={{ marginTop: 4 }}>
-        From where you found the match this run (≤ 1 % reflected, held ≥ 3 s), per Wh delivered. On 218-2core,
-        heating moved it one way: Tune down ~1 %/Wh after ~2 Wh. Resets after 5 min with RF off.{" "}
+        From where you found the match in THIS run only (≤ 1 % reflected, held ≥ 3 s), per Wh delivered.
+        Starts fresh with each new recording, after 5 min with RF off, or on Reset.{" "}
         <button className="btn" style={{ padding: "0 6px", fontSize: 11 }} onClick={reset}>Reset</button>
       </div>
     </div>

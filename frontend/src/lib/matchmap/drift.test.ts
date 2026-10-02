@@ -76,3 +76,18 @@ test("travel warning: err near the rail or within 5 min of it, warn within 8 % o
   assert.equal(travelLevel({ ...base, minToLoadFloor: 4 }), "err");
   assert.equal(travelLevel({ ...base, tuneLeft: null, loadLeft: null, minToTuneFloor: null }), "ok");
 });
+
+test("each recorded run starts its own drift history; stopping the recording does not wipe it", async () => {
+  const { withRun } = await import("./drift.ts");
+  let st = withRun(emptyDrift(), "RUN_A");
+  for (const t of [0, 1000, 2000, 3000]) st = driftSample(st, s(t));
+  assert.equal(st.holds.length, 1);
+  st = withRun(st, "RUN_A"); // same run: keep
+  assert.equal(st.holds.length, 1);
+  st = withRun(st, null); // recording stopped: keep what this run measured
+  assert.equal(st.holds.length, 1);
+  st = withRun(st, "RUN_B"); // a new run: fresh history, nothing carried over
+  assert.equal(st.holds.length, 0);
+  assert.equal(st.eWh, 0);
+  assert.equal(st.runId, "RUN_B");
+});

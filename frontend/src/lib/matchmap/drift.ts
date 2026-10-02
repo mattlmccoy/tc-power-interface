@@ -18,6 +18,7 @@ export interface DriftHold {
 interface Run { tune: number; load: number; tStart: number; eStart: number }
 
 export interface DriftState {
+  runId: string | null; // the recording this history belongs to; a new run starts fresh
   eWh: number;
   lastT: number | null;
   offSince: number | null;
@@ -37,12 +38,20 @@ export const DRIFT_DEFAULTS = {
 };
 export type DriftConfig = typeof DRIFT_DEFAULTS;
 
-export const emptyDrift = (): DriftState => ({ eWh: 0, lastT: null, offSince: null, run: null, holds: [] });
+export const emptyDrift = (runId: string | null = null): DriftState =>
+  ({ runId, eWh: 0, lastT: null, offSince: null, run: null, holds: [] });
+
+/** Drift history is per recorded run: the network changes between runs (it is still being tuned), so
+ *  nothing measured in one run may steer another. A new run name starts fresh; a stopped recording
+ *  (null) keeps what the run measured. */
+export function withRun(st: DriftState, runId: string | null): DriftState {
+  return runId != null && runId !== st.runId ? emptyDrift(runId) : st;
+}
 
 export function driftSample(st: DriftState, s: TelSample, cfg: DriftConfig = DRIFT_DEFAULTS): DriftState {
   if (!s.rfOn) {
     const offSince = st.offSince ?? s.tMs;
-    if (s.tMs - offSince > cfg.resetOffMs) return { ...emptyDrift(), lastT: s.tMs, offSince };
+    if (s.tMs - offSince > cfg.resetOffMs) return { ...emptyDrift(st.runId), lastT: s.tMs, offSince };
     return { ...st, lastT: s.tMs, offSince, run: null };
   }
   const dt = st.lastT == null ? 0 : Math.min(Math.max(0, s.tMs - st.lastT), cfg.maxDtMs);

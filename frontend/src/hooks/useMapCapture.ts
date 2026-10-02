@@ -12,7 +12,7 @@ import { f0GridOffsetHz } from "../lib/vna/sweep.ts";
 import type { Complex } from "../lib/vna/rf.ts";
 import { settingsStorage } from "../lib/settings_store.ts";
 import { VERSION_FULL } from "../version.ts";
-import { capturePlan, DEFAULT_LOAD_OFFSETS, DEFAULT_TUNE_OFFSETS } from "../lib/matchmap/plan.ts";
+import { capturePlan, loadOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
 import { isStable, median, repeatDriftOhm, runCapture, type ReadSample } from "../lib/matchmap/capture.ts";
 import { medianGamma } from "../lib/vna/freshness.ts";
 import { MAP_EVENT, parseMap, saveActiveMap, serializeMap, type LoadedMap } from "../lib/matchmap/store.ts";
@@ -31,7 +31,7 @@ export interface MapCapture {
   msg: string;
   result: LoadedMap | null;
   driftOhm: number | null;
-  start: (label: string) => Promise<void>;
+  start: (label: string, tuneSpan: number, loadSpan: number) => Promise<void>;
   download: () => void;
 }
 
@@ -85,12 +85,12 @@ export function useMapCapture(op: Operator, vna: VnaController): MapCapture {
     return { tune: median(ts), load: median(ls), g: medianGamma(gs) };
   }
 
-  async function start(label: string) {
+  async function start(label: string, tuneSpan: number, loadSpan: number) {
     const why = blocked();
     if (why) { setMsg(`cannot capture: ${why}`); return; }
     const tel = telRef.current;
     if (tel?.tune_cap_percent == null || tel?.load_cap_percent == null) { setMsg("cannot capture: no cap readback"); return; }
-    const plan = capturePlan(tel.tune_cap_percent, tel.load_cap_percent, DEFAULT_TUNE_OFFSETS, DEFAULT_LOAD_OFFSETS);
+    const plan = capturePlan(tel.tune_cap_percent, tel.load_cap_percent, tuneOffsets(tuneSpan), loadOffsets(loadSpan));
     setBusy(true); setResult(null); setDriftOhm(null); textRef.current = null;
     setMsg("capturing — the caps will step around this point, then return to it");
     try {

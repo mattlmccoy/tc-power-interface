@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fitMap, predictGammaMag, solveMatch, gammaOfZ, type MapPoint } from "./fit.ts";
 import { locateMatch, guide, CELL } from "./locate.ts";
 import type { Reading } from "./track.ts";
-import { DEFAULT_TUNE_OFFSETS, DEFAULT_LOAD_OFFSETS } from "./plan.ts";
+import { DEFAULT_TUNE_OFFSETS, DEFAULT_LOAD_OFFSETS, DEFAULT_TUNE_SPAN } from "./plan.ts";
 
 // The REAL 09-03 map (old network): Tune and Load move Z 37 deg apart, so readings can separate them.
 const { points } = JSON.parse(readFileSync(new URL("./fixtures/fullcap_0903.json", import.meta.url), "utf8"));
@@ -95,7 +95,8 @@ test("every spot keeps its worst-case promise for the true drifted match, rough 
 });
 
 test("when candidates run into the uncalibrated area the result says so and is never a spot", () => {
-  const res = capRun([[0, 0], [-1, 0], [0, 2]]); // Tune -1 asks the map about positions beyond its range
+  // a Tune probe one step past the grid's own span asks the map about positions beyond its range
+  const res = capRun([[0, 0], [-(DEFAULT_TUNE_SPAN + 1), 0], [0, 2]]);
   assert.equal(res.edge, true);
   assert.notEqual(res.status, "spot");
 });
