@@ -10,11 +10,12 @@ export type Step =
   | { kind: "move"; axis: "tune" | "load"; value: number }
   | { kind: "record"; label: string; tune: number; load: number; repeat: boolean };
 
-/** Tune is sharp (~17 Ohm per % on 218-2core_v2; 1.2 % = 20 dB), Load is broad, so Load is sampled in
- *  2 % steps over ±4 %: comparable Z change per step on both caps, and wide enough that an in-run drift
- *  of a couple of percent of Load stays inside the calibrated range (locate.ts flags it otherwise). */
-export const DEFAULT_TUNE_OFFSETS = [-1, 0, 1];
-export const DEFAULT_LOAD_OFFSETS = [-4, -2, 0, 2, 4];
+/** Tune is sharp (~17 Ohm per %), Load broad (~4.5 Ohm per %) on 218-2core, so Load is sampled in 2 %
+ *  steps. The grid reaches mostly DOWN: on 2026-10-02 heating moved the match Tune −7 % and Load −3 %,
+ *  one direction only, far outside the original ±1 % / ±4 % grid. 1 % Tune steps near the match,
+ *  2 % beyond −4 %. 48 points ≈ 4 min. */
+export const DEFAULT_TUNE_OFFSETS = [-8, -6, -4, -3, -2, -1, 0, 1];
+export const DEFAULT_LOAD_OFFSETS = [-6, -4, -2, 0, 2, 4];
 
 const levels = (centre: number, offsets: number[]) =>
   [...new Set(offsets.map((o) => clampCap(centre + o)))].sort((a, b) => a - b);

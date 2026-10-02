@@ -22,17 +22,21 @@ function assertApproachFromBelow(steps: Step[]) {
   }
 }
 
-test("default grid: 3 Tune x 5 Load points plus a repeat of the start", () => {
+test("default grid is wide and reaches DOWN: Tune −8..+1, Load −6..+4 (48 points) plus a repeat", () => {
+  // 2026-10-02 full sweep: heating moved the match Tune −7 % and Load −3 % (one direction), far outside
+  // the old ±1 % / ±4 % grid, so the aid sat at "beyond the calibrated range" when it mattered.
   const steps = capturePlan(28.6, 23.6, DEFAULT_TUNE_OFFSETS, DEFAULT_LOAD_OFFSETS);
   const r = records(steps);
-  assert.equal(r.length, 3 * 5 + 1);
+  assert.equal(r.length, 8 * 6 + 1);
+  const tunes = [...new Set(r.filter((x) => x.kind === "record" && !x.repeat).map((x) => (x.kind === "record" ? x.tune : 0)))];
+  assert.deepEqual(tunes, [21, 23, 25, 26, 27, 28, 29, 30]);
   const last = r[r.length - 1];
   assert.ok(last.kind === "record" && last.repeat === true);
   assert.equal(last.kind === "record" && last.tune, 29); // the start rounds to whole-percent commands
   assert.equal(last.kind === "record" && last.load, 24);
-  // Load is broad (~4 Ohm per % vs Tune's ~17 on 218-2core_v2), so it is sampled in 2 % steps over ±4 %
+  // Load is broad (~4 Ohm per % vs Tune's ~17 on 218-2core_v2), so it is sampled in 2 % steps
   const loads = [...new Set(r.filter((x) => x.kind === "record" && !x.repeat).map((x) => (x.kind === "record" ? x.load : 0)))];
-  assert.deepEqual(loads, [20, 22, 24, 26, 28]);
+  assert.deepEqual(loads, [18, 20, 22, 24, 26, 28]);
 });
 
 test("every recorded point is approached from below on both caps", () => {
