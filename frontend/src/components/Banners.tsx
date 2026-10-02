@@ -19,6 +19,10 @@ export function Banners({ handshake, faulted, ctrl, clearFault, alarmActive, sil
           <strong>Version mismatch.</strong> {handshake.message}
         </div>
       ) : null}
+      {/* Fault and warning alerts are fixed pop-ups, OUT of the page flow: they come and go with reflected
+          power during a run, and as in-flow strips they pushed every panel down (37 px) mid-click on the
+          cap −/+ buttons. The VNA / version strips stay in flow — they only appear with a view change. */}
+      <div className="alert-popups" role="status" aria-live="polite">
       {faulted ? (
         <div className="banner fault">
           <strong>FAULT — RF disabled.</strong> {ctrl?.fault_reasons.join("; ")}
@@ -36,6 +40,7 @@ export function Banners({ handshake, faulted, ctrl, clearFault, alarmActive, sil
           <strong>WARNING.</strong> {ctrl.warnings.join("; ")}
         </div>
       ) : null}
+      </div>
       {vnaSession?.active ? (
         <div className={`banner ${vnaSession.stale ? "warn" : "fault"}`}>
           <strong>VNA mode — RF disabled.</strong>

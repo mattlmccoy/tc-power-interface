@@ -91,6 +91,11 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
 .banner.fault { background: var(--err-bg); color: var(--err); border-bottom: 1px solid var(--err); }
 .banner.warn { background: var(--warn-bg); color: var(--warn); border-bottom: 1px solid var(--warn); }
 .banner strong { font-family: var(--font-mono); }
+/* Fault/warning pop-ups: fixed bottom-left, never in the page flow (no layout shift under the cursor). */
+.alert-popups { position: fixed; left: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column;
+  gap: 8px; max-width: min(460px, calc(100vw - 32px)); pointer-events: none; }
+.alert-popups .banner { pointer-events: auto; border: 1px solid currentColor; border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: calc(var(--space) * 2) calc(var(--space) * 3); }
 /* Inline action inside a fault banner (e.g. "Clear fault") — a compact button in the banner's color. */
 .banner-action { margin-left: calc(var(--space) * 2); padding: 2px 10px; font-size: 12px;
   font-weight: 600; cursor: pointer; color: var(--err); background: transparent;
