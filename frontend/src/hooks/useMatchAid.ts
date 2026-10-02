@@ -7,6 +7,7 @@ import type { Telemetry } from "../lib/telemetry.ts";
 import { settingsStorage } from "../lib/settings_store.ts";
 import { emptyTrack, trackSample, type Reading } from "../lib/matchmap/track.ts";
 import { locateMatch, guide, type LocateResult, type AxisGuide } from "../lib/matchmap/locate.ts";
+import { driftSample, driftSummary, emptyDrift, type DriftSummary } from "../lib/matchmap/drift.ts";
 import { loadActiveMap, MAP_EVENT, MAP_KEY, parseMap, saveActiveMap, type LoadedMap } from "../lib/matchmap/store.ts";
 
 export interface MatchAid {
@@ -18,6 +19,8 @@ export interface MatchAid {
   err: string;
   loadFile: (f: File) => Promise<void>;
   clearReadings: () => void;
+  drift: DriftSummary; // this run's own drift rate and cap travel left (works without a map)
+  resetDrift: () => void;
 }
 
 export function useMatchAid(t: Telemetry | null): MatchAid {
@@ -25,6 +28,8 @@ export function useMatchAid(t: Telemetry | null): MatchAid {
   const [readings, setReadings] = useState<Reading[]>([]);
   const [err, setErr] = useState("");
   const trackRef = useRef(emptyTrack());
+  const driftRef = useRef(emptyDrift());
+  const [driftTick, setDriftTick] = useState(0);
   const lastTsRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -38,10 +43,14 @@ export function useMatchAid(t: Telemetry | null): MatchAid {
   useEffect(() => {
     if (!t || t.host_timestamp_ns === lastTsRef.current) return;
     lastTsRef.current = t.host_timestamp_ns;
-    const next = trackSample(trackRef.current, {
+    const sample = {
       tMs: t.host_timestamp_ns / 1e6, rfOn: t.rf_on, fwd: t.forward_w, rev: t.reverse_w,
       tune: t.tune_cap_percent, load: t.load_cap_percent,
-    });
+    };
+    const next = trackSample(trackRef.current, sample);
+    const d = driftSample(driftRef.current, sample);
+    if (d.holds !== driftRef.current.holds || d.eWh !== driftRef.current.eWh) setDriftTick((n) => n + 1);
+    driftRef.current = d;
     const prev = trackRef.current.readings;
     const same = next.readings.length === prev.length && next.readings.every((r, i) => r === prev[i]);
     if (!same) setReadings(next.readings); // expiry filtering makes a new array every sample
@@ -52,6 +61,11 @@ export function useMatchAid(t: Telemetry | null): MatchAid {
   const current = t?.tune_cap_percent != null && t?.load_cap_percent != null
     ? { tune: t.tune_cap_percent, load: t.load_cap_percent } : null;
   const guidance = result && current ? guide(result, current) : null;
+  const drift = useMemo(
+    () => driftSummary(driftRef.current, { tune: t?.tune_cap_percent ?? null, load: t?.load_cap_percent ?? null, fwd: t?.forward_w ?? 0 }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [driftTick, t?.tune_cap_percent, t?.load_cap_percent, t?.forward_w],
+  );
 
   async function loadFile(f: File) {
     try {
@@ -70,5 +84,10 @@ export function useMatchAid(t: Telemetry | null): MatchAid {
     setReadings([]);
   }
 
-  return { map, readings, result, guidance, current, err, loadFile, clearReadings };
+  function resetDrift() {
+    driftRef.current = emptyDrift();
+    setDriftTick((n) => n + 1);
+  }
+
+  return { map, readings, result, guidance, current, err, loadFile, clearReadings, drift, resetDrift };
 }

@@ -5,9 +5,40 @@
 import type { MatchAid } from "../hooks/useMatchAid.ts";
 import type { Telemetry } from "../lib/telemetry.ts";
 import { aidMessage } from "../lib/matchmap/message.ts";
+import { travelLevel, type DriftSummary } from "../lib/matchmap/drift.ts";
 import { MatchMapPlot } from "./MatchMapPlot.tsx";
 
 const ago = (tMs: number, nowMs: number) => `${Math.max(0, Math.round((nowMs - tMs) / 1000))} s ago`;
+
+const rateText = (r: number | null) =>
+  r == null ? "no retunes yet" : Math.abs(r) < 0.1 ? "steady" : `${r > 0 ? "↑" : "↓"} ${Math.abs(r).toFixed(1)} %/Wh`;
+
+/** This run's own drift (from the positions the operator found the match at) and cap travel left. */
+function DriftBlock({ d, fwd, reset }: { d: DriftSummary; fwd: number; reset: () => void }) {
+  const level = travelLevel(d);
+  const color = level === "err" ? "var(--err)" : level === "warn" ? "var(--warn)" : "var(--fg)";
+  const row = (name: string, rate: number | null, left: number | null, wh: number | null, min: number | null) => (
+    <div className="mono" style={{ fontSize: 12 }}>
+      {name} {rateText(rate)} · <strong style={{ color }}>{left != null ? `${left.toFixed(1)} % left` : "—"}</strong>
+      {wh != null && min != null && <> · reaches 0 % in ~{wh.toFixed(0)} Wh (~{min.toFixed(0)} min at {fwd.toFixed(0)} W)</>}
+    </div>
+  );
+  return (
+    <div style={{ borderBottom: "1px solid var(--line)", paddingBottom: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <strong>Drift &amp; travel</strong>
+        <span className="aid-note" style={{ margin: 0 }}>this run: {d.eWh.toFixed(1)} Wh · {d.holds} matched positions</span>
+      </div>
+      {row("Tune", d.tuneRate, d.tuneLeft, d.whToTuneFloor, d.minToTuneFloor)}
+      {row("Load", d.loadRate, d.loadLeft, d.whToLoadFloor, d.minToLoadFloor)}
+      <div className="aid-note" style={{ marginTop: 4 }}>
+        From where you found the match this run (≤ 1 % reflected, held ≥ 3 s), per Wh delivered. On 218-2core,
+        heating moved it one way: Tune down ~1 %/Wh after ~2 Wh. Resets after 5 min with RF off.{" "}
+        <button className="btn" style={{ padding: "0 6px", fontSize: 11 }} onClick={reset}>Reset</button>
+      </div>
+    </div>
+  );
+}
 
 export function MatchAidPanel({ aid, t }: { aid: MatchAid; t: Telemetry | null }) {
   const { map, result, readings, current } = aid;
@@ -25,7 +56,8 @@ export function MatchAidPanel({ aid, t }: { aid: MatchAid; t: Telemetry | null }
 
   return (
     <section className="panel">
-      <h2>Match map <span className="hint" style={{ fontWeight: 400 }}>— advisory, never moves a cap</span></h2>
+      <h2>Match aid <span className="hint" style={{ fontWeight: 400 }}>— advisory, never moves a cap</span></h2>
+      <DriftBlock d={aid.drift} fwd={t?.forward_w ?? 0} reset={aid.resetDrift} />
       {!map ? (
         <>
           <div className="aid-note" style={{ marginTop: 0 }}>

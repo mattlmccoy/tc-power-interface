@@ -105,3 +105,13 @@ export function driftSummary(
     whToTuneFloor, minToTuneFloor: minutes(whToTuneFloor), whToLoadFloor, minToLoadFloor: minutes(whToLoadFloor),
   };
 }
+
+/** How close either cap is to running out of travel (0 %): by remaining percent or, when it is
+ *  drifting down, by minutes at the present power. */
+export function travelLevel(d: DriftSummary): "ok" | "warn" | "err" {
+  const lefts = [d.tuneLeft, d.loadLeft].filter((x): x is number => x != null);
+  const mins = [d.minToTuneFloor, d.minToLoadFloor].filter((x): x is number => x != null);
+  if (lefts.some((x) => x < 3) || mins.some((m) => m < 5)) return "err";
+  if (lefts.some((x) => x < 8) || mins.some((m) => m < 15)) return "warn";
+  return "ok";
+}

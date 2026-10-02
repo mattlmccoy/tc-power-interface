@@ -65,3 +65,14 @@ test("RF off long enough to cool resets the heating history", () => {
   assert.equal(st.eWh, 0);
   assert.equal(st.holds.length, 0);
 });
+
+test("travel warning: err near the rail or within 5 min of it, warn within 8 % or 15 min, else ok", async () => {
+  const { travelLevel } = await import("./drift.ts");
+  const base = { eWh: 5, holds: 4, tuneRate: -0.8, loadRate: null, tuneLeft: 20, loadLeft: 30, whToTuneFloor: 25, minToTuneFloor: 30, whToLoadFloor: null, minToLoadFloor: null };
+  assert.equal(travelLevel(base), "ok");
+  assert.equal(travelLevel({ ...base, tuneLeft: 7.5 }), "warn");
+  assert.equal(travelLevel({ ...base, minToTuneFloor: 12 }), "warn");
+  assert.equal(travelLevel({ ...base, loadLeft: 2.5 }), "err");
+  assert.equal(travelLevel({ ...base, minToLoadFloor: 4 }), "err");
+  assert.equal(travelLevel({ ...base, tuneLeft: null, loadLeft: null, minToTuneFloor: null }), "ok");
+});

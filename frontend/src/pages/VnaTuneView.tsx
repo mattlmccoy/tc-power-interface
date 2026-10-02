@@ -175,8 +175,9 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
           <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
             <strong>Match map</strong>
             <div className="help-text" style={{ margin: 0 }}>
-              Once matched, capture a map: the caps step Tune −1/0/+1 % × Load −4…+4 % around this point (each
-              approached from below), the VNA averages 3 sweeps at each, then the caps return here. About 2–3 min.
+              Once matched, capture a map: the caps step Tune −8…+1 % × Load −6…+4 % around this point (mostly
+              downward, where heating moves the match; each approached from below), the VNA takes the median of
+              3 fresh sweeps at each of 48 points, then the caps return here. About 4 min.
               The in-run Match map panel uses it to show where the match has drifted.
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
