@@ -71,3 +71,23 @@ test("REAL 09-03 study: a star of single-cap moves fits linear and predicts the 
     assert.ok(miss < 3, `held-out T${h.tune} L${h.load} missed by ${miss.toFixed(2)} Ohm`);
   }
 });
+
+test("REAL 09-30 captures: the fit picks the model with the lowest held-out error — Γ-space beats the old Z quadratic", () => {
+  // Z-space quadratic (v0.12) held-out error: v1 3.35 Ohm, v3 2.73 Ohm. Γ-space quadratic measured 2.34 on v1.
+  for (const [f, zQuadLoo] of [["map_v1_0930.json", 3.35], ["map_v3_0930.json", 2.73]] as const) {
+    const pts = fixture(f).points.filter((p: { repeat: boolean }) => !p.repeat);
+    const fit = fitMap(pts);
+    assert.equal(fit.space, "gamma", f);
+    assert.ok(fit.looRmsOhm != null && fit.looRmsOhm < zQuadLoo - 0.3, `${f}: held-out ${fit.looRmsOhm} vs Z-quadratic ${zQuadLoo}`);
+  }
+});
+
+test("a wide Tune span that curves is fitted with a cubic, not forced into a quadratic", () => {
+  const z = (T: number, L: number) => { const dT = T - 20, dL = L - 10; return { re: 50 - 16 * dT + 3 * dL + 0.9 * dT * dT * dT / 10, im: -4 * dT - 3.4 * dL + 0.5 * dT * dT }; };
+  const pts: MapPoint[] = [];
+  for (let T = 12; T <= 21; T++) for (const L of [6, 8, 10, 12, 14]) pts.push({ tune: T, load: L, g: gammaOfZ(z(T, L)) });
+  const fit = fitMap(pts);
+  assert.equal(fit.kind, "cubic");
+  const zp = predictZ(fit, 14.5, 9), zt = z(14.5, 9);
+  assert.ok(Math.hypot(zp.re - zt.re, zp.im - zt.im) < 1, `miss ${Math.hypot(zp.re - zt.re, zp.im - zt.im)}`);
+});

@@ -12,11 +12,15 @@ export interface MapPoint {
   g: Complex; // S11 at exactly 13.56 MHz
 }
 
+export type FitKind = "linear" | "quadratic" | "cubic";
+export type FitSpace = "Z" | "gamma";
+
 export interface MapFit {
-  kind: "linear" | "quadratic";
+  kind: FitKind;
+  space: FitSpace; // which quantity is the polynomial: impedance Z or reflection Γ (picked by held-out error)
   t0: number; // centring offsets for conditioning
   l0: number;
-  cRe: number[]; // coefficients on [1, dT, dL, (dT², dL², dT·dL)]
+  cRe: number[]; // coefficients on [1, dT, dL, (dT², dL², dT·dL, (dT³, dL³, dT²·dL, dT·dL²))]
   cIm: number[];
   n: number;
   rmsOhm: number; // in-sample |Z_fit - Z_meas| RMS
@@ -43,8 +47,10 @@ export function gammaOfZ(z: Complex): Complex {
   return { re: (nr * dr + ni * di) / den, im: (ni * dr - nr * di) / den };
 }
 
-function basis(kind: MapFit["kind"], dT: number, dL: number): number[] {
-  return kind === "linear" ? [1, dT, dL] : [1, dT, dL, dT * dT, dL * dL, dT * dL];
+function basis(kind: FitKind, dT: number, dL: number): number[] {
+  if (kind === "linear") return [1, dT, dL];
+  const q = [1, dT, dL, dT * dT, dL * dL, dT * dL];
+  return kind === "quadratic" ? q : [...q, dT * dT * dT, dL * dL * dL, dT * dT * dL, dT * dL * dL];
 }
 
 /** Solve the square system M x = b by Gaussian elimination with partial pivoting; null if singular. */
@@ -71,11 +77,11 @@ function solve(M: number[][], b: number[]): number[] | null {
   return x;
 }
 
-interface Core { kind: MapFit["kind"]; t0: number; l0: number; cRe: number[]; cIm: number[] }
+interface Core { kind: FitKind; space: FitSpace; t0: number; l0: number; cRe: number[]; cIm: number[] }
 
-function leastSquares(kind: MapFit["kind"], pts: MapPoint[], t0: number, l0: number): Core | null {
+function leastSquares(kind: FitKind, space: FitSpace, pts: MapPoint[], t0: number, l0: number): Core | null {
   const rows = pts.map((p) => basis(kind, p.tune - t0, p.load - l0));
-  const zs = pts.map((p) => zOfGamma(p.g));
+  const zs = pts.map((p) => (space === "Z" ? zOfGamma(p.g) : p.g));
   const m = rows[0].length;
   if (pts.length < m) return null;
   const AtA = Array.from({ length: m }, (_, i) =>
@@ -84,15 +90,21 @@ function leastSquares(kind: MapFit["kind"], pts: MapPoint[], t0: number, l0: num
     Array.from({ length: m }, (_, i) => rows.reduce((s, r, k) => s + r[i] * pick(zs[k]), 0));
   const cRe = solve(AtA, Atb((z) => z.re));
   const cIm = solve(AtA, Atb((z) => z.im));
-  return cRe && cIm ? { kind, t0, l0, cRe, cIm } : null;
+  return cRe && cIm ? { kind, space, t0, l0, cRe, cIm } : null;
 }
 
-function evalCore(c: Core, tune: number, load: number): Complex {
+/** The polynomial's own value (Z or Γ, per c.space). */
+function evalRaw(c: Core, tune: number, load: number): Complex {
   const b = basis(c.kind, tune - c.t0, load - c.l0);
   return {
     re: b.reduce((s, v, i) => s + v * c.cRe[i], 0),
     im: b.reduce((s, v, i) => s + v * c.cIm[i], 0),
   };
+}
+
+function evalCore(c: Core, tune: number, load: number): Complex {
+  const v = evalRaw(c, tune, load);
+  return c.space === "Z" ? v : zOfGamma(v);
 }
 
 const zMiss = (c: Core, p: MapPoint) => {
@@ -101,8 +113,15 @@ const zMiss = (c: Core, p: MapPoint) => {
   return Math.hypot(zp.re - zm.re, zp.im - zm.im);
 };
 
-/** Fit the map. Quadratic when there are >= 8 points and the layout identifies all six terms
- *  (a star of single-cap moves does not: the cross term is unidentifiable), else linear. */
+const KINDS: FitKind[] = ["linear", "quadratic", "cubic"];
+const SPACES: FitSpace[] = ["Z", "gamma"];
+const nTerms = (k: FitKind) => basis(k, 0, 0).length;
+
+/** Fit the map: every model (Z or Γ; linear, quadratic, cubic) the points can identify with room to
+ *  spare is fitted, and the one with the lowest leave-one-out error (Ohm) wins — simpler first on ties.
+ *  On the first real 218-2core captures Γ-space beat the Z quadratic (2.3 vs 3.35 Ohm held-out), and
+ *  a wide Tune span needs the cubic. A layout that can't identify a model (a star has no cross term)
+ *  simply drops that candidate. */
 export function fitMap(points: MapPoint[]): MapFit {
   if (points.length < 4) throw new MapFitError(`need at least 4 points (got ${points.length})`);
   const ts = points.map((p) => p.tune), ls = points.map((p) => p.load);
@@ -115,21 +134,29 @@ export function fitMap(points: MapPoint[]): MapFit {
   }
   const t0 = ts.reduce((a, b) => a + b, 0) / ts.length;
   const l0 = ls.reduce((a, b) => a + b, 0) / ls.length;
-  const core = (points.length >= 8 ? leastSquares("quadratic", points, t0, l0) : null)
-    ?? leastSquares("linear", points, t0, l0);
-  if (!core) throw new MapFitError("points do not identify a map (collinear layout?)");
 
-  const rmsOhm = Math.sqrt(points.reduce((s, p) => s + zMiss(core, p) ** 2, 0) / points.length);
-  let sq = 0;
-  let looOk = true;
-  points.forEach((p, i) => {
-    const rest = points.filter((_, k) => k !== i);
-    const c = leastSquares(core.kind, rest, t0, l0);
-    if (!c) { looOk = false; return; }
-    sq += zMiss(c, p) ** 2;
-  });
-  const looRmsOhm = looOk ? Math.sqrt(sq / points.length) : null;
-  return { ...core, n: points.length, rmsOhm, looRmsOhm, tuneRange, loadRange };
+  let best: MapFit | null = null;
+  for (const kind of KINDS) {
+    if (kind !== "linear" && points.length < nTerms(kind) + 2) continue; // need spare points to judge it
+    for (const space of SPACES) {
+      const core = leastSquares(kind, space, points, t0, l0);
+      if (!core) continue;
+      let sq = 0;
+      let ok = true;
+      for (let i = 0; i < points.length && ok; i++) {
+        const c = leastSquares(kind, space, points.filter((_, k) => k !== i), t0, l0);
+        if (!c) ok = false;
+        else sq += zMiss(c, points[i]) ** 2;
+      }
+      const looRmsOhm = ok ? Math.sqrt(sq / points.length) : null;
+      const rmsOhm = Math.sqrt(points.reduce((s, p) => s + zMiss(core, p) ** 2, 0) / points.length);
+      const fit: MapFit = { ...core, n: points.length, rmsOhm, looRmsOhm, tuneRange, loadRange };
+      const score = (f: MapFit) => f.looRmsOhm ?? Infinity;
+      if (!best || score(fit) < score(best) - 1e-6) best = fit;
+    }
+  }
+  if (!best) throw new MapFitError("points do not identify a map (collinear layout?)");
+  return best;
 }
 
 export function predictZ(fit: MapFit, tune: number, load: number): Complex {
@@ -137,7 +164,7 @@ export function predictZ(fit: MapFit, tune: number, load: number): Complex {
 }
 
 export function predictGammaMag(fit: MapFit, tune: number, load: number): number {
-  const g = gammaOfZ(predictZ(fit, tune, load));
+  const g = fit.space === "gamma" ? evalRaw(fit, tune, load) : gammaOfZ(predictZ(fit, tune, load));
   return Math.hypot(g.re, g.im);
 }
 
