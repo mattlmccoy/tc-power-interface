@@ -6,7 +6,8 @@
 import { useState } from "react";
 import type { Operator } from "../hooks/useOperator.ts";
 import type { CaptureMode, MapCapture } from "../hooks/useMapCapture.ts";
-import { DEFAULT_LOAD_SPAN, DEFAULT_TUNE_SPAN, loadOffsets, quickOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
+import { DEFAULT_LOAD_SPAN, DEFAULT_TUNE_SPAN, loadOffsets, quickOffsets, quickTuneOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
+import { fitQuality } from "../lib/matchmap/fit.ts";
 import type { VnaController } from "../hooks/useVna.ts";
 import { VnaSmith } from "../components/VnaSmith.tsx";
 import { VnaS11Plot } from "../components/VnaS11Plot.tsx";
@@ -21,7 +22,7 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
   const [loadSpan, setLoadSpan] = useState(DEFAULT_LOAD_SPAN);
   const [mode, setMode] = useState<CaptureMode>("quick");
   const nPts = mode === "quick" // before clamping at 0/100 %
-    ? quickOffsets(tuneSpan).length * quickOffsets(loadSpan).length
+    ? quickTuneOffsets(tuneSpan).length * quickOffsets(loadSpan).length
     : tuneOffsets(tuneSpan).length * loadOffsets(loadSpan).length;
   const {
     controllable, tune, load, bumpTune, bumpLoad, capBusy, connected, armed, armDevice, disarmDevice,
@@ -183,7 +184,7 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
             <strong>Match map</strong>
             <div className="help-text" style={{ margin: 0 }}>
               Once matched, capture a map: the caps step through a grid of ± the spans below around this point
-              (Quick: 5 levels per cap; Full: 1 % Tune steps near the match, 2 % further out; each approached from
+              (Quick: Tune at ±1 %, half-span and span, Load at 5 levels; Full: 1 % Tune steps near the match, 2 % further out; each approached from
               below), the VNA reads 2 fresh sweeps per point (a 3rd if they disagree), then the caps return here.
               Once per network/part; later sessions just Anchor.
               The in-run Match map panel uses it to show where the match has drifted.
@@ -231,6 +232,9 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
             )}
             {mapCapture.result && (
               <div className="readout" style={{ fontSize: 13, padding: 8 }}>
+                {fitQuality(mapCapture.result.fit).rough && (
+                  <div style={{ color: "var(--warn)", fontWeight: 600 }}>{fitQuality(mapCapture.result.fit).text}</div>
+                )}
                 {mapCapture.result.points.length} points · {mapCapture.result.fit.kind} fit · RMS {mapCapture.result.fit.rmsOhm.toFixed(1)} Ω ·
                 held-out {mapCapture.result.fit.looRmsOhm?.toFixed(1) ?? "—"} Ω ·
                 cold match T {mapCapture.result.coldMatch.tune.toFixed(1)} % / L {mapCapture.result.coldMatch.load.toFixed(1)} %

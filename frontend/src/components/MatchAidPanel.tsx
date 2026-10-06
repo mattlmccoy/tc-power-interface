@@ -7,6 +7,7 @@ import type { Telemetry } from "../lib/telemetry.ts";
 import { aidMessage } from "../lib/matchmap/message.ts";
 import { travelLevel, type DriftSummary } from "../lib/matchmap/drift.ts";
 import { MatchMapPlot } from "./MatchMapPlot.tsx";
+import { fitQuality } from "../lib/matchmap/fit.ts";
 
 const ago = (tMs: number, nowMs: number) => `${Math.max(0, Math.round((nowMs - tMs) / 1000))} s ago`;
 
@@ -77,11 +78,12 @@ export function MatchAidPanel({ aid, t }: { aid: MatchAid; t: Telemetry | null }
               : <>not anchored this session</>}
           </div>
           {map.anchorError && <div className="aid-note" style={{ color: "var(--warn)" }}>Stored anchor rejected: {map.anchorError}</div>}
+          {fitQuality(map.fit).rough && <div className="aid-note" style={{ color: "var(--warn)" }}>{fitQuality(map.fit).text} Its guidance is loose until then.</div>}
           {msg && <div style={{ margin: "8px 0", fontWeight: 600, color }}>{msg.text}</div>}
           {result && <MatchMapPlot map={map} result={result} readings={readings} current={current} />}
           <div className="aid-legend">
             <span><span className="aid-swatch" style={{ background: "var(--live)" }} />cold map ≥ 15 dB (before heating)</span>
-            <span><span className="aid-swatch" style={{ background: "var(--fg)", opacity: 0.5 }} />where the match can be now</span>
+            <span><span className="aid-swatch" style={{ background: "transparent", border: "1.5px solid var(--fg)" }} />possible match positions (outline; shown only while searching)</span>
             <span>× cold match · ○ estimate · ● caps now</span>
           </div>
           {readings.length > 0 && (

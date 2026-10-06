@@ -127,3 +127,12 @@ test("the operator's latest reading is already matched (≤ 0.25 % reflected): s
   assert.equal(g.tune.dir, "hold");
   assert.equal(g.load.dir, "hold");
 });
+
+test("possible-match positions are drawn only when they mean something (not when matched or before any reading)", async () => {
+  const { showCandidates } = await import("./locate.ts");
+  const base = locateMatch(capFit, capCold, []);
+  assert.equal(showCandidates(base), false); // no readings
+  assert.equal(showCandidates({ ...base, status: "matched" }), false); // you are on the match: nothing to search
+  assert.equal(showCandidates(capRun([[0, 0], [0, -2], [1, -2]])), true);
+  assert.equal(showCandidates({ ...base, status: "nofit" }), false);
+});

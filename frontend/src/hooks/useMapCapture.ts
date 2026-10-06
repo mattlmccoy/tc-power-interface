@@ -12,10 +12,10 @@ import { f0GridOffsetHz } from "../lib/vna/sweep.ts";
 import type { Complex } from "../lib/vna/rf.ts";
 import { settingsStorage } from "../lib/settings_store.ts";
 import { VERSION_FULL } from "../version.ts";
-import { capturePlan, loadOffsets, quickOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
+import { capturePlan, loadOffsets, quickOffsets, quickTuneOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
 import { isStable, median, pointFromSweeps, repeatDriftOhm, runCapture, type ReadSample } from "../lib/matchmap/capture.ts";
 import { anchorMapText, loadActiveMapText, MAP_EVENT, parseMap, saveActiveMap, serializeMap, type LoadedMap } from "../lib/matchmap/store.ts";
-import { zOfGamma } from "../lib/matchmap/fit.ts";
+import { fitQuality, zOfGamma } from "../lib/matchmap/fit.ts";
 
 const SETTLE_WINDOW_MS = 800; // readback must hold this long (≥1 telemetry update at ~0.6 s cadence)…
 const SETTLE_DEADBAND = 0.15; // …within this (absorbs the ±0.1 % flicker)
@@ -99,7 +99,7 @@ export function useMapCapture(op: Operator, vna: VnaController): MapCapture {
     const tel = telRef.current;
     if (tel?.tune_cap_percent == null || tel?.load_cap_percent == null) { setMsg("cannot capture: no cap readback"); return; }
     const plan = mode === "quick"
-      ? capturePlan(tel.tune_cap_percent, tel.load_cap_percent, quickOffsets(tuneSpan), quickOffsets(loadSpan))
+      ? capturePlan(tel.tune_cap_percent, tel.load_cap_percent, quickTuneOffsets(tuneSpan), quickOffsets(loadSpan))
       : capturePlan(tel.tune_cap_percent, tel.load_cap_percent, tuneOffsets(tuneSpan), loadOffsets(loadSpan));
     setBusy(true); setResult(null); setDriftOhm(null); textRef.current = null;
     setMsg("capturing — the caps will step around this point, then return to it");
@@ -118,7 +118,8 @@ export function useMapCapture(op: Operator, vna: VnaController): MapCapture {
       window.dispatchEvent(new Event(MAP_EVENT));
       setResult(m);
       setDriftOhm(repeatDriftOhm(res.points));
-      setMsg("map saved as the active map — re-check the match before ending the session (the return may land a little off)");
+      const q = fitQuality(m.fit);
+      setMsg(`map saved as the active map. ${q.text} Re-check the match before ending the session (the return may land a little off).`);
     } catch (e) {
       setMsg(`capture failed: ${(e as Error).message}${textRef.current ? " (raw points can still be downloaded)" : ""}`);
     } finally {

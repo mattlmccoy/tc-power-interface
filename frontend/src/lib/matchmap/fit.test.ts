@@ -91,3 +91,15 @@ test("a wide Tune span that curves is fitted with a cubic, not forced into a qua
   const zp = predictZ(fit, 14.5, 9), zt = z(14.5, 9);
   assert.ok(Math.hypot(zp.re - zt.re, zp.im - zt.im) < 1, `miss ${Math.hypot(zp.re - zt.re, zp.im - zt.im)}`);
 });
+
+test("fitQuality: a map whose held-out error is above 3 Ohm is flagged rough with a suggestion", async () => {
+  const { fitQuality } = await import("./fit.ts");
+  const good = fitMap(fixture("rematch_1002.json").points.filter((p: { repeat: boolean }) => !p.repeat)); // REAL, 1.08 Ohm
+  assert.equal(fitQuality(good).rough, false);
+  const rough = { ...good, looRmsOhm: 8.3 }; // the 2026-10-06 Quick capture
+  const q = fitQuality(rough);
+  assert.equal(q.rough, true);
+  assert.match(q.text, /8\.3 Ω/);
+  assert.match(q.text, /Full/);
+  assert.equal(fitQuality({ ...good, looRmsOhm: null, rmsOhm: 4.2 }).rough, true); // no held-out figure: judge the fit itself
+});
