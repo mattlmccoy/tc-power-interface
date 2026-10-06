@@ -5,8 +5,8 @@
 
 import { useState } from "react";
 import type { Operator } from "../hooks/useOperator.ts";
-import type { MapCapture } from "../hooks/useMapCapture.ts";
-import { DEFAULT_LOAD_SPAN, DEFAULT_TUNE_SPAN, loadOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
+import type { CaptureMode, MapCapture } from "../hooks/useMapCapture.ts";
+import { DEFAULT_LOAD_SPAN, DEFAULT_TUNE_SPAN, loadOffsets, quickOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
 import type { VnaController } from "../hooks/useVna.ts";
 import { VnaSmith } from "../components/VnaSmith.tsx";
 import { VnaS11Plot } from "../components/VnaS11Plot.tsx";
@@ -19,7 +19,10 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
   const [mapLabel, setMapLabel] = useState("");
   const [tuneSpan, setTuneSpan] = useState(DEFAULT_TUNE_SPAN);
   const [loadSpan, setLoadSpan] = useState(DEFAULT_LOAD_SPAN);
-  const nPts = tuneOffsets(tuneSpan).length * loadOffsets(loadSpan).length; // before clamping at 0/100 %
+  const [mode, setMode] = useState<CaptureMode>("quick");
+  const nPts = mode === "quick" // before clamping at 0/100 %
+    ? quickOffsets(tuneSpan).length * quickOffsets(loadSpan).length
+    : tuneOffsets(tuneSpan).length * loadOffsets(loadSpan).length;
   const {
     controllable, tune, load, bumpTune, bumpLoad, capBusy, connected, armed, armDevice, disarmDevice,
     tuneVIn, setTuneVIn, applyTuneVolts, loadVIn, setLoadVIn, applyLoadVolts, textInputStyle,
@@ -180,8 +183,9 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
             <strong>Match map</strong>
             <div className="help-text" style={{ margin: 0 }}>
               Once matched, capture a map: the caps step through a grid of ± the spans below around this point
-              (Tune in 1 % steps near the match, 2 % further out; Load in 2 % steps; each approached from below),
-              the VNA takes the median of 3 fresh sweeps at each point, then the caps return here.
+              (Quick: 5 levels per cap; Full: 1 % Tune steps near the match, 2 % further out; each approached from
+              below), the VNA reads 2 fresh sweeps per point (a 3rd if they disagree), then the caps return here.
+              Once per network/part; later sessions just Anchor.
               The in-run Match map panel uses it to show where the match has drifted.
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -195,9 +199,15 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
                 <input type="number" min={2} max={30} step={2} value={loadSpan} disabled={mapCapture.busy}
                   onChange={(e) => setLoadSpan(Math.max(2, Math.min(30, Math.round(Number(e.target.value) || 2))))}
                   style={{ ...textInputStyle, width: 52, marginLeft: 4 }} /> %</label>
-              <span className="aid-note" style={{ margin: 0 }}>{nPts} points · ~{Math.ceil((nPts * 5) / 60)} min</span>
+              <select value={mode} disabled={mapCapture.busy} onChange={(e) => setMode(e.target.value as CaptureMode)}
+                style={{ ...textInputStyle, padding: "2px 4px" }}
+                title="Quick: 5 levels per cap (ends, halves, centre). Full: 1 % Tune steps near the match. The held-out error shown after capture says whether Quick was enough.">
+                <option value="quick">Quick</option>
+                <option value="full">Full</option>
+              </select>
+              <span className="aid-note" style={{ margin: 0 }}>{nPts} points · ~{Math.max(1, Math.round((nPts * 3) / 60))} min</span>
               {!mapCapture.busy ? (
-                <button className="btn accent" onClick={() => void mapCapture.start(mapLabel, tuneSpan, loadSpan)}
+                <button className="btn accent" onClick={() => void mapCapture.start(mapLabel, tuneSpan, loadSpan, mode)}
                   disabled={!controllable || rfOn || vna.running || !vna.connected}
                   title={!controllable ? "arm the generator (RF off) first" : rfOn ? "RF must be off" : ""}>
                   Capture map

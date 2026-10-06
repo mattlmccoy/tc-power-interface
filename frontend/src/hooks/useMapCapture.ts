@@ -12,19 +12,21 @@ import { f0GridOffsetHz } from "../lib/vna/sweep.ts";
 import type { Complex } from "../lib/vna/rf.ts";
 import { settingsStorage } from "../lib/settings_store.ts";
 import { VERSION_FULL } from "../version.ts";
-import { capturePlan, loadOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
-import { isStable, median, repeatDriftOhm, runCapture, type ReadSample } from "../lib/matchmap/capture.ts";
-import { medianGamma } from "../lib/vna/freshness.ts";
+import { capturePlan, loadOffsets, quickOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
+import { isStable, median, pointFromSweeps, repeatDriftOhm, runCapture, type ReadSample } from "../lib/matchmap/capture.ts";
 import { anchorMapText, loadActiveMapText, MAP_EVENT, parseMap, saveActiveMap, serializeMap, type LoadedMap } from "../lib/matchmap/store.ts";
 import { zOfGamma } from "../lib/matchmap/fit.ts";
 
-const SETTLE_WINDOW_MS = 1500; // readback must hold this long…
+const SETTLE_WINDOW_MS = 800; // readback must hold this long (≥1 telemetry update at ~0.6 s cadence)…
 const SETTLE_DEADBAND = 0.15; // …within this (absorbs the ±0.1 % flicker)
 const SETTLE_MIN_MS = 800; // the motor needs a moment to start; don't call an unstarted move "settled"
 const SETTLE_TIMEOUT_MS = 20000;
-const SWEEPS_PER_POINT = 3;
+const MAX_SWEEPS_PER_POINT = 3; // 2 that agree, or a 3rd to vote out a glitch (pointFromSweeps)
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** quick = 5×5 levels over ±span (~1 min); full = 1 % Tune steps near the match, 2 % steps beyond. */
+export type CaptureMode = "quick" | "full";
 
 export interface MapCapture {
   busy: boolean;
@@ -32,7 +34,7 @@ export interface MapCapture {
   msg: string;
   result: LoadedMap | null;
   driftOhm: number | null;
-  start: (label: string, tuneSpan: number, loadSpan: number) => Promise<void>;
+  start: (label: string, tuneSpan: number, loadSpan: number, mode: CaptureMode) => Promise<void>;
   /** Re-anchor the active map at the current caps from fresh VNA sweeps (moves no cap). */
   anchorHere: () => Promise<void>;
   download: () => void;
@@ -71,7 +73,8 @@ export function useMapCapture(op: Operator, vna: VnaController): MapCapture {
   // by component-wise median so one glitched read can't drag the point.
   async function measure() {
     const gs: Complex[] = [], ts: number[] = [], ls: number[] = [];
-    for (let k = 0; k < SWEEPS_PER_POINT; k++) {
+    let g: Complex | null = null;
+    for (let k = 0; k < MAX_SWEEPS_PER_POINT && !g; k++) {
       const pts = await vna.doFreshSweep(); // throws if the VNA only repeats itself
       const off = f0GridOffsetHz(pts, F0);
       if (off == null || off > 1) {
@@ -84,16 +87,20 @@ export function useMapCapture(op: Operator, vna: VnaController): MapCapture {
       gs.push(s);
       ts.push(tel.tune_cap_percent);
       ls.push(tel.load_cap_percent);
+      g = pointFromSweeps(gs);
     }
-    return { tune: median(ts), load: median(ls), g: medianGamma(gs) };
+    if (!g) throw new Error("sweeps at this point disagreed and no third read settled it");
+    return { tune: median(ts), load: median(ls), g };
   }
 
-  async function start(label: string, tuneSpan: number, loadSpan: number) {
+  async function start(label: string, tuneSpan: number, loadSpan: number, mode: CaptureMode) {
     const why = blocked();
     if (why) { setMsg(`cannot capture: ${why}`); return; }
     const tel = telRef.current;
     if (tel?.tune_cap_percent == null || tel?.load_cap_percent == null) { setMsg("cannot capture: no cap readback"); return; }
-    const plan = capturePlan(tel.tune_cap_percent, tel.load_cap_percent, tuneOffsets(tuneSpan), loadOffsets(loadSpan));
+    const plan = mode === "quick"
+      ? capturePlan(tel.tune_cap_percent, tel.load_cap_percent, quickOffsets(tuneSpan), quickOffsets(loadSpan))
+      : capturePlan(tel.tune_cap_percent, tel.load_cap_percent, tuneOffsets(tuneSpan), loadOffsets(loadSpan));
     setBusy(true); setResult(null); setDriftOhm(null); textRef.current = null;
     setMsg("capturing — the caps will step around this point, then return to it");
     try {
