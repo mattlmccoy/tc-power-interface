@@ -3,16 +3,27 @@
 // lives in this browser's localStorage (per origin: :8010 and GitHub Pages do not share it), and the
 // same JSON is downloadable so it can be filed with the network's data and loaded elsewhere.
 
+import type { Complex } from "../vna/rf.ts";
 import { fitMap, solveMatch, type MapFit } from "./fit.ts";
 import type { CapturedPoint } from "./capture.ts";
+import { shiftFit, solveAnchor, type AnchorShift } from "./anchor.ts";
 
 export const MAP_KEY = "tcp.matchmap.v1";
 export const MAP_EVENT = "tcp-matchmap"; // same-tab notification after the active map changes
 const KIND = "tcp-match-map";
 const VERSION = 1;
 
-export interface MapMeta { label: string; build: string; createdAt: string; points: CapturedPoint[] }
-export interface LoadedMap extends MapMeta { fit: MapFit; coldMatch: { tune: number; load: number; gamma: number } }
+/** One VNA reading that re-anchors the map: Z at 13.56 MHz measured at this cap readback. Only the
+ *  reading is stored; the shift is re-solved against the captured points on every load. */
+export interface AnchorReading { tune: number; load: number; z: Complex; at: string }
+
+export interface MapMeta { label: string; build: string; createdAt: string; points: CapturedPoint[]; anchor?: AnchorReading }
+export interface LoadedMap extends MapMeta {
+  fit: MapFit; // anchored when an anchor is present
+  coldMatch: { tune: number; load: number; gamma: number };
+  anchor?: AnchorReading & AnchorShift;
+  anchorError?: string; // a stored anchor the map could not reproduce (map left unanchored)
+}
 
 export function serializeMap(m: MapMeta): string {
   return JSON.stringify({ kind: KIND, version: VERSION, ...m });
@@ -32,11 +43,27 @@ export function parseMap(text: string): LoadedMap {
     return p as unknown as CapturedPoint;
   });
   const fitPts = points.filter((p) => !p.repeat); // the repeat is a drift check, not extra map data
-  const fit = fitMap(fitPts.length >= 4 ? fitPts : points);
-  return {
-    label: String(raw.label ?? ""), build: String(raw.build ?? ""), createdAt: String(raw.createdAt ?? ""),
-    points, fit, coldMatch: solveMatch(fit),
-  };
+  const base = fitMap(fitPts.length >= 4 ? fitPts : points);
+  const meta = { label: String(raw.label ?? ""), build: String(raw.build ?? ""), createdAt: String(raw.createdAt ?? ""), points };
+  const a = raw.anchor as Record<string, unknown> | undefined;
+  const z = a?.z as Record<string, unknown> | undefined;
+  if (a && num(a.tune) && num(a.load) && z && num(z.re) && num(z.im)) {
+    const reading: AnchorReading = { tune: a.tune as number, load: a.load as number, z: { re: z.re as number, im: z.im as number }, at: String(a.at ?? "") };
+    try {
+      const sh = solveAnchor(base, reading, reading.z);
+      const fit = shiftFit(base, sh.sT, sh.sL);
+      return { ...meta, fit, coldMatch: solveMatch(fit), anchor: { ...reading, ...sh } };
+    } catch (e) {
+      return { ...meta, fit: base, coldMatch: solveMatch(base), anchorError: (e as Error).message };
+    }
+  }
+  return { ...meta, fit: base, coldMatch: solveMatch(base) };
+}
+
+/** The same map file with `reading` as its (only) anchor — re-anchoring replaces, never stacks. */
+export function anchorMapText(text: string, reading: AnchorReading): string {
+  const raw = JSON.parse(text) as Record<string, unknown>;
+  return JSON.stringify({ ...raw, anchor: reading });
 }
 
 export function saveActiveMap(storage: Storage | null, text: string): void {
