@@ -67,3 +67,22 @@ test("repeatDriftOhm: |dZ| between the repeat and the first visit to the same co
   assert.equal(repeatDriftOhm([p(29, 24, { re: 0, im: 0 }), p(30, 24, { re: 0.5, im: 0 }), p(29, 24, { re: 0.2, im: 0 }, true)])?.toFixed(6), "25.000000");
   assert.equal(repeatDriftOhm([p(29, 24, { re: 0, im: 0 })]), null);
 });
+
+test("pointFromSweeps: two sweeps that agree within 1 Ohm are enough; a disagreement asks for a third and takes the median", async () => {
+  const { pointFromSweeps } = await import("./capture.ts");
+  const { zOfGamma } = await import("./fit.ts");
+  // REAL: first two of three fresh sweeps at T20.2/L11.4 in 2026-10-02_rematch_AIT_T106_L062_vna-log-1790955379775
+  // (v0.12.1), point 13.56 MHz of each saved sweep — 0.03 Ohm apart
+  const a = { re: -0.031269696, im: -0.012183291 }, b = { re: -0.03113645, im: -0.012040331 };
+  const two = pointFromSweeps([a, b]);
+  assert.ok(two, "two agreeing sweeps settle the point");
+  assert.ok(Math.abs(two!.re - (a.re + b.re) / 2) < 1e-12);
+  assert.equal(pointFromSweeps([a]), null); // one sweep is never enough on its own
+  // REAL glitch: v2 map point T25 L19 read (−0.634, +0.536); v1 map read (−0.218, −0.017) there (same network).
+  // Values rounded to 3 places from goodmatch maps map_v1_0930 / test-map v2 (100s_330shunt).
+  const good = { re: -0.218, im: -0.017 }, glitch = { re: -0.634, im: 0.536 };
+  assert.ok(Math.hypot(zOfGamma(good).re - zOfGamma(glitch).re, zOfGamma(good).im - zOfGamma(glitch).im) > 1);
+  assert.equal(pointFromSweeps([good, glitch]), null);
+  const three = pointFromSweeps([good, glitch, { re: -0.22, im: -0.018 }]);
+  assert.deepEqual(three, { re: -0.22, im: -0.017 }); // median (re: −0.634, −0.22, −0.218): the glitch is voted out
+});

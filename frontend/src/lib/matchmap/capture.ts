@@ -80,3 +80,21 @@ export function repeatDriftOhm(points: CapturedPoint[]): number | null {
   const a = zOfGamma(rep.g), b = zOfGamma(first.g);
   return Math.hypot(a.re - b.re, a.im - b.im);
 }
+
+/** Ohm two sweeps at one point may differ and still be one measurement (fresh sweeps agree to ~0.05). */
+export const SWEEP_AGREE_OHM = 1;
+
+/** Combine the sweeps taken at one map point, or null when another sweep is needed: two that agree
+ *  within SWEEP_AGREE_OHM → their mean; two that disagree → wait for a third, then the component-wise
+ *  median (a one-read glitch is voted out). Saves a sweep per point vs always taking three. */
+export function pointFromSweeps(gs: Complex[]): Complex | null {
+  if (gs.length < 2) return null;
+  if (gs.length === 2) {
+    const [a, b] = gs.map(zOfGamma);
+    if (Math.hypot(a.re - b.re, a.im - b.im) > SWEEP_AGREE_OHM) return null;
+    return { re: (gs[0].re + gs[1].re) / 2, im: (gs[0].im + gs[1].im) / 2 };
+  }
+  const med = (xs: number[]) => [...xs].sort((x, y) => x - y)[xs.length >> 1];
+  const last3 = gs.slice(-3);
+  return { re: med(last3.map((g) => g.re)), im: med(last3.map((g) => g.im)) };
+}

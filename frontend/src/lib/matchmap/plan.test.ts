@@ -63,3 +63,13 @@ test("gridOffsets: symmetric, 1 % steps inside ±fine, coarser steps out to ±sp
   assert.deepEqual(gridOffsets(1, 1, 2), [-1, 0, 1]);
   assert.deepEqual(gridOffsets(5, 2, 2), [-5, -4, -2, -1, 0, 1, 2, 4, 5]); // the span itself is always sampled
 });
+
+test("quickOffsets: 5 levels across ±span (ends, halves, centre) — a 5×5 quick grid", async () => {
+  const { quickOffsets } = await import("./plan.ts");
+  assert.deepEqual(quickOffsets(6), [-6, -3, 0, 3, 6]);
+  assert.deepEqual(quickOffsets(5), [-5, -3, 0, 3, 5]);
+  assert.deepEqual(quickOffsets(1), [-1, 0, 1]); // levels collapse rather than repeat
+  const steps = capturePlan(20, 11, quickOffsets(6), quickOffsets(6));
+  assert.equal(records(steps).length, 5 * 5 + 1);
+  assertApproachFromBelow(steps);
+});

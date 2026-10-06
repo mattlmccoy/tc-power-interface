@@ -19,6 +19,14 @@ export function gridOffsets(span: number, fine: number, step: number): number[] 
   return [...out].sort((x, y) => x - y);
 }
 
+/** Quick grid levels: ends, halves and centre of ±span (5 levels → a 5×5 grid, ~1 min). Sparse grids
+ *  held up on the real 15-point captures (a 3×3 subset predicted the skipped points within ~1 Ohm); the
+ *  fit's held-out error, shown after every capture, says whether a quick grid was enough. */
+export function quickOffsets(span: number): number[] {
+  const h = Math.round(span / 2);
+  return [...new Set([-span, -h, 0, h, span])].sort((x, y) => x - y);
+}
+
 /** Default capture grid: wide and SYMMETRIC. The network is still being changed between runs, so the
  *  grid must not lean the way one run drifted (2026-10-02 went Tune −7 %, but that is one network on one
  *  day). Tune is sharp (~17 Ohm per % on 218-2core) so it gets 1 % steps near the match; Load is broad
