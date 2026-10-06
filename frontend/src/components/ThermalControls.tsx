@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 
 import { fmtTemp, fmtWatts } from "../lib/format.ts";
 import type { Telemetry, ThermalStatus } from "../lib/telemetry.ts";
-import { appliedLabel, overTempGuard } from "../lib/thermalView.ts";
+import { appliedLabel, overTempGuard, tempStatusText } from "../lib/thermalView.ts";
 
 interface ThermalControlsProps {
   controllable: boolean;
@@ -53,6 +53,11 @@ export function ThermalControls(props: ThermalControlsProps) {
       <div className="hint mono">
         ROI max {guard.kind === "value" ? fmtTemp(guard.maxC) : "not reported"}
       </div>
+      {tempStatusText(thermal?.temp_status, thermal?.control_roi) && (
+        <div className="aid-note" style={{ color: "var(--warn)", marginTop: 4 }}>
+          {tempStatusText(thermal?.temp_status, thermal?.control_roi)}
+        </div>
+      )}
 
       <label className="field-label" style={{ marginTop: "12px" }}>
         Temperature source

@@ -79,3 +79,9 @@ test("flirStatusLabel: failed result surfaces the message", () => {
 test("flirStatusLabel: failed result with empty message falls back", () => {
   assert.equal(flirStatusLabel({ ok: false, message: "", ts: 123 }), "error: unknown");
 });
+
+test("fmtTemp shows an unknown temperature as a dash, never as 0 °C", async () => {
+  const { fmtTemp } = await import("./format.ts");
+  assert.equal(fmtTemp(null), "—");
+  assert.equal(fmtTemp(42.04), "42.0 °C");
+});

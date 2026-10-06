@@ -58,7 +58,7 @@ def test_setting_source_to_flir_starts_the_polling_consumer(tmp_path, monkeypatc
         src = _StubSource.instances[0]
         assert src.started is True  # the consumer is actually running (was the gap)
         assert src.url == "http://127.0.0.1:8000/api/live/roi-temps"  # base -> roi-temps endpoint
-        assert src.roi_name == "circle_medium_small"
+        assert src.roi_name is None  # no invented default: the operator picks from the live roster
 
 
 def test_control_roi_is_selectable_from_the_live_roster(tmp_path, monkeypatch):
@@ -68,7 +68,7 @@ def test_control_roi_is_selectable_from_the_live_roster(tmp_path, monkeypatch):
         c.post("/api/thermal/source", json={"type": "flir", "url": "http://127.0.0.1:8000"})
         rois = c.get("/api/thermal/rois").json()
         assert rois["available_rois"] == ["part_center", "circle_medium_small", "hotspot"]
-        assert rois["control_roi"] == "circle_medium_small"  # default, but not fixed
+        assert rois["control_roi"] is None  # no default (the old hard-coded name vanished 09-08 → 10-02)
         # The operator selects a different live ROI (ROIs change print-to-print).
         r = c.post("/api/thermal/roi", json={"name": "part_center"})
         assert r.status_code == 200
@@ -101,12 +101,13 @@ def test_running_thermal_loop_posts_control_telemetry(tmp_path):
         poster._post = lambda url, body, timeout: posted.append(body)
         poster.enabled = True
         poster.url = "http://127.0.0.1:8000"
+        c.post("/api/thermal/roi", json={"name": "freehand_sample"})  # the operator's choice
         c.post("/api/thermal/start", json={"mode": "auto"})
         c.app.state.controller._tick()  # one poll -> thermal tick -> control-telemetry POST
         poster.join()
         assert posted, "a running thermal loop should POST control telemetry each tick"
         body = posted[-1]
-        assert body["roi"] == "circle_medium_small"
+        assert body["roi"] == "freehand_sample"
         assert "setpoint_c" in body and "measured_c" in body and "error_c" in body
 
 

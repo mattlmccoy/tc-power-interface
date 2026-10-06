@@ -173,3 +173,17 @@ def test_records_match_readback_columns_appended_after_existing(tmp_path):
     assert data["load_cap_percent"] == "62.6"
     assert data["manual_mode"] == "True"
     assert data["preset_slot"] == "1"
+
+
+def test_unknown_control_temperature_is_recorded_blank_not_zero(tmp_path):
+    # 2026-10-06: 43 of 45 real runs logged thermal_control_temp_c = 0.0 for "no reading".
+    rec = TelemetryRecorder(tmp_path)
+    path = rec.start("unknown_temp", {})
+    s = snap(fwd=40.0, rf=True, ts=1)
+    s["thermal"] = {"running": False, "phase": "ramp", "mode": "advisory", "armed": False,
+                    "control_temp_c": None, "target_c": 185.0, "recommended_w": 0.0, "applied_w": None}
+    rec.record(s)
+    rec.stop()
+    rows = (path / "telemetry.csv").read_text().strip().splitlines()
+    data = dict(zip(rows[0].split(","), rows[1].split(","), strict=True))
+    assert data["thermal_control_temp_c"] == ""

@@ -64,12 +64,15 @@ export interface ThermalStatus {
   mode: string;
   armed: boolean;
   source: string;
-  control_temp_c: number;
+  /** null = no trustworthy reading (see temp_status) — never 0. */
+  control_temp_c: number | null;
+  /** Why there is / isn't a control temperature: ok, no_roi_selected, roi_not_in_feed, not_live, no_feed, roi_invalid, simulated. */
+  temp_status?: string;
   target_c: number;
   recommended_w: number;
   applied_w: number | null;
   /** The selected control ROI name, and the live FLIR roster to pick from (empty unless FLIR). */
-  control_roi?: string;
+  control_roi?: string | null;
   available_rois?: string[];
   /** Hottest pixel of the control ROI (FLIR source only; null at saturation/sim). Absent on older operators. */
   control_max_c?: number | null;

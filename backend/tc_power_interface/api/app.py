@@ -39,7 +39,7 @@ from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
 from tc_power_interface.control.thermal_loop import THERMAL_BOUNDS, ThermalController, ThermalPlan
-from tc_power_interface.control.thermal_store import load_plan, save_plan
+from tc_power_interface.control.thermal_store import load_plan, load_source, save_plan, save_source
 from tc_power_interface.control.timer import TIMER_BOUNDS, TimerController, TimerPlan
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
@@ -261,10 +261,21 @@ def create_app(
         control_telemetry = ControlTelemetryPoster(flir_url or "", enabled=bool(flir_url))
         app.state.control_telemetry = control_telemetry
         heartbeat_gate = HeartbeatGate(period_s=1.0)  # power-only heartbeat cadence (manual runs)
-        app.state.control_roi = "circle_medium_small"
+        # Temperature source + control ROI: the operator's saved choice. No ROI name is invented
+        # (the old hard-coded "circle_medium_small" vanished when the FLIR ROIs were redrawn, so the
+        # loop silently read nothing and logged 0 C). Real hardware with a FLIR link defaults to FLIR.
+        src_cfg = load_source(experiments_root, default_type="flir" if (flir_url and backend != "simulated") else "simulated")
+        app.state.control_roi = src_cfg["roi"]
+        app.state.flir_roi_url = f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
+        initial_source: Any = SimulatedThermalSource()
+        app.state.thermal_source = "simulated"
+        if src_cfg["type"] == "flir" and app.state.flir_roi_url:
+            initial_source = FlirPollingSource(app.state.flir_roi_url, roi_name=app.state.control_roi)
+            initial_source.start()
+            app.state.thermal_source = "flir"
         controller.backend = backend
         thermal = ThermalController(
-            controller, SimulatedThermalSource(),
+            controller, initial_source,
             plan=load_plan(experiments_root, max_forward_w=active_limits.max_forward_w),
             mode="advisory",
         )
@@ -315,8 +326,7 @@ def create_app(
         controller.add_listener(
             lambda snap: recorder.record({**snap, "thermal": thermal.snapshot()})
         )
-        app.state.thermal = thermal
-        app.state.thermal_source = "simulated"
+        app.state.thermal = thermal  # (thermal_source was set above from the operator's saved choice)
 
         # Software power ramp (init -> target at W/s); ticks from the poll, drives the setpoint.
         ramp = RampController(
@@ -518,6 +528,8 @@ def create_app(
                 **_thermal().snapshot(),
                 "source": app.state.thermal_source,
                 "control_roi": app.state.control_roi,
+                # why there is / isn't a control temperature (ok, no_roi_selected, roi_not_in_feed, ...)
+                "temp_status": getattr(_thermal().source, "status", "simulated"),
                 "available_rois": _available_rois(),
                 **thermal_extra(_thermal().source),
             },
@@ -704,6 +716,7 @@ def create_app(
         else:
             th.source = SimulatedThermalSource()
             app.state.thermal_source = "simulated"
+        save_source(experiments_root, {"type": app.state.thermal_source, "roi": app.state.control_roi})
         return {"source": app.state.thermal_source}
 
     @app.get("/api/thermal/rois")
@@ -713,10 +726,11 @@ def create_app(
     @app.post("/api/thermal/roi")
     def thermal_roi(body: ThermalRoiBody) -> dict[str, Any]:
         # The operator selects which live FLIR ROI to control on (ROIs change print-to-print).
-        app.state.control_roi = body.name
+        app.state.control_roi = body.name or None
         setter = getattr(_thermal().source, "set_roi", None)
         if callable(setter):
-            setter(body.name)
+            setter(app.state.control_roi)
+        save_source(experiments_root, {"type": app.state.thermal_source, "roi": app.state.control_roi})
         return {"control_roi": app.state.control_roi, "available_rois": _available_rois()}
 
     # --- power ramp ------------------------------------------------------------------------

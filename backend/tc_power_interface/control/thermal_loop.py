@@ -118,7 +118,8 @@ class ThermalController:
         self.running = False
         self.armed = False
         self.phase = ThermalPhase.RAMP
-        self.control_temp_c = 0.0
+        # None = no trustworthy reading (never 0.0: TC-POWER logged 0.0 C in 43 of 45 runs that way).
+        self.control_temp_c: float | None = None
         self.recommended_w = 0.0
         self.applied_w: float | None = None
         self.reason = ""
@@ -145,6 +146,17 @@ class ThermalController:
     def disarm(self) -> None:
         self.armed = False
 
+    def _observe(self, dt_s: float) -> None:
+        """Loop stopped: read the temperature for display/recording only. Never computes or commands
+        power (recommended 0, applied None)."""
+        tel = (self.controller.snapshot().get("telemetry") or {})
+        if hasattr(self.source, "step"):
+            self.source.step(load_w=float(tel.get("load_w", 0.0)), dt_s=dt_s)
+        sample = self.source.read()
+        self.control_temp_c = sample.celsius if sample.valid else None
+        self.recommended_w = 0.0
+        self.applied_w = None
+
     def _backend(self) -> str:
         return str(getattr(self.controller, "backend", "simulated"))
 
@@ -157,6 +169,7 @@ class ThermalController:
 
     def tick(self, dt_s: float) -> None:
         if not self.running:
+            self._observe(dt_s)  # the temperature is read and logged even when the loop is stopped
             return
         snap = self.controller.snapshot()
         tel = snap.get("telemetry") or {}
@@ -167,7 +180,7 @@ class ThermalController:
         if hasattr(self.source, "step"):
             self.source.step(load_w=float(tel.get("load_w", 0.0)), dt_s=dt_s)
         sample = self.source.read()
-        self.control_temp_c = sample.celsius
+        self.control_temp_c = sample.celsius if sample.valid else None
         if not sample.valid:
             # Absent/stale temperature (e.g. FLIR before a frame) must never be treated as 0 C and
             # ramped from. Back off to 0 W and do not drive until a real reading returns.
@@ -178,7 +191,8 @@ class ThermalController:
             return
 
         current = float(tel.get("forward_w", 0.0))
-        cmd = plan_step(temp_c=self.control_temp_c, phase=self.phase,
+        temp_c = sample.celsius
+        cmd = plan_step(temp_c=temp_c, phase=self.phase,
                         elapsed_soak_s=self._soak_elapsed_s, current_setpoint_w=current,
                         plan=self.plan)
         # Phases only advance (a dip below target during soak does not reset it).
@@ -195,7 +209,7 @@ class ThermalController:
             self._integral = 0.0
             power = 0.0
         else:
-            error = self.plan.target_c - self.control_temp_c
+            error = self.plan.target_c - temp_c
             self._integral = max(0.0, min(self._integral + KI_W_PER_C_S * error * dt_s, ceiling))
             desired = max(0.0, min(KP_W_PER_C * error + self._integral, ceiling))
             power = max(current - self.plan.max_step_w,
@@ -214,7 +228,7 @@ class ThermalController:
             "phase": self.phase.value,
             "mode": self.mode,
             "armed": self.armed,
-            "control_temp_c": round(self.control_temp_c, 1),
+            "control_temp_c": None if self.control_temp_c is None else round(self.control_temp_c, 1),
             "target_c": self.plan.target_c,
             "recommended_w": round(self.recommended_w, 1),
             "applied_w": self.applied_w,

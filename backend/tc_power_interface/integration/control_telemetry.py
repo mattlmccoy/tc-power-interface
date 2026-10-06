@@ -35,7 +35,7 @@ def build_control_telemetry(
         "forward_w": telemetry.get("forward_w", 0.0),
         "reverse_w": telemetry.get("reverse_w", 0.0),
         "reflected_fraction": telemetry.get("reflected_fraction", 0.0),
-        "error_c": target_c - measured_c,
+        "error_c": None if measured_c is None else target_c - measured_c,  # unknown is not 0 C
         "roi": roi,
         **_cap_readback(telemetry),
     }

@@ -45,8 +45,8 @@ export function fmtPct(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`;
 }
 
-export function fmtTemp(c: number): string {
-  return `${c.toFixed(1)} °C`;
+export function fmtTemp(c: number | null | undefined): string {
+  return c == null || !Number.isFinite(c) ? "—" : `${c.toFixed(1)} °C`; // unknown is never 0 °C
 }
 
 export type Zone = "ok" | "warn" | "trip";

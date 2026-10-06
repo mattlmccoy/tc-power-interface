@@ -61,6 +61,26 @@ def select_control_temp(
     )
 
 
+def control_status(payload: dict[str, Any], roi_name: str | None, *, max_age_ms: float = 1000.0) -> str:
+    """WHY there is (or is not) a control temperature, for the operator: ``ok``, ``no_roi_selected``,
+    ``not_live`` (no camera / stale / old frame), ``roi_not_in_feed`` (the chosen ROI isn't drawn in
+    this FLIR session) or ``roi_invalid`` (saturated / null stat)."""
+    if not roi_name:
+        return "no_roi_selected"
+    rois = payload.get("rois", [])
+    roi = next((r for r in rois if r.get("name") == roi_name), None)
+    if rois and roi is None:
+        return "roi_not_in_feed"  # the roster is known even with the camera off: fix the ROI first
+    age_ms = payload.get("age_ms")
+    if not payload.get("live", False) or payload.get("stale", False) or age_ms is None or age_ms > max_age_ms:
+        return "not_live"
+    if roi is None:
+        return "roi_not_in_feed"
+    if not roi.get("valid", False) or roi.get("mean_c") is None:
+        return "roi_invalid"
+    return "ok"
+
+
 class FlirPollingSource:
     """Polls ``GET /api/live/roi-temps`` on a background thread; ``read()`` returns the latest
     control-ROI sample (non-blocking). Fails safe to ``valid=False`` on any fetch/parse error."""
@@ -69,7 +89,7 @@ class FlirPollingSource:
         self,
         url: str,
         *,
-        roi_name: str = "circle_medium_small",
+        roi_name: str | None = None,  # no default: FLIR ROIs are redrawn between prints
         stat: str = "mean_c",
         max_age_ms: float = 1000.0,
         poll_hz: float = 5.0,
@@ -84,6 +104,7 @@ class FlirPollingSource:
         self._interval = 1.0 / poll_hz if poll_hz > 0 else 0.2
         self._get = _get
         self._latest = TemperatureSample(celsius=0.0, valid=False, ts=0.0)
+        self.status = "no_feed"  # see control_status(); "no_feed" until the first successful poll
         self.latest_max_c: float | None = None
         self._roi_names: list[str] = []
         self._roi_temps: list[dict[str, Any]] = []
@@ -91,7 +112,7 @@ class FlirPollingSource:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def set_roi(self, name: str) -> None:
+    def set_roi(self, name: str | None) -> None:
         """Switch the control ROI at runtime (the operator picks from the live roster). The next
         poll reads the newly-selected ROI; a name not present in the feed fails safe (0 W)."""
         self.roi_name = name
@@ -123,15 +144,21 @@ class FlirPollingSource:
                 for r in payload.get("rois", [])
                 if r.get("name")
             ]
-            sample, max_c = select_control_temp(
-                payload, self.roi_name, stat=self.stat,
-                max_age_ms=self.max_age_ms, recv_ts=time.time(),
-            )
+            status = control_status(payload, self.roi_name, max_age_ms=self.max_age_ms)
+            if self.roi_name:
+                sample, max_c = select_control_temp(
+                    payload, self.roi_name, stat=self.stat,
+                    max_age_ms=self.max_age_ms, recv_ts=time.time(),
+                )
+            else:
+                sample, max_c = TemperatureSample(celsius=0.0, valid=False, ts=time.time()), None
         except Exception:  # noqa: BLE001 - any fetch/parse failure must fail safe to invalid
             sample, max_c = TemperatureSample(celsius=0.0, valid=False, ts=time.time()), None
+            status = "no_feed"
         with self._lock:
             self._latest = sample
             self.latest_max_c = max_c
+            self.status = status
             if names:  # keep the last known roster if a poll returns none (e.g. a transient error)
                 self._roi_names = names
                 self._roi_temps = roster

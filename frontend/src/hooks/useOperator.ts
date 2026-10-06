@@ -272,7 +272,7 @@ export function useOperator() {
         const th = s.thermal;
         if (th?.running) {
           const hts = Date.now() / 1000;
-          heroBuf.current.control.push(hts, th.control_temp_c);
+          if (th.control_temp_c != null) heroBuf.current.control.push(hts, th.control_temp_c); // gaps, not 0 °C
           if (th.control_max_c != null) heroBuf.current.max.push(hts, th.control_max_c);
           heroBuf.current.target.push(hts, th.target_c);
           for (const r of th.roi_temps ?? []) {
