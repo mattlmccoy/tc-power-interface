@@ -15,7 +15,8 @@ import { VERSION_FULL } from "../version.ts";
 import { capturePlan, loadOffsets, tuneOffsets } from "../lib/matchmap/plan.ts";
 import { isStable, median, repeatDriftOhm, runCapture, type ReadSample } from "../lib/matchmap/capture.ts";
 import { medianGamma } from "../lib/vna/freshness.ts";
-import { MAP_EVENT, parseMap, saveActiveMap, serializeMap, type LoadedMap } from "../lib/matchmap/store.ts";
+import { anchorMapText, loadActiveMapText, MAP_EVENT, parseMap, saveActiveMap, serializeMap, type LoadedMap } from "../lib/matchmap/store.ts";
+import { zOfGamma } from "../lib/matchmap/fit.ts";
 
 const SETTLE_WINDOW_MS = 1500; // readback must hold this long…
 const SETTLE_DEADBAND = 0.15; // …within this (absorbs the ±0.1 % flicker)
@@ -32,6 +33,8 @@ export interface MapCapture {
   result: LoadedMap | null;
   driftOhm: number | null;
   start: (label: string, tuneSpan: number, loadSpan: number) => Promise<void>;
+  /** Re-anchor the active map at the current caps from fresh VNA sweeps (moves no cap). */
+  anchorHere: () => Promise<void>;
   download: () => void;
 }
 
@@ -129,5 +132,29 @@ export function useMapCapture(op: Operator, vna: VnaController): MapCapture {
     URL.revokeObjectURL(a.href);
   }
 
-  return { busy, progress, msg, result, driftOhm, start, download };
+  async function anchorHere() {
+    const text = loadActiveMapText(settingsStorage());
+    if (!text) { setMsg("no active map to anchor — capture one first (once per network build)"); return; }
+    const tel = telRef.current;
+    if (tel?.tune_cap_percent == null || tel?.load_cap_percent == null) { setMsg("cannot anchor: no cap readback (connect the generator)"); return; }
+    setBusy(true);
+    setMsg("anchoring — reading the VNA at the current caps…");
+    try {
+      const m = await vna.exclusive(() => measure()); // median of 3 fresh sweeps at exactly 13.56 MHz + readback
+      if (m === null) { setMsg("VNA is busy (auto-tune running?) — try again when it finishes"); return; }
+      const next = anchorMapText(text, { tune: m.tune, load: m.load, z: zOfGamma(m.g), at: new Date().toISOString() });
+      const loaded = parseMap(next);
+      if (loaded.anchorError || !loaded.anchor) { setMsg(`not anchored: ${loaded.anchorError ?? "unknown error"}`); return; }
+      saveActiveMap(settingsStorage(), next);
+      window.dispatchEvent(new Event(MAP_EVENT));
+      const a = loaded.anchor;
+      setMsg(`map anchored at T ${m.tune.toFixed(1)} / L ${m.load.toFixed(1)} % — moved Tune ${a.sT >= 0 ? "+" : ""}${a.sT.toFixed(2)} %, Load ${a.sL >= 0 ? "+" : ""}${a.sL.toFixed(2)} % since capture (match now T ${loaded.coldMatch.tune.toFixed(1)} / L ${loaded.coldMatch.load.toFixed(1)} %)`);
+    } catch (e) {
+      setMsg(`anchor failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return { busy, progress, msg, result, driftOhm, start, download, anchorHere };
 }

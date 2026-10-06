@@ -71,8 +71,12 @@ export function MatchAidPanel({ aid, t }: { aid: MatchAid; t: Telemetry | null }
           <div className="hint mono" style={{ marginTop: 0 }}>
             <strong>{map.label}</strong> · {map.createdAt.slice(0, 16).replace("T", " ")} · {map.points.length} points ·
             fit {map.fit.rmsOhm.toFixed(1)} Ω (held-out {map.fit.looRmsOhm?.toFixed(1) ?? "—"} Ω) ·
-            cold match T {map.coldMatch.tune.toFixed(1)} % / L {map.coldMatch.load.toFixed(1)} %
+            cold match T {map.coldMatch.tune.toFixed(1)} % / L {map.coldMatch.load.toFixed(1)} % ·{" "}
+            {map.anchor
+              ? <>anchored {map.anchor.at.slice(5, 16).replace("T", " ")} (moved T {map.anchor.sT >= 0 ? "+" : ""}{map.anchor.sT.toFixed(2)} / L {map.anchor.sL >= 0 ? "+" : ""}{map.anchor.sL.toFixed(2)} % since capture)</>
+              : <>not anchored this session</>}
           </div>
+          {map.anchorError && <div className="aid-note" style={{ color: "var(--warn)" }}>Stored anchor rejected: {map.anchorError}</div>}
           {msg && <div style={{ margin: "8px 0", fontWeight: 600, color }}>{msg.text}</div>}
           {result && <MatchMapPlot map={map} result={result} readings={readings} current={current} />}
           <div className="aid-legend">

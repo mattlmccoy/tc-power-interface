@@ -208,6 +208,11 @@ export function VnaTuneView({ op, vna, mapCapture }: { op: Operator; vna: VnaCon
               {mapCapture.result && (
                 <button className="btn" onClick={mapCapture.download}>Save map JSON</button>
               )}
+              <button className="btn" onClick={() => void mapCapture.anchorHere()}
+                disabled={mapCapture.busy || vna.running || !vna.connected}
+                title="Once you have the match (by hand or auto), re-anchor the active map here from one VNA reading — no recapture needed while the network build is unchanged. Moves no cap.">
+                Anchor map here
+              </button>
             </div>
             {mapCapture.progress && (
               <div className="aid-note" style={{ margin: 0 }}>

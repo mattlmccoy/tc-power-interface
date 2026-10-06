@@ -70,6 +70,11 @@ export function saveActiveMap(storage: Storage | null, text: string): void {
   try { storage?.setItem(MAP_KEY, text); } catch { /* storage unavailable: the map stays downloadable */ }
 }
 
+/** The active map's raw file text (to re-anchor it without losing anything), or null. */
+export function loadActiveMapText(storage: Storage | null): string | null {
+  try { return storage?.getItem(MAP_KEY) ?? null; } catch { return null; }
+}
+
 export function loadActiveMap(storage: Storage | null): LoadedMap | null {
   try {
     const text = storage?.getItem(MAP_KEY);
