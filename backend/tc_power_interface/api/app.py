@@ -268,14 +268,22 @@ def create_app(
         heartbeat_gate = HeartbeatGate(period_s=1.0)  # power-only heartbeat cadence (manual runs)
         # Temperature source + control ROI: the operator's saved choice. No ROI name is invented
         # (the old hard-coded "circle_medium_small" vanished when the FLIR ROIs were redrawn, so the
-        # loop silently read nothing and logged 0 C). Real hardware with a FLIR link defaults to FLIR.
-        src_cfg = load_source(experiments_root, default_type="flir" if (flir_url and backend != "simulated") else "simulated")
+        # loop silently read nothing and logged 0 C). Real hardware with a FLIR link defaults to
+        # FLIR.
+        src_cfg = load_source(
+            experiments_root,
+            default_type="flir" if (flir_url and backend != "simulated") else "simulated",
+        )
         app.state.control_roi = src_cfg["roi"]
-        app.state.flir_roi_url = f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
+        app.state.flir_roi_url = (
+            f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
+        )
         initial_source: Any = SimulatedThermalSource()
         app.state.thermal_source = "simulated"
         if src_cfg["type"] == "flir" and app.state.flir_roi_url:
-            initial_source = FlirPollingSource(app.state.flir_roi_url, roi_name=app.state.control_roi)
+            initial_source = FlirPollingSource(
+                app.state.flir_roi_url, roi_name=app.state.control_roi
+            )
             initial_source.start()
             app.state.thermal_source = "flir"
         controller.backend = backend
@@ -331,7 +339,8 @@ def create_app(
         controller.add_listener(lambda snap: recorder.record(
             {**snap, "thermal": thermal.snapshot(), "scope": scope_hub.recording_fields()}))
         controller.add_listener(scope_hub.on_snapshot)
-        app.state.thermal = thermal  # (thermal_source was set above from the operator's saved choice)
+        # (thermal_source was set above from the operator's saved choice)
+        app.state.thermal = thermal
 
         # Software power ramp (init -> target at W/s); ticks from the poll, drives the setpoint.
         ramp = RampController(
@@ -536,7 +545,8 @@ def create_app(
                 **_thermal().snapshot(),
                 "source": app.state.thermal_source,
                 "control_roi": app.state.control_roi,
-                # why there is / isn't a control temperature (ok, no_roi_selected, roi_not_in_feed, ...)
+                # why there is / isn't a control temperature (ok, no_roi_selected, roi_not_in_feed,
+                # ...)
                 "temp_status": getattr(_thermal().source, "status", "simulated"),
                 "available_rois": _available_rois(),
                 **thermal_extra(_thermal().source),
@@ -725,7 +735,10 @@ def create_app(
         else:
             th.source = SimulatedThermalSource()
             app.state.thermal_source = "simulated"
-        save_source(experiments_root, {"type": app.state.thermal_source, "roi": app.state.control_roi})
+        save_source(
+            experiments_root,
+            {"type": app.state.thermal_source, "roi": app.state.control_roi},
+        )
         return {"source": app.state.thermal_source}
 
     @app.get("/api/thermal/rois")
@@ -739,7 +752,10 @@ def create_app(
         setter = getattr(_thermal().source, "set_roi", None)
         if callable(setter):
             setter(app.state.control_roi)
-        save_source(experiments_root, {"type": app.state.thermal_source, "roi": app.state.control_roi})
+        save_source(
+            experiments_root,
+            {"type": app.state.thermal_source, "roi": app.state.control_roi},
+        )
         return {"control_roi": app.state.control_roi, "available_rois": _available_rois()}
 
     # --- power ramp ------------------------------------------------------------------------
@@ -920,7 +936,8 @@ def create_app(
 
     @app.post("/api/vna-session/end")
     def vna_session_end() -> dict[str, Any]:
-        """Leave VNA-tune mode; RF is allowed again (arm/connected/not-faulted gates still apply)."""
+        """Leave VNA-tune mode; RF is allowed again (arm/connected/not-faulted gates still
+        apply)."""
         _controller().end_vna_session()
         _record_event("vna_session_end")
         return _status_payload()
