@@ -187,7 +187,7 @@ test("compareStats pairs each row with the nearest shadow point within 2 s, two-
 
 test("the comparison is time-weighted with each interval capped, so a stall is not credited to one row", () => {
   const row = (t: number, fwd: number) => ({
-    t_s: t, forward_w: fwd, reverse_w: 0, rf_on: true, tune: null, load: null, setpoint_w: null, part_temp_c: null,
+    t_s: t, forward_w: fwd, reverse_w: 0, load_w: null, rf_on: true, tune: null, load: null, setpoint_w: null, part_temp_c: null,
   });
   const rows = [row(0, 40), row(0.5, 40), row(1, 40), row(11, 140)]; // 10 s stall before the last row
   const shadow = [0, 0.5, 1, 11].map((t) => ({ t_s: t, suggest_w: 40 }));
@@ -209,7 +209,7 @@ test("a shadow point with no suggestion pairs nothing and is counted as unpaired
 test("compareStats on 20k rows and 20k shadow points stays linear", () => {
   const n = 20000;
   const rows = Array.from({ length: n }, (_, i) => ({
-    t_s: i * 0.5, forward_w: 40, reverse_w: 0, rf_on: true, tune: null, load: null, setpoint_w: 40, part_temp_c: null,
+    t_s: i * 0.5, forward_w: 40, reverse_w: 0, load_w: null, rf_on: true, tune: null, load: null, setpoint_w: 40, part_temp_c: null,
   }));
   const shadow = Array.from({ length: n }, (_, i) => ({ t_s: i * 0.5, suggest_w: 42 }));
   const t0 = performance.now();
@@ -220,7 +220,7 @@ test("compareStats on 20k rows and 20k shadow points stays linear", () => {
 
 test("runEvents: RF off edge and slow retune drift accumulate against the last retune", () => {
   const row = (t: number, rf: boolean, tune: number) => ({
-    t_s: t, forward_w: 40, reverse_w: 0, rf_on: rf, tune, load: 10, setpoint_w: 40, part_temp_c: null,
+    t_s: t, forward_w: 40, reverse_w: 0, load_w: null, rf_on: rf, tune, load: 10, setpoint_w: 40, part_temp_c: null,
   });
   const ev = runEvents([row(0, true, 20), row(1, true, 19.8), row(2, true, 19.4), row(3, false, 19.4)]);
   assert.deepEqual(
@@ -237,11 +237,19 @@ test("an implausible timestamp (before 2020, e.g. a corrupt \"0\") is skipped, a
 
 test("retune: reference starts at the RF-on row; cold hand-tuning before RF on is not a retune", () => {
   const row = (t: number, rf: boolean, tune: number) => ({
-    t_s: t, forward_w: rf ? 40 : 0, reverse_w: 0, rf_on: rf, tune, load: 10, setpoint_w: null, part_temp_c: null,
+    t_s: t, forward_w: rf ? 40 : 0, reverse_w: 0, load_w: null, rf_on: rf, tune, load: 10, setpoint_w: null, part_temp_c: null,
   });
   const ev = runEvents([row(0, false, 20), row(1, false, 25), row(2, true, 25), row(3, true, 24), row(4, false, 30), row(5, true, 30)]);
   assert.deepEqual(
     ev.map((e) => e.text),
     ["RF on", "retune: Tune 25→24 %, Load 10→10 %", "RF off", "RF on"],
   );
+});
+
+test("parseTelemetryCsv: load_w from the recorder's column; absent column or blank cell is null", () => {
+  const r = parseTelemetryCsv(CSV_REAL);
+  assert.equal(r[1].load_w, 39.9);
+  assert.equal(r[0].load_w, 0);
+  const noLoad = parseTelemetryCsv(lines("host_timestamp_ns,forward_w,rf_on", "1791000000000000000,10,True", "1791000001000000000,10,True"));
+  assert.equal(noLoad[0].load_w, null);
 });

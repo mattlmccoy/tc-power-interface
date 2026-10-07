@@ -15,6 +15,8 @@ export interface ReplayRow {
   t_s: number;
   forward_w: number | null;
   reverse_w: number | null;
+  /** The generator's load (absorbed) power reading; null when blank or the column is absent. */
+  load_w: number | null;
   /** "True" (any case) = on; blank/anything else = off. The recorder always writes the cell. */
   rf_on: boolean;
   tune: number | null;
@@ -122,7 +124,7 @@ export function parseTelemetryCsv(text: string, nowMs: number = Date.now()): Rep
   for (const need of ["host_timestamp_ns", "forward_w", "rf_on"])
     if (col(need) < 0) throw new Error(`not a telemetry.csv: no ${need} column`);
   const idx = {
-    fwd: col("forward_w"), rev: col("reverse_w"), rf: col("rf_on"), tune: col("tune_cap_percent"),
+    fwd: col("forward_w"), rev: col("reverse_w"), loadW: col("load_w"), rf: col("rf_on"), tune: col("tune_cap_percent"),
     load: col("load_cap_percent"), sp: col("setpoint_w"), part: col("part_temp_c"),
   };
   const get = (r: string[], i: number) => (i < 0 ? undefined : r[i]);
@@ -161,6 +163,7 @@ export function parseTelemetryCsv(text: string, nowMs: number = Date.now()): Rep
     t_s: Number(ns - ns0) / 1e9,
     forward_w: num(get(r, idx.fwd)),
     reverse_w: num(get(r, idx.rev)),
+    load_w: num(get(r, idx.loadW)),
     rf_on: (get(r, idx.rf) ?? "").trim().toLowerCase() === "true",
     tune: num(get(r, idx.tune)),
     load: num(get(r, idx.load)),
