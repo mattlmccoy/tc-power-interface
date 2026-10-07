@@ -18,6 +18,7 @@ import queue
 import re
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -89,6 +90,19 @@ class TelemetryRecorder:
         self._queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._writer_thread: threading.Thread | None = None
         self._writer_stop = threading.Event()
+        self._finalizers: list[Callable[[Path], list[str]]] = []
+
+    @property
+    def run_dir(self) -> Path | None:
+        """The active run directory, or None when idle."""
+        return self._dir if self.state is RecorderState.RECORDING else None
+
+    def add_finalizer(self, fn: Callable[[Path], list[str]]) -> None:
+        """Register a callback run at stop(), before the manifest.
+
+        Returned file names (relative to the run dir) are checksummed into the manifest. A failing
+        finalizer is logged and recorded as an event, never raised."""
+        self._finalizers.append(fn)
 
     def start(self, name: str, metadata: dict[str, Any]) -> Path:
         if self.state is RecorderState.RECORDING:
@@ -201,17 +215,29 @@ class TelemetryRecorder:
             self._csv_file = None
         self._csv_writer = None
 
+        extra_files: list[str] = []
+        for fn in self._finalizers:
+            try:
+                extra_files.extend(fn(run_dir))
+            except Exception as exc:  # noqa: BLE001 - a broken finalizer must not lose the run
+                logger.exception("recorder finalizer failed")
+                self.event("finalizer_failed", {"error": str(exc)})
+        self._finalizers = []
+
         (run_dir / "events.json").write_text(json.dumps(self._events, indent=2))
+        checksums: dict[str, str] = {
+            "metadata.json": _sha256(run_dir / "metadata.json"),
+            "events.json": _sha256(run_dir / "events.json"),
+            "telemetry.csv": _sha256(run_dir / "telemetry.csv"),
+        }
+        for name in extra_files:
+            checksums[name] = _sha256(run_dir / name)
 
         manifest = {
             "complete": True,
             "sample_count": self._sample_count,
             "duration_s": round(time.monotonic() - self._started_monotonic, 3),
-            "checksums": {
-                "metadata.json": _sha256(run_dir / "metadata.json"),
-                "events.json": _sha256(run_dir / "events.json"),
-                "telemetry.csv": _sha256(run_dir / "telemetry.csv"),
-            },
+            "checksums": checksums,
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
