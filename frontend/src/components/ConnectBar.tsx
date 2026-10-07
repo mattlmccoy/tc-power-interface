@@ -1,7 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { DeviceInfo } from "../lib/telemetry.ts";
 import { SITE_MODE, type Health, type SerialPort } from "../lib/api.ts";
-import { UI_API_VERSION, UI_VERSION } from "../lib/operator.ts";
+import { UI_API_VERSION, versionFooter } from "../lib/operator.ts";
+import { APP_VERSION } from "../version.ts";
 
 interface ConnectBarProps {
   pillState: string;
@@ -157,11 +158,7 @@ export function ConnectBar(props: ConnectBarProps) {
               </div>
 
               <div className="connect-version mono">
-                UI {UI_VERSION}
-                {health ? ` · operator ${health.version}` : reachable ? "" : " · operator offline"}
-                {" · API "}
-                {UI_API_VERSION}
-                {health?.api_version ? `/${health.api_version}` : ""}
+                {versionFooter({ uiVersion: APP_VERSION, health, reachable, uiApiVersion: UI_API_VERSION })}
               </div>
             </div>
           ) : null}
