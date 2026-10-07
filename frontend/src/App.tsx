@@ -10,13 +10,14 @@ import { UpdateBanner } from "./components/UpdateBanner.tsx";
 import { useOperator } from "./hooks/useOperator.ts";
 import { SITE_MODE } from "./lib/api.ts";
 import { shouldShowSetupHelp } from "./lib/setupHelp.ts";
-import { ClosedLoopPage } from "./pages/ClosedLoopPage.tsx";
+import { CockpitPage } from "./pages/CockpitPage.tsx";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { VnaTuneView } from "./pages/VnaTuneView.tsx";
 import { useVna } from "./hooks/useVna.ts";
 import { useAudioAlerts } from "./hooks/useAudioAlerts.ts";
 import { useMatchAid } from "./hooks/useMatchAid.ts";
+import { useCockpitHistory } from "./hooks/useCockpitHistory.ts";
 import { useMapCapture } from "./hooks/useMapCapture.ts";
 import { VERSION_LABEL, BUILD_ID, VERSION_FULL } from "./version.ts";
 
@@ -32,6 +33,7 @@ export function App() {
   const alerts = useAudioAlerts(op);
   const aid = useMatchAid(op.t, op.status?.recording?.run ?? null); // App level: survives tab switches; drift is per run
   const mapCapture = useMapCapture(op, vna);
+  const cockpitHistory = useCockpitHistory(op.status); // App level: the timeline survives tab switches
   const inVna = !!op.status?.vna_session?.active;
   // Site mode only: when the local operator can't be reached after repeated WS-connect failures (e.g.
   // the PC rebooted and nothing restarted it), replace the tab views with a panel that shows the
@@ -158,7 +160,7 @@ export function App() {
               ) : view === "settings" ? (
                 <SettingsPage op={op} />
               ) : (
-                <ClosedLoopPage op={op} aid={aid} />
+                <CockpitPage op={op} aid={aid} history={cockpitHistory} />
               )}
             </>
           )

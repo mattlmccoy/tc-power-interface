@@ -5,6 +5,7 @@
 
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
 
+import { SP_COARSE, SP_FINE } from "../components/cockpit/SetpointEntry.tsx";
 import { api, detail, operatorBase, setOperatorBase } from "../lib/api.ts";
 import type { FlirLink, Health, SerialPort } from "../lib/api.ts";
 import { reflectedZone } from "../lib/format.ts";
@@ -28,8 +29,6 @@ import type {
 } from "../lib/telemetry.ts";
 
 const FLIR_POLL_MS = 3000;
-const SP_FINE = 5; // live power nudge: fine step (W) — ↑/↓ and the ±5 buttons
-const SP_COARSE = 25; // live power nudge: coarse step (W) — Shift+↑/↓ and the ±25 buttons
 
 export function useOperator() {
   const [status, setStatus] = useState<Status | null>(null);

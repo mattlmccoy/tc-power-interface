@@ -5,6 +5,7 @@ import { App } from "./App.tsx";
 import { SITE_MODE } from "./lib/api.ts";
 import "./theme.css";
 import "./styles.css";
+import "./cockpit.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
