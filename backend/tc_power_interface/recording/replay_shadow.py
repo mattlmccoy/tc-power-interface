@@ -45,7 +45,10 @@ _TELEMETRY_COLUMNS = ("host_timestamp_ns", "forward_w", "rf_on")
 #: The recorder's header-only roi_temps.csv: exactly these bytes (csv.DictWriter writes "\r\n").
 _ROI_HEADER_BYTES = len(",".join(_ROI_COLUMNS) + "\r\n")
 _MIN_ROI_ROW_BYTES = len("0,x,\r\n")
-_POINT_KEYS = ("k_c_per_w", "tau_s", "confidence", "suggest_w", "plateau_c")
+_POINT_KEYS = (
+    "k_c_per_w", "tau_s", "confidence", "suggest_w", "plateau_c",
+    "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w",
+)  # fmt: skip
 
 
 class DamagedRecordingError(ValueError):
