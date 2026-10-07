@@ -106,6 +106,9 @@ class Controller:
         self.fault_reasons: tuple[str, ...] = ()
 
         self._last_sample_monotonic: float | None = None
+        #: Count of SUCCESSFUL telemetry reads (display-only: the UI's GEN heartbeat blinks when it
+        #: changes). Written only by the poll thread; never read by protection.
+        self._poll_seq = 0
         self._lock = threading.Lock()  # guards published state
         self._io_lock = threading.Lock()  # serializes all transport access
         # Last setpoint TC-POWER commanded (no device readback). Guarded by _lock;
@@ -314,6 +317,7 @@ class Controller:
             return
         self._record_read_outcome(invalid=False)
         self._read_failures = 0  # a good read clears the link-loss debounce
+        self._poll_seq += 1  # display-only heartbeat counter
         self._invalid_status_reads = 0
 
         # Staleness = the IDLE GAP between reads (a stalled/starved poll loop), NOT the duration of
@@ -610,6 +614,9 @@ class Controller:
             vna_active = self._vna_session_active
             vna_hb_ns = self._vna_hb_ns
             last_sp = self._last_setpoint_w
+            poll_seq = self._poll_seq
+            last_ok = self._last_sample_monotonic
+            read_failures = self._read_failures
         age_s = None if vna_hb_ns is None else (time.monotonic_ns() - vna_hb_ns) / 1e9
         return {
             "state": self.state.value,
@@ -637,6 +644,13 @@ class Controller:
             },
             "last_setpoint_w": last_sp,
             "warnings": [] if d is None else list(d.warnings),
+            # Display-only link heartbeat (operator<->generator): good-read counter, age of the last
+            # good read on the controller clock, and the consecutive read-failure count.
+            "link": {
+                "poll_seq": poll_seq,
+                "last_ok_age_s": None if last_ok is None else max(0.0, self._clock() - last_ok),
+                "read_failures": read_failures,
+            },
             "vna_session": {
                 "active": vna_active,
                 "stale": bool(vna_active and age_s is not None and age_s > self._vna_stale_s),
