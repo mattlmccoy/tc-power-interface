@@ -5,13 +5,18 @@ import json
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tc_power_interface.api.app import create_app
 from tc_power_interface.control.cockpit import CockpitObserver
 from tc_power_interface.control.run_mode import RunMode
 from tc_power_interface.recording.recorder import TelemetryRecorder
-from tc_power_interface.recording.replay_shadow import recorded_rois, replay_shadow
+from tc_power_interface.recording.replay_shadow import (
+    has_roi_data,
+    recorded_rois,
+    replay_shadow,
+)
 
 FIX = json.loads(
     (Path(__file__).parent / "fixtures/flir_20261002_125228_estimator.json").read_text()
@@ -222,3 +227,169 @@ def test_a_header_only_roi_file_is_not_roi_data(tmp_path):
         runs = {r["run"]: r for r in c.get("/api/recordings").json()["runs"]}
         assert runs[run.name]["has_roi_data"] is False
         assert c.get(f"/api/recordings/{run.name}/rois").json() == {"rois": []}
+
+
+# --- review fixes: corrupt timestamps, damaged files, escapes, stat-first has_roi_data ----------
+
+def _rewrite_telemetry(run: Path, insert_at: int, ns: int) -> None:
+    """Insert one telemetry row with a corrupt timestamp before data row ``insert_at``."""
+    rows = list(csv.DictReader((run / "telemetry.csv").open(newline="")))
+    bad = {**rows[0], "host_timestamp_ns": str(ns)}
+    rows.insert(insert_at, bad)
+    with (run / "telemetry.csv").open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+
+
+@pytest.mark.parametrize(
+    ("insert_at", "ns"),
+    [
+        (0, 0),  # the reviewer's case: first row 0 -> t_s ~1.79e9 s -> ~6 GB of placeholders
+        (0, BASE_NS - 7200 * 10**9),  # a first row 2 h too early
+        (50, BASE_NS + 10**6 * 10**9),  # a far-future row mid-run (> MAX_GAP_S jump)
+        (50, BASE_NS + 10**9),  # a row that goes backwards in time
+    ],
+)
+def test_corrupt_timestamps_are_skipped_and_bounded(tmp_path, insert_at, ns):
+    clean = replay_shadow(
+        _write_run(tmp_path / "a"), roi="freehand_sample", target_c=55.0, ceiling_w=200.0
+    )
+    run = _write_run(tmp_path / "b")
+    _rewrite_telemetry(run, insert_at, ns)
+    t0 = time.perf_counter()
+    out = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)
+    assert time.perf_counter() - t0 < 2.0
+    assert out["points"] == clean["points"]
+
+
+BINARY = bytes(range(256)) * 64  # invalid UTF-8, NULs, no csv structure (a Dropbox conflict blob)
+
+
+def test_a_binary_roi_file_is_a_clean_4xx_never_a_500(tmp_path):
+    good = _write_run(tmp_path, name="20261002_125227_RF").name
+    bad = _write_run(tmp_path, name="20261002_130000_RF")
+    (bad / "roi_temps.csv").write_bytes(BINARY)
+    with _client(tmp_path) as c:
+        listing = c.get("/api/recordings")
+        assert listing.status_code == 200  # one bad run never breaks the list
+        assert {good, bad.name} <= {r["run"] for r in listing.json()["runs"]}
+        assert c.get(f"/api/recordings/{bad.name}/rois").status_code == 422
+        q = {"roi": "SQ_SAMPLE", "target": 55}
+        assert c.get(f"/api/recordings/{bad.name}/shadow", params=q).status_code == 422
+        assert c.get(f"/api/recordings/{good}/shadow", params=q).status_code == 200
+
+
+def test_a_binary_telemetry_file_is_a_clean_422(tmp_path):
+    run = _write_run(tmp_path)
+    (run / "telemetry.csv").write_bytes(BINARY)
+    with _client(tmp_path) as c:
+        q = {"roi": "SQ_SAMPLE", "target": 55}
+        assert c.get(f"/api/recordings/{run.name}/shadow", params=q).status_code == 422
+
+
+def test_has_roi_data_never_raises_on_a_damaged_or_unreadable_file(tmp_path):
+    run = tmp_path / "r"
+    run.mkdir()
+    roi = run / "roi_temps.csv"
+    roi.write_bytes(b"\xff\xfe\x00garbage-not-a-csv-header\x00\x81\x82\x83\x84")  # 32 B
+    assert 30 < roi.stat().st_size < 36
+    assert has_roi_data(run) is False
+    roi.chmod(0)
+    try:
+        assert has_roi_data(run) is False
+    finally:
+        roi.chmod(0o644)
+
+
+def test_has_roi_data_is_stat_first(tmp_path, monkeypatch):
+    """Dropbox Smart Sync: an online-only file must not be downloaded just to list runs."""
+    header = b"host_timestamp_ns,roi,mean_c\r\n"
+    run = tmp_path / "r"
+    run.mkdir()
+    (run / "roi_temps.csv").write_bytes(header)
+    opened: list[Path] = []
+    real_open = Path.open
+
+    def spy(self, *a, **k):
+        opened.append(self)
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(Path, "open", spy)  # note: write_bytes opens too, so clear after writes
+    assert has_roi_data(run) is False and opened == []  # exactly the header: no open
+    (run / "roi_temps.csv").write_bytes(header + b"1790000000000000000,part,31.5\r\n")
+    opened.clear()
+    assert has_roi_data(run) is True and opened == []  # clearly larger: no open
+    (run / "roi_temps.csv").write_bytes(header + b"\r\n")  # ambiguous: open and look
+    opened.clear()
+    assert has_roi_data(run) is False and opened != []
+
+
+def _cut_last_line(path: Path, keep: int) -> None:
+    """Simulate a live recording read mid-write: keep ``keep`` chars of the last line, no EOL."""
+    body = path.read_text().rstrip("\r\n")
+    start = body.rindex("\n") + 1
+    path.write_text(body[: start + keep], newline="")
+
+
+def test_a_truncated_last_roi_line_is_not_read_as_a_number(tmp_path):
+    """'49.68' cut to '4' must not become a 4.0 C reading."""
+    run = _write_run(tmp_path)
+    roi = run / "roi_temps.csv"
+    last = roi.read_text().rstrip("\r\n").rsplit("\n", 1)[1]
+    assert last.split(",")[1] == "freehand_sample"
+    _cut_last_line(roi, last.rindex(",") + 2)  # "<ts>,freehand_sample,4"
+    pts = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)["points"]
+    assert pts[-1]["t_s"] == FIX["t_s"][-1]
+    assert pts[-1]["temp_c"] is None  # the cut reading is dropped; the prior one is 5 s old
+
+
+def test_a_truncated_last_telemetry_line_is_not_a_sample(tmp_path):
+    run = _write_run(tmp_path)
+    _cut_last_line(run / "telemetry.csv", 21)  # "<19-digit ts>,<first char of forward_w>"
+    pts = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)["points"]
+    assert len(pts) == len(FIX["t_s"]) - 1
+
+
+def test_a_row_with_missing_fields_is_skipped(tmp_path):
+    run = _write_run(tmp_path)
+    roi = run / "roi_temps.csv"
+    lines = roi.read_text().splitlines(keepends=True)
+    lines.insert(5, f"{BASE_NS + 1},freehand_sample\r\n")  # a short, complete line
+    roi.write_text("".join(lines), newline="")
+    pts = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)["points"]
+    assert pts[-1]["temp_c"] == FIX["rois"]["freehand_sample"][-1]
+
+
+def test_run_names_with_a_null_byte_or_dot_dot_are_400(tmp_path):
+    _write_run(tmp_path)
+    with _client(tmp_path) as c:
+        for name in ("%00", "x%00y", "%2e%2e"):
+            for path in ("rois", "events.json", "telemetry.csv", "shadow?roi=a&target=55"):
+                assert c.get(f"/api/recordings/{name}/{path}").status_code == 400, (name, path)
+
+
+def test_a_symlinked_run_dir_escaping_the_root_is_400(tmp_path):
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    root.mkdir()
+    real = _write_run(outside)
+    (root / "evil").symlink_to(real, target_is_directory=True)
+    with _client(root) as c:
+        for path in ("rois", "events.json", "telemetry.csv"):
+            assert c.get(f"/api/recordings/evil/{path}").status_code == 400
+
+
+def test_symlinked_files_inside_a_run_are_not_followed_out(tmp_path):
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    run = _write_run(root)
+    src = _write_run(outside)
+    for name in ("events.json", "telemetry.csv", "roi_temps.csv"):
+        (run / name).unlink()
+        (run / name).symlink_to(src / name)
+    assert has_roi_data(run) is False and recorded_rois(run) == []
+    with _client(root) as c:
+        assert c.get(f"/api/recordings/{run.name}/events.json").status_code == 404
+        assert c.get(f"/api/recordings/{run.name}/telemetry.csv").status_code == 404
+        assert c.get(f"/api/recordings/{run.name}/rois").json() == {"rois": []}
+        q = {"roi": "SQ_SAMPLE", "target": 55}
+        assert c.get(f"/api/recordings/{run.name}/shadow", params=q).status_code == 404

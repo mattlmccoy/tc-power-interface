@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import csv
 import json
 import logging
 import math
@@ -66,12 +67,17 @@ from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
 from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 from tc_power_interface.recording.replay_shadow import (
+    DamagedRecordingError,
     has_roi_data,
     recorded_rois,
     replay_shadow,
+    run_file,
 )
 
 logger = logging.getLogger(__name__)
+
+#: A recording file that exists but cannot be parsed / read: a clean 422, never a 500.
+_DAMAGE = (DamagedRecordingError, csv.Error, UnicodeError, OSError)
 
 #: A failing cockpit observer is logged once, then at most once per this many seconds (it would
 #: otherwise log every poll tick).
@@ -1207,23 +1213,33 @@ def create_app(
         runs: list[dict[str, Any]] = []
         if root.is_dir():
             for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
-                csv_file = d / "telemetry.csv"
-                if csv_file.is_file():
-                    runs.append(
-                        {
-                            "run": d.name,
-                            "complete": (d / "manifest.json").is_file(),
-                            "size_bytes": csv_file.stat().st_size,
-                            "has_roi_data": has_roi_data(d),
-                        }
-                    )
+                csv_file = run_file(d, "telemetry.csv")
+                if csv_file is None:
+                    continue
+                try:
+                    size = csv_file.stat().st_size
+                except OSError:  # vanished or unreadable mid-listing: one bad run never breaks it
+                    continue
+                runs.append(
+                    {
+                        "run": d.name,
+                        "complete": (d / "manifest.json").is_file(),
+                        "size_bytes": size,
+                        "has_roi_data": has_roi_data(d),  # never raises
+                    }
+                )
         return {"runs": runs}
 
     def _run_dir(run: str) -> Path:
         """The run's directory directly under the experiments root: 400 on any path traversal or
-        nested path, 404 if it does not exist."""
-        root = experiments_root.resolve()
-        target = (root / run).resolve()
+        nested path (incl. a symlink out of the root) or a null byte, 404 if it does not exist."""
+        if "\x00" in run:
+            raise HTTPException(status_code=400, detail="invalid run name")
+        try:
+            root = experiments_root.resolve()
+            target = (root / run).resolve()
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="invalid run name") from exc
         if target.parent != root:  # reject path traversal / nested paths
             raise HTTPException(status_code=400, detail="invalid run name")
         if not target.is_dir():
@@ -1232,19 +1248,23 @@ def create_app(
 
     @app.get("/api/recordings/{run}/telemetry.csv")
     def download_recording(run: str) -> FileResponse:
-        csv_file = _run_dir(run) / "telemetry.csv"
-        if not csv_file.is_file():
+        csv_file = run_file(_run_dir(run), "telemetry.csv")  # None for a symlink out of the run
+        if csv_file is None:
             raise HTTPException(status_code=404, detail="no such recording")
         return FileResponse(csv_file, media_type="text/csv", filename=f"{run}_telemetry.csv")
 
     @app.get("/api/recordings/{run}/rois")
     def recording_rois(run: str) -> dict[str, Any]:
-        return {"rois": recorded_rois(_run_dir(run))}
+        run_dir = _run_dir(run)
+        try:
+            return {"rois": recorded_rois(run_dir)}
+        except _DAMAGE as exc:
+            raise HTTPException(status_code=422, detail=f"damaged recording: {exc}") from exc
 
     @app.get("/api/recordings/{run}/events.json")
     def recording_events(run: str) -> FileResponse:
-        path = _run_dir(run) / "events.json"
-        if not path.is_file():  # written only on a clean stop
+        path = run_file(_run_dir(run), "events.json")
+        if path is None:  # written only on a clean stop; a symlink out of the run is absent
             raise HTTPException(status_code=404, detail="no events for this recording")
         return FileResponse(path, media_type="application/json")
 
@@ -1261,6 +1281,8 @@ def create_app(
             return replay_shadow(run_dir, roi=roi, target_c=target, ceiling_w=ceiling)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except _DAMAGE as exc:
+            raise HTTPException(status_code=422, detail=f"damaged recording: {exc}") from exc
 
     @app.get("/api/auto-log")
     def get_auto_log() -> dict[str, Any]:
