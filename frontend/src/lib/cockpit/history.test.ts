@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { appendSample, type CockpitSample } from "./history.ts";
 
 const s = (ns: number, run: string | null = "r1"): CockpitSample => ({
-  ns, run, fwd: 40, rev: 0.1, part: 41, watch: {}, suggest: null, tune: 20, load: 10,
+  ns, run, rf: true, fwd: 40, rev: 0.1, part: 41, watch: {}, suggest: null, tune: 20, load: 10,
 });
 
 test("dedupes by telemetry timestamp, caps the length, resets on a new run", () => {

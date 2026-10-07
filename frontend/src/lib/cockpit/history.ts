@@ -1,7 +1,11 @@
+import type { Status } from "../telemetry.ts";
+
 /** One live cockpit sample (from /api/status), keyed by the generator telemetry timestamp. */
 export interface CockpitSample {
   ns: number;
   run: string | null;
+  /** Telemetry `rf_on`: retune ticks and reflected % only count while RF is on. */
+  rf: boolean;
   fwd: number;
   rev: number;
   part: number | null;
@@ -32,4 +36,31 @@ export function appendSample(buf: CockpitSample[], s: CockpitSample, maxN: numbe
 function lastRun(buf: CockpitSample[]): string | null {
   for (let i = buf.length - 1; i >= 0; i--) if (buf[i].run !== null) return buf[i].run;
   return null;
+}
+
+const num = (x: number | null | undefined): number | null => (x != null && Number.isFinite(x) ? x : null);
+
+/**
+ * The cockpit sample for one `/api/status` snapshot, or null without generator telemetry (nothing
+ * to key it on). Unknowns stay null, never 0: an older operator without `thermal.shadow`/`watch` or
+ * cap readback, and a watched ROI that is not in the feed (backend core_watch.py: temp_c null).
+ */
+export function sampleFromStatus(status: Status | null): CockpitSample | null {
+  const tel = status?.controller?.telemetry;
+  if (!tel) return null;
+  const th = status.thermal;
+  const watch: Record<string, number | null> = {};
+  for (const w of th?.watch ?? []) watch[w.name] = num(w.temp_c);
+  return {
+    ns: tel.host_timestamp_ns,
+    run: status.recording?.run ?? null,
+    rf: tel.rf_on === true,
+    fwd: tel.forward_w,
+    rev: tel.reverse_w,
+    part: num(th?.control_temp_c),
+    watch,
+    suggest: num(th?.shadow?.suggest_w),
+    tune: num(tel.tune_cap_percent),
+    load: num(tel.load_cap_percent),
+  };
 }
