@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from tc_power_interface import __version__
+from tc_power_interface.api.recording_files import router as recording_files_router
 from tc_power_interface.api.scope_routes import router as scope_router
 from tc_power_interface.control.controller import Controller
 from tc_power_interface.control.match_tuner import (
@@ -528,6 +529,8 @@ def create_app(
             "recording": {
                 "active": rec.state is RecorderState.RECORDING,
                 "run": app.state.current_run,
+                "run_path": None if rec.run_dir is None else str(rec.run_dir.resolve()),
+                "experiments_root": str(experiments_root.resolve()),
             },
             "thermal": {
                 **_thermal().snapshot(),
@@ -1054,6 +1057,7 @@ def create_app(
                     runs.append(
                         {
                             "run": d.name,
+                            "path": str(d.resolve()),
                             "complete": (d / "manifest.json").is_file(),
                             "size_bytes": csv_file.stat().st_size,
                         }
@@ -1113,6 +1117,7 @@ def create_app(
             rec.event(label, data)
 
     app.include_router(scope_router)
+    app.include_router(recording_files_router)
 
     # --- static frontend -------------------------------------------------------------------
     dist = frontend_dist or _DEFAULT_FRONTEND_DIST
