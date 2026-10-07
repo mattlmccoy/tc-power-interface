@@ -88,9 +88,9 @@ test("unknown power or target never blanks the suggestion", () => {
   assert.equal(shadowCard("target", base, Number.NaN, Number.NaN).sub, "your power unknown, target unknown");
 });
 
-test("the difference comes from the rounded numbers shown, and zero reads as on target", () => {
+test("the difference comes from the rounded numbers shown, and zero reads as the same power", () => {
   // 61.4 -> 61 and 71.5 -> 72 (symmetric rounding): shown "−11", not the raw −10.1 rounded to −10
   assert.equal(shadowCard("target", { ...base, suggest_w: 61.4 }, 71.5, 55).sub, "−11 W vs your 72 W, toward 55 °C");
-  assert.equal(shadowCard("target", { ...base, suggest_w: 71.4 }, 71, 55).sub, "on target: same as your 71 W");
+  assert.equal(shadowCard("target", { ...base, suggest_w: 71.4 }, 71, 55).sub, "same as your 71 W, toward 55 °C");
   assert.equal(shadowCard("target", { ...base, suggest_w: 80.2 }, 71, 55).sub, "+9 W vs your 71 W, toward 55 °C");
 });

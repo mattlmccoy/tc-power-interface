@@ -68,7 +68,7 @@ export function shadowCard(mode: RunModeName, s: Shadow, yourW: number, targetC:
     const target = fin(targetC) ? `toward ${targetC} °C` : "target unknown";
     let sub: string;
     if (d === null) sub = `your power unknown, ${target}`;
-    else if (d === 0) sub = fin(targetC) ? `on target: same as your ${round(yourW)} W` : `same as your ${round(yourW)} W, target unknown`;
+    else if (d === 0) sub = `same as your ${round(yourW)} W, ${target}`; // about power, not temperature
     else sub = `${d > 0 ? "+" : "−"}${Math.abs(d)} W vs your ${round(yourW)} W, ${target}`;
     return { label, value: `${shown} W`, sub, muted };
   }
