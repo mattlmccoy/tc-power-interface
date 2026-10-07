@@ -1,5 +1,7 @@
 // Telemetry types (mirror of the backend snapshot JSON) + a small ring buffer for plots.
 
+import type { ScopeStatus } from "./scope.ts";
+
 export interface Telemetry {
   host_timestamp_ns: number;
   forward_w: number;
@@ -189,10 +191,12 @@ export interface MatchTunerConfig extends MatchTunerForm {
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
-  recording: { active: boolean; run: string | null };
+  recording: { active: boolean; run: string | null; run_path?: string | null; experiments_root?: string };
   thermal: ThermalStatus;
   ramp: RampStatus;
   timer: TimerStatus;
+  /** Read-only sense-loop scope (absent on older backends). */
+  scope?: ScopeStatus;
   presets: PresetsStatus;
   pulse: PulseStatus;
   match_tuner: MatchTunerStatus;

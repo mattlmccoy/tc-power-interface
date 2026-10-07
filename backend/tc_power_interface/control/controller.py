@@ -108,6 +108,9 @@ class Controller:
         self._last_sample_monotonic: float | None = None
         self._lock = threading.Lock()  # guards published state
         self._io_lock = threading.Lock()  # serializes all transport access
+        # Last setpoint TC-POWER commanded (no device readback). Guarded by _lock;
+        # never taken while holding _io_lock.
+        self._last_setpoint_w: int | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
@@ -240,6 +243,7 @@ class Controller:
         """Emergency stop: force RF off and setpoint 0 on the device (BYPASSING the arm gate) and
         disarm. Best-effort and safe in any state (no device / disarmed / faulted) — it must never
         be blocked by a gate."""
+        zeroed = False
         with self._io_lock:
             dev = self.device
             if dev is not None:
@@ -249,8 +253,12 @@ class Controller:
                     pass
                 try:
                     dev.set_setpoint(0)
+                    zeroed = True
                 except Exception:  # noqa: BLE001
                     pass
+        if zeroed:
+            with self._lock:
+                self._last_setpoint_w = 0
         self.armed = False
 
     def detach_device(self) -> None:
@@ -270,6 +278,7 @@ class Controller:
             self.latest_telemetry = None
             self.latest_decision = None
             self.fault_reasons = ()
+            self._last_setpoint_w = None
         self._last_sample_monotonic = None
         self._reset_invalid_status()  # the next link starts with a clean glitch history
 
@@ -468,6 +477,7 @@ class Controller:
             self.latest_telemetry = None
             self.latest_decision = None
             self.fault_reasons = ()
+            self._last_setpoint_w = None
         self._last_sample_monotonic = None
         self._read_failures = 0
         self._reset_invalid_status()
@@ -503,6 +513,8 @@ class Controller:
         clamped = self.limits.clamp_setpoint(watts)
         with self._io_lock:
             self.device.set_setpoint(clamped)
+        with self._lock:
+            self._last_setpoint_w = clamped
         return clamped
 
     def set_limits(self, limits: SafetyLimits) -> None:
@@ -593,6 +605,7 @@ class Controller:
             d = self.latest_decision
             vna_active = self._vna_session_active
             vna_hb_ns = self._vna_hb_ns
+            last_sp = self._last_setpoint_w
         age_s = None if vna_hb_ns is None else (time.monotonic_ns() - vna_hb_ns) / 1e9
         return {
             "state": self.state.value,
@@ -618,6 +631,7 @@ class Controller:
                 "dc_voltage": t.dc_voltage,
                 "preset_slot": t.preset_slot,
             },
+            "last_setpoint_w": last_sp,
             "warnings": [] if d is None else list(d.warnings),
             "vna_session": {
                 "active": vna_active,

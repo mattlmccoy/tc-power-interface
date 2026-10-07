@@ -165,9 +165,9 @@ def test_records_match_readback_columns_appended_after_existing(tmp_path):
     rows = (path / "telemetry.csv").read_text().strip().splitlines()
     header = rows[0].split(",")
     assert header[: len(_LEGACY_HEADER)] == _LEGACY_HEADER  # existing order untouched
-    assert header[len(_LEGACY_HEADER):] == [
+    assert header[len(_LEGACY_HEADER):][:5] == [
         "tune_cap_percent", "load_cap_percent", "manual_mode", "dc_voltage", "preset_slot",
-    ]
+    ]  # scope_* columns follow (test_scope_columns_are_appended_...)
     data = dict(zip(header, rows[1].split(","), strict=True))
     assert data["tune_cap_percent"] == "35.6"
     assert data["load_cap_percent"] == "62.6"
@@ -187,3 +187,63 @@ def test_unknown_control_temperature_is_recorded_blank_not_zero(tmp_path):
     rows = (path / "telemetry.csv").read_text().strip().splitlines()
     data = dict(zip(rows[0].split(","), rows[1].split(","), strict=True))
     assert data["thermal_control_temp_c"] == ""
+
+
+def test_event_for_appends_only_to_the_active_run(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    assert rec.event_for(tmp_path / "nope", "x") is False  # idle
+    run = rec.start("r", {})
+    assert rec.event_for(tmp_path / "other", "x") is False  # not the active run
+    assert rec.event_for(run, "scope_clipped", {"a": 1}) is True
+    rec.stop()
+    assert rec.event_for(run, "late") is False  # stopped run: dropped, not leaked
+    events = json.loads((run / "events.json").read_text())
+    assert [e["label"] for e in events if e["label"] in ("x", "scope_clipped", "late")] == [
+        "scope_clipped"
+    ]
+
+
+SCOPE_COLS = [
+    "scope_vrms_v", "scope_b_pk_mt", "scope_f0_hz", "scope_h2_pct", "scope_h3_pct",
+    "scope_level_w", "scope_level_state", "scope_valid", "scope_flags", "scope_age_ms",
+]
+
+
+def test_scope_columns_are_appended_after_all_existing_columns(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    path = rec.start("hdr", {})
+    rec.stop()
+    header = (path / "telemetry.csv").read_text().splitlines()[0].split(",")
+    assert header[-len(SCOPE_COLS):] == SCOPE_COLS
+    assert header[-len(SCOPE_COLS) - 1] == "preset_slot"  # old layout untouched before them
+
+
+def test_records_scope_values_when_scope_block_present(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    path = rec.start("sc", {})
+    s = snap(fwd=50.0, rf=True)
+    s["scope"] = {"vrms_v": 50.15, "b_pk_mt": 12.5, "f0_hz": 1.0e6, "h2_pct": 0.4, "h3_pct": 0.2,
+                  "level_w": 50.0, "level_state": "assigned", "valid": True, "flags": "",
+                  "age_ms": 120.0}
+    rec.record(s)
+    rec.stop()
+    rows = (path / "telemetry.csv").read_text().strip().splitlines()
+    data = dict(zip(rows[0].split(","), rows[1].split(","), strict=True))
+    assert data["scope_vrms_v"] == "50.15"
+    assert data["scope_level_state"] == "assigned"
+    assert data["scope_valid"] == "True"
+    assert data["scope_age_ms"] == "120.0"
+
+
+def test_scope_columns_blank_not_zero_when_scope_absent(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    path = rec.start("nosc", {})
+    rec.record(snap(fwd=10.0))
+    s = snap(fwd=10.0)
+    s["scope"] = None
+    rec.record(s)
+    rec.stop()
+    rows = (path / "telemetry.csv").read_text().strip().splitlines()
+    for line in rows[1:]:
+        data = dict(zip(rows[0].split(","), line.split(","), strict=True))
+        assert all(data[c] == "" for c in SCOPE_COLS)

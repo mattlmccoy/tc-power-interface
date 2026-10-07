@@ -26,6 +26,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from tc_power_interface import __version__
+from tc_power_interface.api.recording_files import router as recording_files_router
+from tc_power_interface.api.scope_routes import router as scope_router
 from tc_power_interface.control.controller import Controller
 from tc_power_interface.control.match_tuner import (
     MATCH_TUNER_BOUNDS,
@@ -52,6 +54,7 @@ from tc_power_interface.integration.control_telemetry import (
 from tc_power_interface.integration.flir_link import FlirLink
 from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
 from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
+from tc_power_interface.integration.scope_hub import ScopeHub
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 
 API_VERSION = "0.1"
@@ -250,6 +253,8 @@ def create_app(
                 CxnDevice(transport), limits=active_limits, poll_interval_s=poll_interval_s
             )
         recorder = TelemetryRecorder(experiments_root)
+        scope_hub = ScopeHub(experiments_root, recorder)  # warn-only: never commands the generator
+        app.state.scope_hub = scope_hub
         flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
         # RF on/off -> FLIR: announced from BOTH the API command (immediate; catches pulses shorter
         # than one telemetry poll) and the observed telemetry edge (front panel / faults), deduped.
@@ -323,9 +328,9 @@ def create_app(
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
-        controller.add_listener(
-            lambda snap: recorder.record({**snap, "thermal": thermal.snapshot()})
-        )
+        controller.add_listener(lambda snap: recorder.record(
+            {**snap, "thermal": thermal.snapshot(), "scope": scope_hub.recording_fields()}))
+        controller.add_listener(scope_hub.on_snapshot)
         app.state.thermal = thermal  # (thermal_source was set above from the operator's saved choice)
 
         # Software power ramp (init -> target at W/s); ticks from the poll, drives the setpoint.
@@ -413,6 +418,7 @@ def create_app(
         try:
             yield
         finally:
+            app.state.scope_hub.disconnect()
             if recorder.state is RecorderState.RECORDING:
                 recorder.stop()
             controller.stop()
@@ -523,6 +529,8 @@ def create_app(
             "recording": {
                 "active": rec.state is RecorderState.RECORDING,
                 "run": app.state.current_run,
+                "run_path": None if rec.run_dir is None else str(rec.run_dir.resolve()),
+                "experiments_root": str(experiments_root.resolve()),
             },
             "thermal": {
                 **_thermal().snapshot(),
@@ -538,6 +546,7 @@ def create_app(
             "presets": _presets_payload(),
             "pulse": _pulse().snapshot(),
             "match_tuner": _match_tuner().snapshot(),
+            "scope": app.state.scope_hub.snapshot(),
             # Surface the VNA-session interlock at the top level too (mirrors `match_tuner`), so the
             # frontend banner/panel read `status.vna_session`; the same block stays in `controller`.
             "vna_session": ctrl_snap["vna_session"],
@@ -1048,6 +1057,7 @@ def create_app(
                     runs.append(
                         {
                             "run": d.name,
+                            "path": str(d.resolve()),
                             "complete": (d / "manifest.json").is_file(),
                             "size_bytes": csv_file.stat().st_size,
                         }
@@ -1105,6 +1115,9 @@ def create_app(
         rec = _recorder()
         if rec.state is RecorderState.RECORDING:
             rec.event(label, data)
+
+    app.include_router(scope_router)
+    app.include_router(recording_files_router)
 
     # --- static frontend -------------------------------------------------------------------
     dist = frontend_dist or _DEFAULT_FRONTEND_DIST

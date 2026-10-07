@@ -8,6 +8,7 @@ import type { MatchAid } from "../hooks/useMatchAid.ts";
 import { RecordingPanel } from "../components/RecordingPanel.tsx";
 import { RfPowerPanel } from "../components/RfPowerPanel.tsx";
 import { TelemetryPanel } from "../components/TelemetryPanel.tsx";
+import { SenseLoopPanel } from "../components/SenseLoopPanel.tsx";
 import { TimerPanel } from "../components/TimerPanel.tsx";
 
 export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
@@ -59,6 +60,8 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
             <GeneratorPanel t={t} limits={limits} device={device} />
 
             <HistoryPanel plot={plot} powerCeil={powerCeil} />
+
+            <SenseLoopPanel scope={op.scope} />
           </div>
 
           <div className="col">
