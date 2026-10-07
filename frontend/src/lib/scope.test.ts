@@ -43,3 +43,15 @@ test("levelRows: accumulates per level from readings, ignores invalid/unassigned
   assert.equal(rows[0].n, 2);
   assert.equal(rows[0].level_w, 50);
 });
+
+test("scopeHeadline: stale snapshot is stalled, never live values", () => {
+  const st = { status: { connected: true, error: null, rate_hz: 2.1 }, latest: base, stale: true } as unknown as ScopeStatus;
+  const h = scopeHeadline(st);
+  assert.equal(h.state, "scope: stalled — no fresh data");
+  assert.equal(h.vrms, "—");
+  assert.equal(h.b, "—");
+  assert.equal(h.f0, "—");
+  assert.equal(h.pkpk, "—");
+  assert.equal(h.h2, "—");
+  assert.equal(h.level, "—");
+});

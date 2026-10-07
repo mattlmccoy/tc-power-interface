@@ -21,6 +21,7 @@ export interface ScopeStatus {
   status: { running?: boolean; connected: boolean; error: string | null; rate_hz?: number | null };
   latest: ScopeReading | null;
   settings: Record<string, unknown>;
+  stale?: boolean;
 }
 
 const DASH = "—";
@@ -30,6 +31,9 @@ export function scopeHeadline(st: ScopeStatus | undefined) {
   if (!st || !st.status.connected || !r) {
     const why = st?.status.error ? ` · ${st.status.error}` : "";
     return { state: `scope: no data${why}`, vrms: DASH, b: DASH, f0: DASH, pkpk: DASH, h2: DASH, level: DASH };
+  }
+  if (st.stale) {
+    return { state: "scope: stalled — no fresh data", vrms: DASH, b: DASH, f0: DASH, pkpk: DASH, h2: DASH, level: DASH };
   }
   return {
     state: `scope: live${st.status.rate_hz ? ` · ${st.status.rate_hz} Hz` : ""}`,

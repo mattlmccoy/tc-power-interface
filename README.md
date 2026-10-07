@@ -32,7 +32,7 @@ implemented but **opt-in and unproven on the physical unit** — see Safety belo
 
 - Use **LAN**: on the scope, Utility → I/O → LAN, set a static IP (here 192.168.7.50). USB works only with libusb on macOS or NI-VISA / a libusb driver on Windows.
 - Set the probe ×N on the scope channel to match the PHA0150 switch (currently 500X); a mismatch raises the `attn_mismatch` flag.
-- Resource strings: `TCPIP0::192.168.7.50::INSTR` (LAN, VXI-11 via pyvisa-py), `USB0::0xF4EC::0x1011::<serial>::INSTR` (USB).
+- Resource strings: `TCPIP0::192.168.7.50::INSTR` (LAN, VXI-11 via pyvisa-py), `USB0::...::INSTR` (USB; list candidates with `pyvisa`'s `ResourceManager().list_resources()`).
 - `tools/scope/capture_replies.py` is a read-only capture of raw replies and waveforms (see its docstring).
 
 ## Scientific / engineering stance
