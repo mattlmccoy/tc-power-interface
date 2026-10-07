@@ -520,3 +520,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .setup-cmd-copy { flex: 0 0 auto; }
 .setup-card .connect-row input { flex: 1; min-width: 0; padding: 8px 10px; color: var(--fg);
   background: var(--bg-deep); border: 1px solid var(--line-control); border-radius: var(--radius); }
+
+/* Phone width (not the lab screen): the top bar wraps instead of widening the page, and page
+   content can never push the grid column wider than the viewport. */
+@media (max-width: 700px) {
+  .app { grid-template-rows: auto auto 1fr; grid-template-columns: minmax(0, 1fr); }
+  .topbar { flex-wrap: wrap; row-gap: 6px; padding-block: 6px; }
+  .topbar .spacer { display: none; }
+}
