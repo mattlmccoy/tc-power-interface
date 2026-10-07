@@ -33,8 +33,9 @@ export function LinkHeartbeat({
   // With no fresh status from the operator the GEN figures are a frozen copy: show them as unknown.
   const gen = genHealth(link, connected && app.tone === "ok");
   return (
-    <span className="hb" title={TIP} aria-label={`GEN ${gen.tone} ${gen.label}, APP ${app.tone}`}>
+    <span className="hb" title={TIP} aria-label={`GEN ${gen.tone}${gen.label ? ` ${gen.label}` : ""}, APP ${app.tone}`}>
       <Led name="GEN" health={gen} seq={link?.poll_seq ?? 0} />
+      {/* Always rendered (min-width): empty while healthy, so the bar never shifts when it fills. */}
       <span className="hb-age">{gen.label}</span>
       {/* Messages arrive at ~10 Hz, faster than the 150 ms blink: blink on every 5th (~2 Hz). */}
       <Led name="APP" health={app} seq={Math.floor(msgSeq / APP_BLINK_EVERY)} />
