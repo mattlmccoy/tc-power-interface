@@ -66,6 +66,21 @@ test("shadowAt: a replay point as the live Shadow shape; no point or no fit is n
   assert.equal(shadowAt(pt(1, { confidence: 0.2 }))!.show, false);
 });
 
+test("shadowAt: carries the honest-confidence and ceiling fields when the replay reports them", () => {
+  const sh = shadowAt(pt(5, { confidence: 0.45, confidence_fit: 0.92, drift_pct: 11.3, drifting: true, needed_w: 306, ceiling_w: 200 }))!;
+  assert.equal(sh.confidence, 0.45);
+  assert.equal(sh.confidence_fit, 0.92);
+  assert.equal(sh.drift_pct, 11.3);
+  assert.equal(sh.drifting, true);
+  assert.equal(sh.needed_w, 306);
+  assert.equal(sh.ceiling_w, 200);
+  const old = shadowAt(pt(5))!; // an older operator's replay: unknown, not invented
+  assert.equal(old.drifting, false);
+  assert.equal(old.drift_pct, null);
+  assert.equal(old.needed_w, null);
+  assert.equal(old.ceiling_w, null);
+});
+
 test("shadowKey: one key per (run, ROI, target); nothing to fetch without a ROI or a finite target", () => {
   assert.equal(shadowKey("r1", "SQ_SAMPLE", 55), "r1\u0000SQ_SAMPLE\u000055");
   assert.notEqual(shadowKey("r1", "SQ_SAMPLE", 55), shadowKey("r1", "SQ_SAMPLE", 56));

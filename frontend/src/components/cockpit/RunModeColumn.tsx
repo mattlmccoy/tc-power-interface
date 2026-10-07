@@ -8,7 +8,8 @@ import type { Operator } from "../../hooks/useOperator.ts";
 import { api, detail } from "../../lib/api.ts";
 import { f1, mmss } from "../../lib/cockpit/format.ts";
 import { ladderStep, nextPlateau, parseLadder } from "../../lib/cockpit/ladder.ts";
-import { ladderBase, requestedW } from "../../lib/cockpit/power.ts";
+import { ladderBase } from "../../lib/cockpit/power.ts";
+import { requestedW } from "../../lib/power.ts";
 import type { RunModeName } from "../../lib/cockpit/shadowText.ts";
 import type { RunMode } from "../../lib/telemetry.ts";
 

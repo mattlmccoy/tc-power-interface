@@ -51,7 +51,9 @@ export function fmtDuration(s: number | null | undefined): string {
 
 const secLabel = (s: number) => `${s.toFixed(1)} s`;
 
-/** GEN LED: is the operator still getting replies from the generator? */
+/** GEN LED: is the operator still getting replies from the generator? While healthy the label is
+ * empty: the age ticks 0.1 -> 0.6 s and resets every poll, which only distracts. It appears when
+ * the link is slow or dead (the `.hb-age` span keeps its min-width, so the top bar never moves). */
 export function genHealth(link: LinkBlock | null | undefined, connected: boolean): Health {
   if (!connected || !link) return { tone: "unknown", label: "—" };
   const age = link.last_ok_age_s;
@@ -59,7 +61,7 @@ export function genHealth(link: LinkBlock | null | undefined, connected: boolean
   const label = secLabel(age);
   if (age > GEN_SLOW_MAX_S) return { tone: "dead", label };
   if (age > GEN_OK_MAX_S || link.read_failures >= 1) return { tone: "slow", label };
-  return { tone: "ok", label };
+  return { tone: "ok", label: "" };
 }
 
 /** APP LED: is the browser still receiving updates from the operator? */

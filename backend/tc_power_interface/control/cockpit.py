@@ -1,11 +1,27 @@
 """Cockpit observer: feeds every telemetry tick to the plant estimator, the shadow loop and the core
 watch, and reports their state for /api/status and the recorder. It is handed NUMBERS, never the
 generator interface, so it cannot command power, RF or caps (D1, spec §5). Resets when a new
-recording starts."""
+recording starts.
+
+Honest confidence. The estimator's RLS confidence (``confidence_fit``) only says how well a
+first-order model fits the recent data; on a long steady hold with a slow second heat path it
+climbs to ~0.93 while K and tau keep creeping (run 20261007_165850: K 0.42 -> 0.53 C/W, tau
+176 -> 278 s over 12.8 min at 30.5 W). So the shadow block's ``confidence`` (shown, recorded as
+``shadow_conf``, and what ``show`` and the Engage gate use) is capped by how far the estimate moved
+in the last DRIFT_WINDOW_S of grid samples:
+
+    drift = max(|K_now - K_then| / K_now, |tau_now - tau_then| / tau_now)
+    confidence = min(confidence_fit, clip(1 - drift / DRIFT_FULL, 0, 1))
+
+where ``then`` is the newest valid estimate at least DRIFT_WINDOW_S old. Until such an estimate
+exists (a fit younger than 2 min, or one that went invalid and restarted) the drift is unknown and
+the confidence is capped at UNKNOWN_DRIFT_FACTOR x the fit: a new fit has not shown it is stable.
+"""
 
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Any
 
 from tc_power_interface.control.core_watch import CoreWatch
@@ -19,6 +35,52 @@ from tc_power_interface.control.shadow_loop import (
 )
 
 SHOW_CONFIDENCE = 0.3
+#: How far back the estimate is compared to judge whether it has stopped moving.
+DRIFT_WINDOW_S = 120.0
+#: Relative drift over DRIFT_WINDOW_S that drives the honest confidence to 0 (10 % -> at most 0.5).
+DRIFT_FULL = 0.20
+#: Above this relative drift the shadow block reports ``drifting``.
+DRIFTING_ABOVE = 0.05
+#: No estimate DRIFT_WINDOW_S old yet: drift unknown, confidence capped at this x the fit.
+UNKNOWN_DRIFT_FACTOR = 0.5
+
+
+class _DriftTracker:
+    """Valid (t, K, tau) estimates, one per grid sample, kept back to the newest one at least
+    DRIFT_WINDOW_S old. An invalid estimate clears it: the next valid one is a new fit."""
+
+    def __init__(self) -> None:
+        self._hist: deque[tuple[float, float, float]] = deque()
+
+    def reset(self) -> None:
+        self._hist.clear()
+
+    def add(self, t_s: float, e: PlantEstimate) -> None:
+        if e.k_c_per_w is None or e.tau_s is None:
+            self._hist.clear()
+            return
+        self._hist.append((t_s, e.k_c_per_w, e.tau_s))
+        while len(self._hist) >= 2 and self._hist[1][0] <= t_s - DRIFT_WINDOW_S:
+            self._hist.popleft()
+
+    def drift(self) -> float | None:
+        """Relative change of K or tau (the larger) over DRIFT_WINDOW_S; None if unknown."""
+        if not self._hist:
+            return None
+        t_then, k_then, tau_then = self._hist[0]
+        t_now, k_now, tau_now = self._hist[-1]
+        if t_now - t_then < DRIFT_WINDOW_S:
+            return None
+        return max(abs(k_now - k_then) / k_now, abs(tau_now - tau_then) / tau_now)
+
+
+def honest_confidence(e: PlantEstimate, drift: float | None) -> float:
+    """The fit confidence capped by the drift (see the module docstring); 0 without a valid fit."""
+    if not e.valid:
+        return 0.0
+    if drift is None:
+        return UNKNOWN_DRIFT_FACTOR * e.confidence
+    return min(e.confidence, min(1.0, max(0.0, 1.0 - drift / DRIFT_FULL)))
 
 
 def _power(telemetry: dict[str, Any]) -> float:
@@ -38,6 +100,7 @@ class CockpitObserver:
         self._est = PlantEstimator()
         self._shadow = ShadowLoop()
         self._watch = CoreWatch()
+        self._drift = _DriftTracker()
         self._run_id: str | None = None
         self._mode: str | None = None
         self._last: dict[str, Any] = {}
@@ -74,6 +137,7 @@ class CockpitObserver:
             self._est.reset()
             self._shadow.reset()
             self._watch.reset()
+            self._drift.reset()
             self._suggest = None
             self._estimate = self._est.estimate()
         if run_id is not None:
@@ -88,6 +152,8 @@ class CockpitObserver:
         self._estimate = self._est.add(t_s, power, part_temp_c, rf_on=rf_on and power_known)
         if part_temp_c is None or not math.isfinite(part_temp_c) or not power_known:
             self._suggest = None  # never leave a suggestion standing on an unknown temp / power
+        if self._est.grid_samples != before:
+            self._drift.add(t_s, self._estimate)
         if self._est.grid_samples != before and power_known:  # once per 5 s grid sample
             if run_mode.mode == "target":  # only to-temperature mode has a target to track
                 out = self._shadow.step(
@@ -108,6 +174,7 @@ class CockpitObserver:
             "power_w": power if power_known else None,
             "run_mode": run_mode.mode,
             "target_c": target_c,
+            "ceiling_w": ceiling_w,
         }
 
     def _shadow_block(self) -> dict[str, Any]:
@@ -120,6 +187,11 @@ class CockpitObserver:
                 settle = settle_time_s(plateau, temp, e.tau_s)
                 if last.get("run_mode") == "target":
                     ttt = time_to_target_s(plateau, last["target_c"], temp, e.tau_s)
+        needed = None
+        if last.get("run_mode") == "target" and e.valid and e.t_amb_c is not None and e.k_c_per_w:
+            needed = max(0.0, (last["target_c"] - e.t_amb_c) / e.k_c_per_w)
+        drift = self._drift.drift() if e.valid else None
+        conf = honest_confidence(e, drift)
         why = (
             None
             if e.valid
@@ -130,14 +202,19 @@ class CockpitObserver:
             "why": why,
             "k_c_per_w": e.k_c_per_w,
             "tau_s": e.tau_s,
-            "confidence": e.confidence,
+            "confidence": conf,
+            "confidence_fit": e.confidence,
+            "drift_pct": None if drift is None else 100.0 * drift,
+            "drifting": drift is not None and drift > DRIFTING_ABOVE,
             "t_amb_c": e.t_amb_c,
             "updates": e.updates,
             "suggest_w": self._suggest,
             "plateau_c": plateau,
             "settle_s": settle,
             "ttt_s": ttt,
-            "show": e.valid and e.confidence >= SHOW_CONFIDENCE,
+            "needed_w": needed,
+            "ceiling_w": last.get("ceiling_w"),
+            "show": e.valid and conf >= SHOW_CONFIDENCE,
         }
 
     def snapshot(self) -> dict[str, Any]:
