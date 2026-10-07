@@ -47,6 +47,8 @@ class Controller:
     ) -> None:
         self.device = device
         self.limits = limits or SafetyLimits()
+        #: Last setpoint TC-POWER sent (front-panel changes are not seen); None = unknown, not 0.
+        self.commanded_setpoint_w: int | None = None
         self.poll_interval_s = poll_interval_s
         self._clock = clock
         #: Consecutive failed telemetry reads that mean "the link is gone" (generator off / cable
@@ -231,6 +233,7 @@ class Controller:
                     pass
                 try:
                     dev.set_setpoint(0)
+                    self.commanded_setpoint_w = 0  # only once the write succeeded
                 except Exception:  # noqa: BLE001
                     pass
         self.armed = False
@@ -248,6 +251,7 @@ class Controller:
         with self._lock:
             self.device = None
             self.armed = False
+            self.commanded_setpoint_w = None  # a new device's setpoint is unknown
             self.state = ControllerState.DISCONNECTED
             self.latest_telemetry = None
             self.latest_decision = None
@@ -414,6 +418,7 @@ class Controller:
         clamped = self.limits.clamp_setpoint(watts)
         with self._io_lock:
             self.device.set_setpoint(clamped)
+            self.commanded_setpoint_w = clamped
         return clamped
 
     def set_limits(self, limits: SafetyLimits) -> None:
@@ -508,6 +513,7 @@ class Controller:
         return {
             "state": self.state.value,
             "armed": self.armed,
+            "commanded_setpoint_w": self.commanded_setpoint_w,
             "fault_reasons": list(self.fault_reasons),
             "telemetry": None
             if t is None

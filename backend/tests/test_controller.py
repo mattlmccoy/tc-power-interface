@@ -626,3 +626,62 @@ class TestCapCommandEvents:
         c.set_tune_capacity(33.0, source="operator")  # must not raise
         c._tick()
         assert c.latest_telemetry.tune_cap_percent == pytest.approx(33.0, abs=1.0)
+
+
+class TestCommandedSetpoint:
+    """The recorder needs the requested power (spec section 3.4). Front-panel changes are not seen,
+    so the field says what it is: the last setpoint TC-POWER commanded (None until one is sent)."""
+
+    def test_snapshot_reports_the_last_commanded_setpoint(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from tc_power_interface.api.app import create_app
+
+        app = create_app(backend="simulated", poll_interval_s=0.05, experiments_root=tmp_path)
+        with TestClient(app) as c:
+            ctrl = c.app.state.controller
+            assert ctrl.snapshot()["commanded_setpoint_w"] is None  # unknown, not 0
+            c.post("/api/arm")
+            c.post("/api/setpoint", json={"watts": 42})
+            assert ctrl.snapshot()["commanded_setpoint_w"] == 42
+            c.post("/api/estop")
+            assert ctrl.snapshot()["commanded_setpoint_w"] == 0
+
+    def test_snapshot_reports_the_clamped_value(self):
+        c = make_controller(max_forward_w=50)
+        c.connect()
+        c.arm()
+        applied = c.set_setpoint(500)
+        assert applied < 500
+        assert c.snapshot()["commanded_setpoint_w"] == applied
+
+    def test_refused_setpoint_leaves_it_unchanged(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c.disarm()
+        with pytest.raises(RuntimeError):
+            c.set_setpoint(60)
+        assert c.snapshot()["commanded_setpoint_w"] == 30
+
+    def test_failed_estop_write_does_not_claim_zero(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+
+        def boom(_w: int) -> None:
+            raise RuntimeError("link down")
+
+        c.device.set_setpoint = boom  # type: ignore[method-assign]
+        c.estop()  # best-effort: must not raise
+        assert c.snapshot()["commanded_setpoint_w"] == 30
+
+    def test_detach_forgets_it(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c.detach_device()
+        assert c.snapshot()["commanded_setpoint_w"] is None
