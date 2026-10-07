@@ -19,12 +19,19 @@ export function gridOffsets(span: number, fine: number, step: number): number[] 
   return [...out].sort((x, y) => x - y);
 }
 
-/** Quick grid levels: ends, halves and centre of ±span (5 levels → a 5×5 grid, ~1 min). Sparse grids
- *  held up on the real 15-point captures (a 3×3 subset predicted the skipped points within ~1 Ohm); the
- *  fit's held-out error, shown after every capture, says whether a quick grid was enough. */
+/** Quick grid levels: ends, halves and centre of ±span (5 levels). Used for LOAD (broad, ~4.5 Ohm per %).
+ *  For Tune it was too coarse: 3 % steps gave an 8.3 Ohm held-out map on 2026-10-06 (see quickTuneOffsets).
+ *  The held-out error shown after every capture says whether a quick grid was enough. */
 export function quickOffsets(span: number): number[] {
   const h = Math.round(span / 2);
   return [...new Set([-span, -h, 0, h, span])].sort((x, y) => x - y);
+}
+
+/** Quick grid Tune levels: 1 % steps next to the match plus halves and ends. Tune moves Z ~17 Ohm per %
+ *  on 218-2core, and a Quick map with 3 % Tune steps fitted with 8.3 Ohm held-out error (2026-10-06)
+ *  against 1-2.3 Ohm for 1 %-step grids. 7 levels × 5 Load levels = 35 points. */
+export function quickTuneOffsets(span: number): number[] {
+  return [...new Set([...quickOffsets(span), ...(span >= 1 ? [-1, 1] : [])])].sort((x, y) => x - y);
 }
 
 /** Default capture grid: wide and SYMMETRIC. The network is still being changed between runs, so the

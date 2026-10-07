@@ -73,3 +73,13 @@ test("quickOffsets: 5 levels across ±span (ends, halves, centre) — a 5×5 qui
   assert.equal(records(steps).length, 5 * 5 + 1);
   assertApproachFromBelow(steps);
 });
+
+test("quickTuneOffsets: 1 % Tune steps next to the match plus halves and ends (Tune moves Z ~17 Ohm per %)", async () => {
+  const { quickTuneOffsets, quickOffsets } = await import("./plan.ts");
+  // 2026-10-06: a Quick map with 3 % Tune steps fitted with 8.3 Ohm held-out error vs 1-2.3 Ohm for 1 % grids
+  assert.deepEqual(quickTuneOffsets(6), [-6, -3, -1, 0, 1, 3, 6]);
+  assert.deepEqual(quickTuneOffsets(1), [-1, 0, 1]);
+  const steps = capturePlan(24, 17, quickTuneOffsets(6), quickOffsets(6));
+  assert.equal(records(steps).length, 7 * 5 + 1); // 35 points + repeat
+  assertApproachFromBelow(steps);
+});

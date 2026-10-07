@@ -5,7 +5,7 @@
 
 import { useEffect, useRef } from "react";
 import { predictGammaMag } from "../lib/matchmap/fit.ts";
-import { CELL, type LocateResult } from "../lib/matchmap/locate.ts";
+import { CELL, showCandidates, type LocateResult } from "../lib/matchmap/locate.ts";
 import type { LoadedMap } from "../lib/matchmap/store.ts";
 import type { Reading } from "../lib/matchmap/track.ts";
 
@@ -49,10 +49,21 @@ export function MatchMapPlot({ map, result, readings, current }: {
       const band = rl >= 20 ? [c.live, 0.45] : rl >= 15 ? [c.live, 0.2] : rl >= 10 ? [c.warn, 0.16] : null;
       const cell = result.cells[i * load.length + j];
       if (band) { ctx.globalAlpha = band[1] as number; ctx.fillStyle = band[0] as string; ctx.fillRect(x(t) - cw / 2, y(l) - ch / 2, cw + 0.5, ch + 0.5); }
-      if (readings.length && cell === CELL.consistent) { ctx.globalAlpha = 0.45; ctx.fillStyle = c.fg; ctx.fillRect(x(t) - cw / 2, y(l) - ch / 2, cw + 0.5, ch + 0.5); }
-      if (readings.length && cell === CELL.outside) { ctx.globalAlpha = 0.12; ctx.fillStyle = c.muted; ctx.fillRect(x(t) - cw / 2, y(l) - ch / 2, cw + 0.5, ch + 0.5); }
+      if (showCandidates(result) && cell === CELL.outside) { ctx.globalAlpha = 0.12; ctx.fillStyle = c.muted; ctx.fillRect(x(t) - cw / 2, y(l) - ch / 2, cw + 0.5, ch + 0.5); }
     }));
     ctx.globalAlpha = 1;
+
+    // Possible match positions: an OUTLINE (cells on the edge of the consistent set), only while searching.
+    // Filled, it looked like more map — and it is the map turned 180° about the halfway point (2026-10-06).
+    if (showCandidates(result)) {
+      const nL = load.length, at = (i: number, j: number) => result.cells[i * nL + j] === CELL.consistent;
+      ctx.fillStyle = c.fg;
+      tune.forEach((t, i) => load.forEach((l, j) => {
+        if (!at(i, j)) return;
+        const edge = i === 0 || j === 0 || i === tune.length - 1 || j === nL - 1 || !at(i - 1, j) || !at(i + 1, j) || !at(i, j - 1) || !at(i, j + 1);
+        if (edge) ctx.fillRect(x(t) - cw / 2, y(l) - ch / 2, cw + 0.5, ch + 0.5);
+      }));
+    }
 
     // axes: whole-percent ticks
     ctx.strokeStyle = c.line; ctx.fillStyle = c.muted; ctx.font = "10px ui-monospace, monospace"; ctx.lineWidth = 1;

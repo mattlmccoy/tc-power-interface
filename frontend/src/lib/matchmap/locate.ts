@@ -134,3 +134,9 @@ export function guide(res: LocateResult, P: { tune: number; load: number }): { t
   };
   return { tune: one("tune"), load: one("load") };
 }
+
+/** Draw the possible-match area only when it carries information: there are readings, they fit the
+ *  map, and the operator is not already on the match (then the area is just the map turned 180°). */
+export function showCandidates(res: LocateResult): boolean {
+  return res.status === "ring" || res.status === "spot";
+}

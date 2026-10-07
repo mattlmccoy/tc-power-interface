@@ -192,3 +192,16 @@ export function solveMatch(fit: MapFit): { tune: number; load: number; gamma: nu
   }
   return best;
 }
+
+/** Held-out error (Ohm) above which a map is called rough. Real maps on 218-2core fitted 1.1-2.3 Ohm. */
+export const ROUGH_MAP_OHM = 3;
+
+/** Is this map good enough to lean on? Uses the held-out error, or the fit's own error when a
+ *  held-out figure couldn't be computed. */
+export function fitQuality(f: MapFit): { rough: boolean; text: string } {
+  const e = f.looRmsOhm ?? f.rmsOhm;
+  const what = f.looRmsOhm != null ? "held-out error" : "fit error";
+  return e > ROUGH_MAP_OHM
+    ? { rough: true, text: `Map is rough (${what} ${e.toFixed(1)} Ω, good maps are under ${ROUGH_MAP_OHM} Ω) — capture again with Full.` }
+    : { rough: false, text: `Map fits well (${what} ${e.toFixed(1)} Ω).` };
+}
