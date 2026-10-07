@@ -8,7 +8,7 @@ import type { Operator } from "../../hooks/useOperator.ts";
 import { api, detail } from "../../lib/api.ts";
 import { engageAllowed, loopGates } from "../../lib/cockpit/gates.ts";
 import { matchStatus } from "../../lib/cockpit/live.ts";
-import { requestedW } from "../../lib/cockpit/power.ts";
+import { requestedW } from "../../lib/power.ts";
 import { DialNote } from "./DialNote.tsx";
 import { PowerDials } from "./PowerDials.tsx";
 import { SetpointEntry } from "./SetpointEntry.tsx";

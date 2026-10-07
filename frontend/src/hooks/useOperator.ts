@@ -11,7 +11,7 @@ import type { FlirLink, Health, SerialPort } from "../lib/api.ts";
 import { reflectedZone } from "../lib/format.ts";
 import { approachFromBelow, capPercentForVolts, capSettled, clampCap, LOAD_CAL, stepSetpoint, TUNE_CAL } from "../lib/instrument.ts";
 import { checkHandshake, UI_API_VERSION, wsUrl } from "../lib/operator.ts";
-import { requestedFromStatus } from "../lib/power.ts";
+import { requestedW } from "../lib/power.ts";
 import {
   LIMITS_KEY,
   loadSettings,
@@ -486,7 +486,7 @@ export function useOperator() {
   const fwdDanger = limits?.forward_danger_w ?? null;
   // Requested = what was last WRITTEN to the generator (controller snapshot), not the setpoint box,
   // which is only the entry control and may hold an unapplied number. null = unknown (shows "—").
-  const requested = requestedFromStatus(status);
+  const requested = requestedW(ctrl);
 
   async function rfOn() {
     if (!window.confirm("Enable RF output now? The generator will begin delivering power.")) return;
