@@ -6,10 +6,45 @@
 export const DEFAULT_SITE_BASE = "http://localhost:8010";
 const KEY = "tcp.operator.v1";
 
-/** This UI build's version, and the operator API version it speaks (major.minor). The operator
- *  reports its own at /api/health; checkHandshake compares them (mirrors the FLIR tool). */
-export const UI_VERSION = "0.2.0";
+/** The operator API version this UI speaks (major.minor). The operator reports its own at
+ *  /api/health; checkHandshake compares them (mirrors the FLIR tool). The UI's release version is
+ *  APP_VERSION (version.ts, from package.json). */
 export const UI_API_VERSION = "0.1";
+
+export interface VersionFooterHealth {
+  version: string;
+  app_version?: string | null;
+  running_app_version?: string | null;
+  api_version?: string;
+}
+
+/** Connection-popover footer: UI release, operator release (flagging a pending restart when the
+ *  release on disk is newer than the running process), and the API versions. */
+export function versionFooter(a: {
+  uiVersion: string;
+  health: VersionFooterHealth | null;
+  reachable: boolean;
+  uiApiVersion: string;
+}): string {
+  const { health } = a;
+  const parts = [`UI v${a.uiVersion}`];
+  if (health) {
+    const disk = health.app_version || null;
+    const running = health.running_app_version || null;
+    if (disk || running) {
+      const shown = running ?? disk;
+      let op = `operator v${shown}`;
+      if (running && disk && running !== disk) op += ` · restart pending → v${disk}`;
+      parts.push(op);
+    } else {
+      parts.push(`operator ${health.version}`);
+    }
+  } else if (!a.reachable) {
+    parts.push("operator offline");
+  }
+  parts.push(`API ${a.uiApiVersion}${health?.api_version ? `/${health.api_version}` : ""}`);
+  return parts.join(" · ");
+}
 
 export type Handshake = { level: "ok" } | { level: "warn" | "refuse"; message: string };
 

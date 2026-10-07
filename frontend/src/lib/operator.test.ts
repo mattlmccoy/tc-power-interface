@@ -8,6 +8,7 @@ import {
   loadOperatorBase,
   normalizeBase,
   UI_API_VERSION,
+  versionFooter,
   wsUrl,
 } from "./operator.ts";
 
@@ -50,4 +51,34 @@ test("checkHandshake: same ok, minor warns, major refuses, missing refuses", () 
   assert.equal(checkHandshake("0.1", undefined).level, "refuse");
   // the UI speaks a real API version
   assert.deepEqual(checkHandshake(UI_API_VERSION, UI_API_VERSION), { level: "ok" });
+});
+
+const ui = { uiVersion: "0.17.5", uiApiVersion: "0.1" };
+
+test("versionFooter: normal", () => {
+  const health = { version: "0.2.0", app_version: "0.17.5", running_app_version: "0.17.5", api_version: "0.1" };
+  assert.equal(versionFooter({ ...ui, health, reachable: true }), "UI v0.17.5 · operator v0.17.5 · API 0.1/0.1");
+});
+
+test("versionFooter: running older than on disk shows restart pending", () => {
+  const health = { version: "0.2.0", app_version: "0.17.5", running_app_version: "0.17.3", api_version: "0.1" };
+  assert.equal(
+    versionFooter({ ...ui, health, reachable: true }),
+    "UI v0.17.5 · operator v0.17.3 · restart pending → v0.17.5 · API 0.1/0.1",
+  );
+});
+
+test("versionFooter: older backend without app_version falls back to health.version", () => {
+  const health = { version: "0.2.0", api_version: "0.1" };
+  assert.equal(versionFooter({ ...ui, health, reachable: true }), "UI v0.17.5 · operator 0.2.0 · API 0.1/0.1");
+});
+
+test("versionFooter: no running_app_version uses app_version", () => {
+  const health = { version: "0.2.0", app_version: "0.17.4", api_version: "0.1" };
+  assert.equal(versionFooter({ ...ui, health, reachable: true }), "UI v0.17.5 · operator v0.17.4 · API 0.1/0.1");
+});
+
+test("versionFooter: no health", () => {
+  assert.equal(versionFooter({ ...ui, health: null, reachable: false }), "UI v0.17.5 · operator offline · API 0.1");
+  assert.equal(versionFooter({ ...ui, health: null, reachable: true }), "UI v0.17.5 · API 0.1");
 });
