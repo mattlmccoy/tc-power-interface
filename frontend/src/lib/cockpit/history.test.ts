@@ -41,3 +41,21 @@ test("does not mutate the input buffer", () => {
   assert.equal(b2.length, 2);
   assert.notEqual(b, b2);
 });
+
+test("starting a recording (null -> r1) keeps the pre-recording timeline", () => {
+  let b: CockpitSample[] = [];
+  for (const [ns, run] of [[1, null], [2, null], [3, "r1"]] as const) b = appendSample(b, s(ns, run), 10);
+  assert.deepEqual(b.map((x) => x.ns), [1, 2, 3]);
+});
+
+test("only a switch between two DIFFERENT runs resets; r1 -> null -> r1 keeps, r1 -> null -> r2 resets", () => {
+  let b: CockpitSample[] = [];
+  for (const [ns, run] of [[1, "r1"], [2, "r2"]] as const) b = appendSample(b, s(ns, run), 10);
+  assert.deepEqual(b.map((x) => x.ns), [2]);
+  let k: CockpitSample[] = [];
+  for (const [ns, run] of [[1, "r1"], [2, null], [3, "r1"]] as const) k = appendSample(k, s(ns, run), 10);
+  assert.deepEqual(k.map((x) => x.ns), [1, 2, 3]);
+  let r: CockpitSample[] = [];
+  for (const [ns, run] of [[1, "r1"], [2, null], [3, "r2"]] as const) r = appendSample(r, s(ns, run), 10);
+  assert.deepEqual(r.map((x) => x.ns), [3]);
+});
