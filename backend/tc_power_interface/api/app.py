@@ -236,11 +236,11 @@ def create_app(
 ) -> FastAPI:
     """Build the FastAPI app. The controller/device start in the lifespan."""
     experiments_root = Path(experiments_root or (Path.cwd() / "experiments"))
-    # The frontend release version this operator was deployed with (package.json sits next to dist),
-    # read once at startup and reported as health.app_version for the update-available banner.
-    app_version = _read_frontend_version(
-        (frontend_dist or _DEFAULT_FRONTEND_DIST).parent / "package.json"
-    )
+    # The frontend release version (package.json sits next to dist). running_app_version is read
+    # once at startup (what this process started with); health.app_version re-reads it per request
+    # (the release currently on disk, so a pull + rebuild without restart is reflected).
+    package_json = (frontend_dist or _DEFAULT_FRONTEND_DIST).parent / "package.json"
+    running_app_version = _read_frontend_version(package_json)
     # Explicit `limits` (tests) win; otherwise load the persisted, hard-bounded limits.
     active_limits = limits if limits is not None else load_limits(experiments_root)
 
@@ -537,7 +537,9 @@ def create_app(
     def health() -> dict[str, Any]:
         return {
             "version": __version__,
-            "app_version": app_version,  # frontend release version -> update banner
+            # release on disk now (falls back to the startup value if unreadable) -> update banner
+            "app_version": _read_frontend_version(package_json) or running_app_version,
+            "running_app_version": running_app_version,  # release this process started with
             "api_version": API_VERSION,
             "backend": app.state.backend,
             "platform": platform.platform(),
