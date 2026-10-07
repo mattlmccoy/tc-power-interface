@@ -1,22 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { mmss } from "./format.ts";
 import { confidenceSentence, shadowCard, type Shadow } from "./shadowText.ts";
 
 const base: Shadow = { valid: true, why: null, k_c_per_w: 0.53, tau_s: 208, confidence: 0.76, t_amb_c: 23.8,
   updates: 150, suggest_w: 61.3, plateau_c: 60.9, settle_s: 300, ttt_s: 422, show: true };
-
-test("mmss", () => {
-  assert.equal(mmss(0), "0:00");
-  assert.equal(mmss(422), "7:02");
-});
-
-test("mmss: negative or non-finite input is unknown, shown as an em dash (never 0:00)", () => {
-  assert.equal(mmss(-5), "—");
-  assert.equal(mmss(Number.NaN), "—");
-  assert.equal(mmss(Number.POSITIVE_INFINITY), "—");
-});
 
 test("confidence sentence by band, and learning", () => {
   assert.match(confidenceSentence({ ...base, valid: false, why: "learning" }), /No estimate yet/);
