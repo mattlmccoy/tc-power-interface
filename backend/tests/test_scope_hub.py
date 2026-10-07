@@ -286,3 +286,16 @@ def test_recording_fields_fresh_and_stale(tmp_path, monkeypatch):
     time.sleep(0.5)  # link still "connected" but stalled
     assert hub.recording_fields() is None
     hub.disconnect()
+
+
+def test_connect_is_idempotent_with_same_settings(tmp_path, monkeypatch):
+    scopes = [FakeScope(), FakeScope()]
+    hub, _ = _live_hub(tmp_path, monkeypatch, scopes)
+    hub.connect()
+    assert _wait(lambda: hub.snapshot()["latest"] is not None)
+    first = hub.link._thread
+    hub.connect()  # double-click: must not restart the poller or drop the live reading
+    assert hub.link._thread is first
+    assert hub.snapshot()["latest"] is not None
+    assert len(scopes) == 1  # only one opener call consumed
+    hub.disconnect()

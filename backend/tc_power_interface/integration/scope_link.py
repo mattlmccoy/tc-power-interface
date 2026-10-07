@@ -111,6 +111,10 @@ class ScopeLink:
         # Held across "am I current? -> callback", and by stop() while it sets the event, so once
         # stop() returns no reading from that generation can still reach on_reading.
         self._publish = threading.Lock()
+        # Serializes start()/stop() so concurrent callers (a double-click on Connect) never join a
+        # thread another caller has not started yet. Re-entrant: start() calls stop().
+        self._lifecycle = threading.RLock()
+        self._settings: ScopeSettings | None = None
         self._status: dict[str, Any] = {"running": False, "connected": False, "error": None,
                                         "last_ns": None, "rate_hz": None,
                                         "callback_error": None}
@@ -131,26 +135,42 @@ class ScopeLink:
             self._status.update(kw)
             return True
 
-    def start(self, settings: ScopeSettings) -> None:
-        self.stop()
-        stop = threading.Event()
-        with self._lock:
-            self._stop = stop
-            self._status.update(running=True, error=None, callback_error=None)
-        self._thread = threading.Thread(
-            target=self._run, args=(settings, stop), name="tcp-scope", daemon=True
+    def is_running_with(self, settings: ScopeSettings) -> bool:
+        """True if a poller is running for the same resource, channel and poll interval."""
+        with self._lifecycle:
+            cur = self._settings
+            running = self._thread is not None and not self._stop.is_set()
+        return running and cur is not None and (
+            (cur.resource, cur.channel, cur.poll_interval_s)
+            == (settings.resource, settings.channel, settings.poll_interval_s)
         )
-        self._thread.start()
+
+    def start(self, settings: ScopeSettings) -> None:
+        with self._lifecycle:
+            self.stop()
+            stop = threading.Event()
+            with self._lock:
+                self._stop = stop
+                self._status.update(running=True, error=None, callback_error=None)
+            self._settings = settings
+            self._thread = threading.Thread(
+                target=self._run, args=(settings, stop), name="tcp-scope", daemon=True
+            )
+            self._thread.start()
 
     def stop(self) -> None:
-        with self._publish, self._lock:
-            self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=self._join_timeout_s)
-            if self._thread.is_alive():
-                logger.warning("scope poll thread still blocked after stop(); it exits on its own")
-            self._thread = None
-        self._set(running=False, connected=False)
+        with self._lifecycle:
+            with self._publish, self._lock:
+                self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=self._join_timeout_s)
+                if self._thread.is_alive():
+                    logger.warning(
+                        "scope poll thread still blocked after stop(); it exits on its own"
+                    )
+                self._thread = None
+            self._settings = None
+            self._set(running=False, connected=False)
 
     def _deliver(self, stop: threading.Event, r: Reading) -> None:
         """Hand a reading to the consumer. A consumer failure (disk full, a bug) is NOT a scope

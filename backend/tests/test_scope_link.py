@@ -146,3 +146,31 @@ def test_save_settings_is_atomic_and_load_survives_unreadable_file(tmp_path):
     bad = tmp_path / "unreadable"
     (bad / "scope_settings.json").mkdir(parents=True)  # read -> IsADirectoryError (OSError)
     assert load_settings(bad) == ScopeSettings()
+
+
+def test_concurrent_start_stop_never_raises_and_leaves_one_poller():
+    link = ScopeLink(opener=lambda _r: FakeScope(), on_reading=lambda _r: None, backoff_s=0.01)
+    s = ScopeSettings(resource="USB0::fake", poll_interval_s=0.01)
+    errors: list[BaseException] = []
+
+    def hammer() -> None:
+        for _ in range(30):
+            try:
+                link.start(s)
+                link.stop()
+                link.start(s)
+            except BaseException as exc:  # noqa: BLE001 - the test records any failure
+                errors.append(exc)
+
+    threads = [threading.Thread(target=hammer) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    try:
+        assert errors == []
+        pollers = [t for t in threading.enumerate() if t.name == "tcp-scope" and t.is_alive()]
+        assert len(pollers) == 1
+    finally:
+        link.stop()
+    assert not [t for t in threading.enumerate() if t.name == "tcp-scope" and t.is_alive()]

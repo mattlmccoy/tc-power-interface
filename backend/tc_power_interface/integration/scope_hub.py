@@ -92,6 +92,8 @@ class ScopeHub:
     def connect(self) -> None:
         if not self.settings.resource:
             raise ValueError("set a VISA resource first")
+        if self.link.is_running_with(self.settings):
+            return  # already polling this resource/channel/rate: keep the live session
         self.link.stop()
         self._clear_latest()  # a new session never shows the previous session's reading
         self.link.start(self.settings)
