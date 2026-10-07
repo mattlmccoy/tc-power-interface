@@ -74,7 +74,8 @@ into a level.
   reverse_w, tune_cap_percent, load_cap_percent, vrms_v, f0_hz, resid_v, vmin_v, vmax_v, h2_pct, h3_pct,
   b_pk_mt, attn, vdiv, ofst, sara, clipped, valid, flags`.
 - `scope_levels.csv` — written at finalize: per level, n valid, median Vrms, IQR, median f0, H2/H3,
-  V/√W, B_pk mT. Plus one session fit of mT/√W using levels ≥ 10 W only (meter ±20 % below ~10 W).
+  V/√W, B_pk mT.
+- `scope_session.json` — session fit of mT/√W using levels ≥ 10 W only (meter ±20 % below ~10 W).
 - `scope_waveforms/<level>W.csv` — first valid settled capture per level, in the scope's own CSV
   layout (so existing scripts read it unchanged).
 - Manifest lists these files with hashes, as for `telemetry.csv`.
