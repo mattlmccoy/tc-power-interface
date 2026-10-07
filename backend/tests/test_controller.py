@@ -686,6 +686,98 @@ class TestCapCommandEvents:
         assert c.latest_telemetry.tune_cap_percent == pytest.approx(33.0, abs=1.0)
 
 
+class TestCommandedSetpoint:
+    """The recorder needs the requested power (spec section 3.4). Front-panel changes are not seen,
+    so the field says what it is: the last setpoint TC-POWER commanded (None until one is sent)."""
+
+    def test_snapshot_reports_the_last_commanded_setpoint(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from tc_power_interface.api.app import create_app
+
+        app = create_app(backend="simulated", poll_interval_s=0.05, experiments_root=tmp_path)
+        with TestClient(app) as c:
+            ctrl = c.app.state.controller
+            assert ctrl.snapshot()["commanded_setpoint_w"] is None  # unknown, not 0
+            assert c.post("/api/arm").status_code == 200
+            c.post("/api/setpoint", json={"watts": 42})
+            assert ctrl.snapshot()["commanded_setpoint_w"] == 42
+            c.post("/api/estop")
+            assert ctrl.snapshot()["commanded_setpoint_w"] == 0
+
+    def test_snapshot_reports_the_clamped_value(self):
+        c = make_controller(max_forward_w=50)
+        c.connect()
+        c.arm()
+        applied = c.set_setpoint(500)
+        assert applied < 500
+        assert c.snapshot()["commanded_setpoint_w"] == applied
+
+    def test_refused_setpoint_leaves_it_unchanged(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c.disarm()
+        with pytest.raises(RuntimeError):
+            c.set_setpoint(60)
+        assert c.snapshot()["commanded_setpoint_w"] == 30
+
+    def test_failed_estop_write_does_not_claim_zero(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+
+        def boom(_w: int) -> None:
+            raise RuntimeError("link down")
+
+        c.device.set_setpoint = boom  # type: ignore[method-assign]
+        c.estop()  # best-effort: must not raise
+        assert c.snapshot()["commanded_setpoint_w"] == 30
+
+    def test_detach_forgets_it(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c.detach_device()
+        assert c.snapshot()["commanded_setpoint_w"] is None
+
+    def test_link_loss_forgets_it(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c._drop_link()
+        assert c.snapshot()["commanded_setpoint_w"] is None
+
+    def test_any_new_device_starts_unknown(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c._drop_link()
+        c._last_setpoint_w = 30  # stale value left by any path that skipped the reset
+        c.attach_device(CxnDevice(SimulatedCxnTransport()))
+        try:
+            assert c.snapshot()["commanded_setpoint_w"] is None
+        finally:
+            c.detach_device()
+
+    def test_both_snapshot_keys_report_the_same_value(self):
+        # Merge of main's scope `last_setpoint_w` with the cockpit's `commanded_setpoint_w`: one
+        # underlying value, two consumer-facing names; they must never disagree.
+        c = make_controller()
+        c.connect()
+        assert c.snapshot()["last_setpoint_w"] is c.snapshot()["commanded_setpoint_w"] is None
+        c.arm()
+        c.set_setpoint(30)
+        snap = c.snapshot()
+        assert snap["last_setpoint_w"] == snap["commanded_setpoint_w"] == 30
+        c.estop()
+        snap = c.snapshot()
+        assert snap["last_setpoint_w"] == snap["commanded_setpoint_w"] == 0
 class _ScriptedDevice:
     """Fake generator that plays a script of reads: each entry is a Telemetry (good read) or an
     Exception instance (raised). Models the 2026-10-07 incident: one checksum-valid GS frame whose
@@ -1016,3 +1108,27 @@ class TestInvalidStatusWordEndToEnd:
         assert transport.rf_on is True  # protection did not need to drop RF
         c._tick()
         assert c.state is ControllerState.CONNECTED
+
+
+class TestPolling:
+    """``polling``: is the generator poll loop live? The app's idle observer stays silent exactly
+    while it is (a slow ~1 s real read leaves long gaps between ticks; the loop is still live)."""
+
+    def test_polling_tracks_start_detach_and_link_drop(self):
+        c = make_controller()
+        assert c.polling is False  # never started (e.g. a boot whose connect failed)
+        c.start()
+        assert c.polling is True
+        c.detach_device()
+        assert c.polling is False
+        dev = _FlakyDevice(rf_on=False)
+        c2 = Controller(dev, poll_interval_s=0.01, link_loss_reads=1)
+        c2.connect()
+        c2._start_polling()
+        assert c2.polling is True
+        dev.fail = True
+        deadline = time.monotonic() + 1.0
+        while c2.polling and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert c2.polling is False  # an idle link drop ends polling (no device any more)
+        c2.stop()

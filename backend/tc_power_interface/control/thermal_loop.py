@@ -158,6 +158,13 @@ class ThermalController:
         self.recommended_w = 0.0
         self.applied_w = None
 
+    def observe(self, dt_s: float) -> None:
+        """The stopped-loop read, callable when no generator is polling (the operator's idle
+        observer). Reads the temperature only; never computes or commands power, even if called
+        while the loop is running — in which case it also clears that loop's recommended_w (to 0)
+        and applied_w (to None): with no generator the loop has nothing to recommend or apply."""
+        self._observe(dt_s)
+
     def _backend(self) -> str:
         return str(getattr(self.controller, "backend", "simulated"))
 

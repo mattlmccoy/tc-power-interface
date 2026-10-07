@@ -81,7 +81,7 @@ def test_control_roi_is_selectable_from_the_live_roster(tmp_path, monkeypatch):
         poster._post = lambda url, body, timeout: posted.append(body)
         poster.enabled = True
         poster.url = "http://127.0.0.1:8000"
-        c.post("/api/thermal/start", json={"mode": "auto"})
+        c.post("/api/thermal/start", json={"mode": "advisory"})  # auto is locked (D12)
         c.app.state.controller._tick()
         poster.join()
         assert posted[-1]["roi"] == "part_center"
@@ -103,7 +103,7 @@ def test_running_thermal_loop_posts_control_telemetry(tmp_path):
         poster.enabled = True
         poster.url = "http://127.0.0.1:8000"
         c.post("/api/thermal/roi", json={"name": "freehand_sample"})  # the operator's choice
-        c.post("/api/thermal/start", json={"mode": "auto"})
+        c.post("/api/thermal/start", json={"mode": "advisory"})  # auto is locked (D12)
         c.app.state.controller._tick()  # one poll -> thermal tick -> control-telemetry POST
         poster.join()
         assert posted, "a running thermal loop should POST control telemetry each tick"
@@ -157,7 +157,7 @@ def test_no_control_telemetry_when_link_disabled(tmp_path):
         poster = c.app.state.control_telemetry
         poster._post = lambda url, body, timeout: posted.append(body)
         poster.enabled = False  # link off -> no outbound POSTs
-        c.post("/api/thermal/start", json={"mode": "auto"})
+        c.post("/api/thermal/start", json={"mode": "advisory"})  # auto is locked (D12)
         c.app.state.controller._tick()
         poster.join()
         assert posted == []

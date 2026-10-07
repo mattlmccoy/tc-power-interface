@@ -111,8 +111,10 @@ class Controller:
         self._poll_seq = 0
         self._lock = threading.Lock()  # guards published state
         self._io_lock = threading.Lock()  # serializes all transport access
-        # Last setpoint TC-POWER commanded (no device readback). Guarded by _lock;
-        # never taken while holding _io_lock.
+        # Last setpoint TC-POWER commanded (no device readback; front-panel changes are not seen);
+        # None = unknown, not 0. Guarded by _lock; never taken while holding _io_lock. Published in
+        # the snapshot as BOTH `last_setpoint_w` (scope level tracker, dashboard summaries) and
+        # `commanded_setpoint_w` (recorder setpoint_w column, cockpit power dial): one value.
         self._last_setpoint_w: int | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -183,6 +185,22 @@ class Controller:
         )
         self._thread.start()
 
+    @property
+    def polling(self) -> bool:
+        """True while the CURRENT generator poll loop is live (started, not told to stop).
+
+        Per-thread model: ``_thread`` is the current poll thread and ``_stop`` is that thread's own
+        event (both replaced together by :meth:`_start_polling`). False after detach / ``stop()``
+        (``_stop_polling`` sets the event and clears ``_thread``, even when the join times out on a
+        stalled thread, which then exits on its own set event) and after ``_drop_link`` (sets the
+        current thread's event before the thread exits). True across slow reads and FAULT with RF
+        on, which keep the loop running. The only mismatched pair is the instant inside
+        ``_start_polling`` between assigning ``_stop`` and ``_thread``, where a new loop is about to
+        run anyway."""
+        t = self._thread
+        stop = self._stop
+        return t is not None and t.is_alive() and not stop.is_set()
+
     def _stop_polling(self) -> None:
         self._stop.set()
         if self._thread is not None:
@@ -222,6 +240,7 @@ class Controller:
         with self._lock:
             self.device = device
             self._link_gen += 1
+            self._last_setpoint_w = None  # any new device starts unknown
         try:
             self.connect()  # request control + force MANUAL (never ATUNE) -> CONNECTED
         except Exception:
@@ -273,7 +292,7 @@ class Controller:
                     pass
                 try:
                     dev.set_setpoint(0)
-                    zeroed = True
+                    zeroed = True  # recorded as 0 only once the write succeeded
                 except Exception:  # noqa: BLE001
                     pass
         if zeroed:
@@ -646,6 +665,7 @@ class Controller:
         return {
             "state": self.state.value,
             "armed": self.armed,
+            "commanded_setpoint_w": last_sp,
             "fault_reasons": list(self.fault_reasons),
             "invalid_status_reads_recent": self._invalid_recent,
             "telemetry": None

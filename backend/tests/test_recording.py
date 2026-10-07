@@ -3,6 +3,9 @@
 import json
 import threading
 import time
+from pathlib import Path
+
+import pytest
 
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 
@@ -165,7 +168,9 @@ def test_records_match_readback_columns_appended_after_existing(tmp_path):
     rows = (path / "telemetry.csv").read_text().strip().splitlines()
     header = rows[0].split(",")
     assert header[: len(_LEGACY_HEADER)] == _LEGACY_HEADER  # existing order untouched
-    assert header[len(_LEGACY_HEADER):][:5] == [
+    # match readback follows the legacy block; scope_* then cockpit columns are appended after it
+    n = len(_LEGACY_HEADER)
+    assert header[n : n + 5] == [
         "tune_cap_percent", "load_cap_percent", "manual_mode", "dc_voltage", "preset_slot",
     ]  # scope_* columns follow (test_scope_columns_are_appended_...)
     data = dict(zip(header, rows[1].split(","), strict=True))
@@ -217,8 +222,8 @@ def test_scope_columns_are_appended_after_all_existing_columns(tmp_path):
     path = rec.start("hdr", {})
     rec.stop()
     header = (path / "telemetry.csv").read_text().splitlines()[0].split(",")
-    assert header[-len(SCOPE_COLS):] == SCOPE_COLS
-    assert header[-len(SCOPE_COLS) - 1] == "preset_slot"  # old layout untouched before them
+    k = header.index("preset_slot") + 1  # old layout untouched before them
+    assert header[k : k + len(SCOPE_COLS)] == SCOPE_COLS  # (the cockpit block follows, see below)
 
 
 def test_records_scope_values_when_scope_block_present(tmp_path):
@@ -250,3 +255,170 @@ def test_scope_columns_blank_not_zero_when_scope_absent(tmp_path):
     for line in rows[1:]:
         data = dict(zip(rows[0].split(","), line.split(","), strict=True))
         assert all(data[c] == "" for c in SCOPE_COLS)
+
+
+# telemetry.csv header BEFORE the cockpit columns (captured from the pre-change code, 2026-10-07;
+# main's scope_* block, merged in later, sits between the match fields and the cockpit block).
+_PRE_COCKPIT_HEADER = [
+    "host_timestamp_ns", "forward_w", "reverse_w", "load_w", "reflected_fraction", "rf_on",
+    "temperature_c", "operation_mode", "tuner", "status", "controller_state", "thermal_phase",
+    "thermal_mode", "thermal_armed", "thermal_control_temp_c", "thermal_target_c",
+    "thermal_recommended_w", "thermal_applied_w", "tune_cap_percent", "load_cap_percent",
+    "manual_mode", "dc_voltage", "preset_slot", *SCOPE_COLS,
+]
+_COCKPIT_TAIL = [
+    "setpoint_w", "part_roi", "part_temp_c", "temp_status", "shadow_k", "shadow_tau_s",
+    "shadow_conf", "shadow_suggest_w", "shadow_plateau_c", "shadow_ttt_s", "run_mode", "target_c",
+]
+
+
+def _tel(ts: int) -> dict:
+    return {
+        "host_timestamp_ns": ts, "forward_w": 40.0, "reverse_w": 0.1, "load_w": 39.9,
+        "reflected_fraction": 0.0025, "rf_on": True, "temperature_c": 30.0,
+        "operation_mode": "m", "tuner": "t", "status": 0,
+    }
+
+
+def test_cockpit_columns_are_appended_and_unknown_is_blank(tmp_path):
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({
+        "telemetry": _tel(1), "state": "connected", "commanded_setpoint_w": 40,
+        "cockpit": {"part_roi": "freehand_sample", "part_temp_c": 41.2, "temp_status": "ok",
+                    "shadow_k": None, "run_mode": "ladder", "target_c": 55.0},
+    })
+    rec.stop()
+    header = (run / "telemetry.csv").read_text().splitlines()[0].split(",")
+    assert header[-12:] == _COCKPIT_TAIL
+    assert header[:-12] == _PRE_COCKPIT_HEADER  # old layout first, byte-identical, in order
+    row = next(csv.DictReader((run / "telemetry.csv").open()))
+    assert row["setpoint_w"] == "40" and row["part_temp_c"] == "41.2" and row["shadow_k"] == ""
+
+
+def test_every_roi_goes_to_a_long_format_sidecar(tmp_path):
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(5), "state": "connected", "roi_temps": [
+        {"name": "toroid_C", "mean_c": 31.5, "valid": True},
+        {"name": "SQ_SAMPLE", "mean_c": None, "valid": False}]})
+    rec.stop()
+    rows = list(csv.DictReader((run / "roi_temps.csv").open()))
+    assert rows == [{"host_timestamp_ns": "5", "roi": "toroid_C", "mean_c": "31.5"},
+                    {"host_timestamp_ns": "5", "roi": "SQ_SAMPLE", "mean_c": ""}]  # invalid = blank
+    assert "roi_temps.csv" in json.loads((run / "manifest.json").read_text())["checksums"]
+
+
+def test_non_finite_roi_mean_is_blank_not_nan(tmp_path):
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(7), "state": "connected", "roi_temps": [
+        {"name": "a", "mean_c": float("nan"), "valid": True},
+        {"name": "b", "mean_c": float("inf"), "valid": True}]})
+    rec.stop()
+    text = (run / "roi_temps.csv").read_text()
+    assert "nan" not in text.lower() and "inf" not in text.lower()
+    assert [r["mean_c"] for r in csv.DictReader(text.splitlines())] == ["", ""]
+
+
+def test_run_without_rois_still_has_header_only_sidecar(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record(snap(fwd=1.0))
+    rec.stop()
+    assert (run / "roi_temps.csv").read_text().strip() == "host_timestamp_ns,roi,mean_c"
+
+
+def test_record_does_not_block_on_slow_roi_write(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    orig = rec._write_roi_rows
+
+    def slow(rows):
+        time.sleep(0.5)  # simulate a slow disk / Dropbox flush
+        orig(rows)
+
+    rec._write_roi_rows = slow
+    t0 = time.monotonic()
+    rec.record({"telemetry": _tel(9), "state": "connected",
+                "roi_temps": [{"name": "a", "mean_c": 1.0, "valid": True}]})
+    assert time.monotonic() - t0 < 0.1
+    rec.stop()  # drains the slow write
+    assert "a,1.0" in (run / "roi_temps.csv").read_text()
+
+
+def test_junk_extras_never_cost_the_core_row(tmp_path):
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(3), "state": "connected", "cockpit": "x", "roi_temps": [
+        "junk", None, {"name": "", "mean_c": 1.0, "valid": True},
+        {"name": 5, "mean_c": 1.0, "valid": True},
+        {"name": "a", "mean_c": 30.0, "valid": True}]})
+    for bad in ("abc", {"a": 1}, [None], 7):
+        rec.record({"telemetry": _tel(4), "state": "connected", "roi_temps": bad, "cockpit": [1]})
+    rec.stop()
+    assert len(list(csv.DictReader((run / "telemetry.csv").open()))) == 5
+    assert json.loads((run / "manifest.json").read_text())["sample_count"] == 5
+    assert list(csv.DictReader((run / "roi_temps.csv").open())) == [
+        {"host_timestamp_ns": "3", "roi": "a", "mean_c": "30.0"}]
+
+
+def test_non_finite_setpoint_and_cockpit_values_are_blank(tmp_path):
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(1), "state": "connected", "commanded_setpoint_w": float("inf"),
+                "cockpit": {"part_roi": "nan", "part_temp_c": float("nan"),
+                            "shadow_k": float("inf"), "shadow_tau_s": float("-inf"),
+                            "temp_status": "ok", "run_mode": "ladder", "target_c": 55.0}})
+    rec.stop()
+    row = next(csv.DictReader((run / "telemetry.csv").open()))
+    for k in ("setpoint_w", "part_temp_c", "shadow_k", "shadow_tau_s"):
+        assert row[k] == "", k
+    assert row["part_roi"] == "nan"  # strings are passed through untouched
+    assert row["temp_status"] == "ok" and row["run_mode"] == "ladder" and row["target_c"] == "55.0"
+
+
+def test_numeric_check_is_type_agnostic_and_bool_is_not_a_temperature(tmp_path):
+    import csv
+    from decimal import Decimal
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(2), "state": "connected", "roi_temps": [
+        {"name": "dec", "mean_c": Decimal("31.5"), "valid": True},
+        {"name": "dnan", "mean_c": Decimal("NaN"), "valid": True},
+        {"name": "flag", "mean_c": True, "valid": True},
+        {"name": "text", "mean_c": "oops", "valid": True}]})
+    rec.stop()
+    got = {r["roi"]: r["mean_c"] for r in csv.DictReader((run / "roi_temps.csv").open())}
+    assert got == {"dec": "31.5", "dnan": "", "flag": "", "text": ""}
+
+
+def test_failed_start_leaks_no_handles_and_stays_idle(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    real_open = Path.open
+
+    def flaky(self, *a, **kw):
+        if self.name == "roi_temps.csv":
+            raise OSError("disk says no")
+        return real_open(self, *a, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "open", flaky)
+        with pytest.raises(OSError):
+            rec.start("t", {})
+    assert rec.state is RecorderState.IDLE
+    assert rec._csv_file is None and rec._roi_file is None
+    assert rec._csv_writer is None and rec._roi_writer is None
+    rec.start("again", {})  # recorder is still usable
+    rec.stop()

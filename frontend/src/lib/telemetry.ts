@@ -1,5 +1,6 @@
 // Telemetry types (mirror of the backend snapshot JSON) + a small ring buffer for plots.
 
+import type { RunModeName, Shadow } from "./cockpit/shadowText.ts";
 import type { LinkBlock, RfClockBlock } from "./heartbeat.ts";
 import type { ScopeStatus } from "./scope.ts";
 
@@ -50,6 +51,8 @@ export interface Snapshot {
   warnings: string[];
   telemetry: Telemetry | null;
   limits: Limits;
+  /** The last setpoint WE wrote to the generator (backend controller.py snapshot). null = unknown. */
+  commanded_setpoint_w?: number | null;
   /** Operator<->generator link heartbeat (absent on older backends). */
   link?: LinkBlock;
   /** Last setpoint the server applied (controller.py); null until one is sent. Absent on older operators. */
@@ -85,6 +88,22 @@ export interface ThermalStatus {
   control_max_c?: number | null;
   /** Compact per-ROI roster for the optional hero overlay. Absent on older operators. */
   roi_temps?: { name: string; mean_c: number | null; valid: boolean }[];
+  /** Cockpit shadow estimate + suggestion (backend control/cockpit.py). Absent on older operators. */
+  shadow?: Shadow;
+  /** Core-watch ROIs (display/record only); shape from backend control/core_watch.py:62. */
+  watch?: { name: string; temp_c: number | null; rate_c_per_min: number | null; status: string }[];
+  /** The operator-chosen run mode (bookkeeping only; it never sets power). */
+  run_mode?: RunMode;
+  /** Whether the temperature loop may drive power. Always unavailable until the core interlock exists. */
+  engage?: { available: boolean; reason: string };
+}
+
+/** `/api/run-mode` and `thermal.run_mode` (backend api/app.py run_mode_payload). */
+export interface RunMode {
+  mode: RunModeName;
+  ladder_w: number[];
+  fixed_w: number;
+  fixed_min: number;
 }
 
 /** Editable thermal plan (bounds-clamped server-side). */

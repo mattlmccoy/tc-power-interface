@@ -15,7 +15,7 @@ const rateText = (r: number | null) =>
   r == null ? "no retunes yet" : Math.abs(r) < 0.1 ? "steady" : `${r > 0 ? "↑" : "↓"} ${Math.abs(r).toFixed(1)} %/Wh`;
 
 /** This run's own drift (from the positions the operator found the match at) and cap travel left. */
-function DriftBlock({ d, fwd, reset }: { d: DriftSummary; fwd: number; reset: () => void }) {
+export function DriftBlock({ d, fwd, reset }: { d: DriftSummary; fwd: number; reset: () => void }) {
   const level = travelLevel(d);
   const color = level === "err" ? "var(--err)" : level === "warn" ? "var(--warn)" : "var(--fg)";
   const row = (name: string, rate: number | null, left: number | null, wh: number | null, min: number | null) => (

@@ -152,3 +152,9 @@ export function generatorModes(status: number): {
     leveling: (status & 32) !== 0 ? "load" : "forward", // LOAD_POWER_LEVELING
   };
 }
+
+/** Dial needle angle for a reading, or null for an unknown one (no needle: never parked at 0). */
+export function needleAngle(value: number | null | undefined, max: number, theta: number): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return gaugeAngle(value, 0, max, -theta, theta);
+}

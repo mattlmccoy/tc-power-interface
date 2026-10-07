@@ -29,3 +29,4 @@ reference/
 
 # OS
 .DS_Store
+tools/flir/.cache/
