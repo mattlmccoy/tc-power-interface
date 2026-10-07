@@ -67,6 +67,10 @@ from tc_power_interface.recording.recorder import RecorderState, TelemetryRecord
 
 logger = logging.getLogger(__name__)
 
+#: A failing cockpit observer is logged once, then at most once per this many seconds (it would
+#: otherwise log every poll tick).
+OBSERVER_LOG_EVERY_S = 60.0
+
 API_VERSION = "0.1"
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2].parent / "frontend" / "dist"
 
@@ -314,55 +318,13 @@ def create_app(
             plan=load_plan(experiments_root, max_forward_w=active_limits.max_forward_w),
             mode="advisory",
         )
-        # Cockpit observer (estimate + shadow loop + core watch). It is handed NUMBERS only — never
-        # the controller — so it cannot command power, RF or caps.
-        cockpit = CockpitObserver()
-        app.state.cockpit = cockpit
-
-        def _observe(snap: dict[str, Any]) -> None:
-            src = thermal.source  # swappable at runtime by POST /api/thermal/source
-            cockpit.observe(
-                t_s=time.monotonic(),
-                telemetry=snap.get("telemetry") or {},
-                part_roi=app.state.control_roi,
-                part_temp_c=thermal.control_temp_c,
-                temp_status=getattr(src, "status", "simulated"),
-                roi_temps=thermal_extra(src)["roi_temps"],
-                watch=app.state.watch_rois,
-                run_id=app.state.current_run,
-                run_mode=app.state.run_mode,
-                target_c=thermal.plan.target_c,
-                ceiling_w=float(min(thermal.plan.loop_ceiling_w, controller.limits.max_forward_w)),
-            )
-        # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
-        # POST the control-telemetry row to the FLIR logger (best-effort; never blocks the tick).
-        def _thermal_tick(snap: dict[str, Any]) -> None:
-            thermal.tick(poll_interval_s)
-            try:
-                _observe(snap)
-            except Exception:  # noqa: BLE001 - a display-only observer must never stop the poll loop
-                logger.exception("cockpit observer failed; skipping this tick")
-            poster = app.state.control_telemetry
-            if thermal.running and poster.enabled:
-                body = build_control_telemetry(
-                    thermal=thermal.snapshot(),
-                    telemetry=snap.get("telemetry") or {},
-                    roi=app.state.control_roi,
-                    ts=datetime.now(UTC).isoformat(),
-                )
-                poster.post(body)
-            elif poster.enabled and snap.get("telemetry") and heartbeat_gate.due():
-                # Manual RF run (loop stopped, generator connected): a power-only heartbeat keeps
-                # FLIR "engaged" and gives it an RF-power trace for EVERY run, not just closed-loop.
-                # The running loop's row already carries these fields, so never both.
-                poster.post(build_power_heartbeat(
-                    telemetry=snap["telemetry"], ts=datetime.now(UTC).isoformat(),
-                ))
-
-        controller.add_listener(_thermal_tick)
-
-        # Auto-log: on an RF-on rising edge, start a recording if one isn't already running. This
-        # runs BEFORE the recorder listener so the first sample of the run is captured.
+        # Listener order (each poll tick, in registration order): rf_notifier -> auto-log ->
+        # thermal tick (loop + cockpit observer + FLIR post) -> recorder -> drivers.
+        # Auto-log: on an RF-on rising edge, start a recording if one isn't already running. It
+        # runs BEFORE the thermal tick, so the observer sees the new run id (and resets) on the
+        # same tick, and BEFORE the recorder, so the run's first sample has a fresh estimate.
+        # (A MANUAL POST /api/recording/start sets current_run from an HTTP thread between ticks, so
+        # that run's first row can carry one tick of the previous shadow values — acceptable.)
         app.state.auto_log = True
         _auto_prev = {"rf": False}
 
@@ -382,9 +344,83 @@ def create_app(
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
+
+        # Cockpit observer (estimate + shadow loop + core watch). It is handed NUMBERS only — never
+        # the controller — so it cannot command power, RF or caps.
+        cockpit = CockpitObserver()
+        app.state.cockpit = cockpit
+
+        # Per-tick values shared between listeners: the FLIR roster is copied ONCE per tick (in
+        # _thermal_tick) and reused by the recorder listener, which runs later in the same tick.
+        tick_cache: dict[str, Any] = {"roi_temps": []}
+        last_logged: dict[str, float] = {}  # failure kind -> monotonic time it was last logged
+
+        def _log_cockpit_failure(kind: str) -> None:
+            """Log a cockpit failure (with traceback) the first time, then at most once per
+            OBSERVER_LOG_EVERY_S per kind — a persistent bug would otherwise log every poll tick."""
+            now = time.monotonic()
+            last = last_logged.get(kind)
+            if last is None or now - last >= OBSERVER_LOG_EVERY_S:
+                last_logged[kind] = now
+                logger.exception("cockpit %s failed; continuing without it (rate-limited)", kind)
+
+        def _observe(snap: dict[str, Any]) -> None:
+            src = thermal.source  # swappable at runtime by POST /api/thermal/source
+            cockpit.observe(
+                t_s=time.monotonic(),
+                telemetry=snap.get("telemetry") or {},
+                part_roi=app.state.control_roi,
+                part_temp_c=thermal.control_temp_c,
+                temp_status=getattr(src, "status", "simulated"),
+                roi_temps=tick_cache["roi_temps"],
+                watch=app.state.watch_rois,
+                run_id=app.state.current_run,
+                run_mode=app.state.run_mode,
+                target_c=thermal.plan.target_c,
+                ceiling_w=float(min(thermal.plan.loop_ceiling_w, controller.limits.max_forward_w)),
+            )
+
+        # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
+        # POST the control-telemetry row to the FLIR logger (best-effort; never blocks the tick).
+        def _thermal_tick(snap: dict[str, Any]) -> None:
+            tick_cache["roi_temps"] = []  # never let a stale roster outlive a failed read
+            thermal.tick(poll_interval_s)
+            try:
+                tick_cache["roi_temps"] = thermal_extra(thermal.source)["roi_temps"]
+                _observe(snap)
+            except Exception:  # noqa: BLE001 - a display-only observer must never stop the poll loop
+                _log_cockpit_failure("observer")
+            poster = app.state.control_telemetry
+            if thermal.running and poster.enabled:
+                body = build_control_telemetry(
+                    thermal=thermal.snapshot(),
+                    telemetry=snap.get("telemetry") or {},
+                    roi=app.state.control_roi,
+                    ts=datetime.now(UTC).isoformat(),
+                )
+                poster.post(body)
+            elif poster.enabled and snap.get("telemetry") and heartbeat_gate.due():
+                # Manual RF run (loop stopped, generator connected): a power-only heartbeat keeps
+                # FLIR "engaged" and gives it an RF-power trace for EVERY run, not just closed-loop.
+                # The running loop's row already carries these fields, so never both.
+                poster.post(build_power_heartbeat(
+                    telemetry=snap["telemetry"], ts=datetime.now(UTC).isoformat(),
+                ))
+
+        controller.add_listener(_thermal_tick)
+
+        def _cockpit_fields() -> dict[str, Any]:
+            """The cockpit's CSV columns, or {} (blank cells) if the observer fails: a cockpit bug
+            must never cost the core telemetry row."""
+            try:
+                return cockpit.record_fields()
+            except Exception:  # noqa: BLE001 - display-only extras; the row must still be written
+                _log_cockpit_failure("record_fields")
+                return {}
+
         controller.add_listener(lambda snap: recorder.record({
-            **snap, "thermal": thermal.snapshot(), "cockpit": cockpit.record_fields(),
-            "roi_temps": thermal_extra(thermal.source)["roi_temps"],
+            **snap, "thermal": thermal.snapshot(), "cockpit": _cockpit_fields(),
+            "roi_temps": tick_cache["roi_temps"],
         }))
         app.state.thermal = thermal  # (thermal_source was set above from the operator's saved choice)
 
