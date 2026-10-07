@@ -127,6 +127,7 @@ BAD_SETTINGS = [
     {"channel": 3},
     {"channel": "one"},
     {"poll_interval_s": 0},
+    {"poll_interval_s": 0.01},  # below the 0.05 s floor
     {"tol_w": -1},
     {"settle_s": -0.5},
     {"geometry": {"turns": "x"}},
@@ -155,3 +156,16 @@ def test_numeric_strings_are_coerced(tmp_path, monkeypatch):
         s = r.json()["settings"]
         assert s["probe_attn"] == 500.0 and s["channel"] == 2
         assert s["geometry"]["turns"] == 2 and s["limits"]["flux_stop_mt"] == 5.5
+
+
+def test_settings_save_failure_is_500_and_changes_nothing(tmp_path, monkeypatch):
+    import tc_power_interface.integration.scope_hub as hub_mod
+
+    def boom(*_a, **_k):
+        raise OSError("read-only filesystem")
+
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        monkeypatch.setattr(hub_mod, "save_settings", boom)
+        r = c.post("/api/scope/settings", json={"core_label": "core 9"})
+        assert r.status_code == 500
+        assert c.get("/api/scope").json()["settings"]["core_label"] == "core 2"

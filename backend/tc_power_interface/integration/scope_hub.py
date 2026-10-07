@@ -60,6 +60,7 @@ class ScopeHub:
         self._finalized: Path | None = None
         self._active_flags: set[str] = set()
         self._flags_run: Path | None = None
+        self._flagger_run: Path | None = None
         self.link = ScopeLink(opener=_open, on_reading=self.on_reading)
         recorder.add_finalizer(self._finalize_run)
 
@@ -67,13 +68,17 @@ class ScopeHub:
     def update_settings(self, s: ScopeSettings) -> None:
         """Apply new settings. Link-level fields restart a running link, so the poll thread and
         the hub (waveform header, channel) always agree; the level tracker is rebuilt only when
-        its own rules change, so a label edit never drops an assigned level."""
+        its own rules change, so a label edit never drops an assigned level.
+
+        Saved BEFORE anything changes in memory: a failed save raises and changes nothing."""
+        save_settings(self.root, s)
         with self._lock:
             old = self.settings
             self.settings = s
             if (s.tol_w, s.settle_s) != (old.tol_w, old.settle_s):
                 self._tracker = LevelTracker(s.tol_w, s.settle_s)
-        save_settings(self.root, s)
+            if (s.probe_attn, s.geometry) != (old.probe_attn, old.geometry):
+                self._flagger = SessionFlagger()  # heuristic baselines no longer comparable
         link_fields = ("resource", "channel", "poll_interval_s")
         changed = any(getattr(s, f) != getattr(old, f) for f in link_fields)
         if changed and self.link.status()["running"]:
@@ -136,8 +141,11 @@ class ScopeHub:
     def on_reading(self, r: Reading) -> None:
         s = self.settings
         cap, fit = r.capture, r.fit
+        run_dir = self.recorder.run_dir
         with self._lock:
             ctx = dict(self._ctx) or {"level_w": None, "level_state": "rf_off"}
+            if run_dir is not None and run_dir != self._flagger_run:
+                self._flagger_run, self._flagger = run_dir, SessionFlagger()  # new run, new session
         flags, b = self._flags(r, s, ctx.get("level_w"))
         reading: dict[str, Any] = {
             "host_timestamp_ns": r.host_timestamp_ns, **ctx,
@@ -151,7 +159,6 @@ class ScopeHub:
             "clipped": cap.clipped, "valid": fit is not None and "attn_mismatch" not in flags,
             "flags": ";".join(flags),
         }
-        run_dir = self.recorder.run_dir
         with self._lock:
             self._latest = reading
         if run_dir is None:
@@ -175,7 +182,9 @@ class ScopeHub:
             self._active_flags = now
         for f in sorted(onsets, key=EVENT_FLAGS.index):
             data = {"vrms_v": reading["vrms_v"], "b_pk_mt": reading["b_pk_mt"]}
-            self.recorder.event(f"scope_{f}", data)
+            if f == "attn_mismatch":
+                data |= {"attn": reading["attn"], "probe_attn": self.settings.probe_attn}
+            self.recorder.event_for(run_dir, f"scope_{f}", data)
 
     def _open_run(self, run_dir: Path) -> ScopeRecorder | None:
         """The ScopeRecorder for run_dir, created on first use; None once that run is finalized

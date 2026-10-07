@@ -91,6 +91,7 @@ class TelemetryRecorder:
         self._writer_thread: threading.Thread | None = None
         self._writer_stop = threading.Event()
         self._finalizers: list[Callable[[Path], list[str]]] = []
+        self._event_lock = threading.Lock()  # event_for() vs the RECORDING -> IDLE flip in stop()
 
     @property
     def run_dir(self) -> Path | None:
@@ -198,6 +199,15 @@ class TelemetryRecorder:
             }
         )
 
+    def event_for(self, run_dir: Path, label: str, data: dict[str, Any] | None = None) -> bool:
+        """Append an event only if run_dir is still the active run (for other threads, e.g. the
+        scope poller, whose view of the run may be stale). Returns whether it was recorded."""
+        with self._event_lock:
+            if self.state is not RecorderState.RECORDING or self._dir != run_dir:
+                return False
+            self.event(label, data)
+            return True
+
     def stop(self) -> Path | None:
         if self.state is not RecorderState.RECORDING or self._dir is None:
             return None
@@ -206,7 +216,8 @@ class TelemetryRecorder:
 
         # Stop new rows enqueuing, then let the writer drain everything already queued before we
         # close the file and checksum it — so the manifest hashes the COMPLETE telemetry.csv.
-        self.state = RecorderState.IDLE
+        with self._event_lock:
+            self.state = RecorderState.IDLE
         if self._writer_thread is not None:
             self._writer_stop.set()
             self._writer_thread.join(timeout=5.0)

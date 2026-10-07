@@ -187,3 +187,17 @@ def test_unknown_control_temperature_is_recorded_blank_not_zero(tmp_path):
     rows = (path / "telemetry.csv").read_text().strip().splitlines()
     data = dict(zip(rows[0].split(","), rows[1].split(","), strict=True))
     assert data["thermal_control_temp_c"] == ""
+
+
+def test_event_for_appends_only_to_the_active_run(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    assert rec.event_for(tmp_path / "nope", "x") is False  # idle
+    run = rec.start("r", {})
+    assert rec.event_for(tmp_path / "other", "x") is False  # not the active run
+    assert rec.event_for(run, "scope_clipped", {"a": 1}) is True
+    rec.stop()
+    assert rec.event_for(run, "late") is False  # stopped run: dropped, not leaked
+    events = json.loads((run / "events.json").read_text())
+    assert [e["label"] for e in events if e["label"] in ("x", "scope_clipped", "late")] == [
+        "scope_clipped"
+    ]

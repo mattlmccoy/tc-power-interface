@@ -137,3 +137,12 @@ def test_callback_error_is_reported_separately_and_does_not_reconnect():
     assert st["connected"] is True and st["error"] is None
     assert st["callback_error"] is None  # cleared by the next successful callback
     assert calls["n"] >= 6  # readings continued
+
+
+def test_save_settings_is_atomic_and_load_survives_unreadable_file(tmp_path):
+    save_settings(tmp_path, ScopeSettings(core_label="core 7"))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["scope_settings.json"]  # no temp left
+    assert load_settings(tmp_path).core_label == "core 7"
+    bad = tmp_path / "unreadable"
+    (bad / "scope_settings.json").mkdir(parents=True)  # read -> IsADirectoryError (OSError)
+    assert load_settings(bad) == ScopeSettings()

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ class ScopeSettings:
 
 
 _CHANNELS = (1, 2)
+MIN_POLL_INTERVAL_S = 0.05  # faster polling only burns USB bandwidth; the scope cannot keep up
 
 
 def _num(name: str, v: Any, kind: type[int] | type[float]) -> Any:
@@ -90,8 +92,10 @@ def settings_from_dict(d: dict[str, Any]) -> ScopeSettings:
         if k in d:
             flat[k] = _num(k, d[k], float)
     out = replace(base, geometry=geo, limits=lim, **flat)
-    if out.probe_attn <= 0 or out.tol_w <= 0 or out.poll_interval_s <= 0 or out.settle_s < 0:
-        raise ValueError("need probe_attn > 0, tol_w > 0, poll_interval_s > 0, settle_s >= 0")
+    if out.probe_attn <= 0 or out.tol_w <= 0 or out.settle_s < 0:
+        raise ValueError("need probe_attn > 0, tol_w > 0, settle_s >= 0")
+    if out.poll_interval_s < MIN_POLL_INTERVAL_S:
+        raise ValueError(f"poll_interval_s must be >= {MIN_POLL_INTERVAL_S}")
     return out
 
 
@@ -101,11 +105,18 @@ def load_settings(root: Path) -> ScopeSettings:
         return ScopeSettings()
     try:
         return settings_from_dict(json.loads(p.read_text()))
-    except (ValueError, TypeError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         logger.warning("ignoring bad %s: %s", p, exc)
         return ScopeSettings()
 
 
 def save_settings(root: Path, s: ScopeSettings) -> None:
-    Path(root).mkdir(parents=True, exist_ok=True)
-    (Path(root) / FILENAME).write_text(json.dumps(asdict(s), indent=2))
+    """Atomic write (temp file + os.replace): a crash never leaves a half-written file."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    tmp = root / f".{FILENAME}.tmp"
+    try:
+        tmp.write_text(json.dumps(asdict(s), indent=2))
+        os.replace(tmp, root / FILENAME)
+    finally:
+        tmp.unlink(missing_ok=True)

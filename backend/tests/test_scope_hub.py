@@ -188,3 +188,76 @@ def test_unrelated_setting_change_keeps_an_assigned_level(tmp_path):
     hub.update_settings(replace(hub.settings, settle_s=5.0))
     hub.on_snapshot(snap)
     assert hub._ctx["level_state"] == "settling"  # but rebuilt when settling rules change
+
+
+def test_save_failure_leaves_hub_settings_unchanged(tmp_path, monkeypatch):
+    import pytest
+
+    import tc_power_interface.integration.scope_hub as hub_mod
+
+    hub, _ = _hub(tmp_path, core_label="core 2")
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(hub_mod, "save_settings", boom)
+    with pytest.raises(OSError):
+        hub.update_settings(replace(hub.settings, core_label="core 9", settle_s=9.0))
+    assert hub.settings.core_label == "core 2" and hub._tracker.settle_s == 3.0
+
+
+def test_flagger_resets_on_new_run_and_on_probe_or_geometry_change(tmp_path):
+    hub, rec = _hub(tmp_path)
+    f0 = hub._flagger
+    hub.update_settings(replace(hub.settings, core_label="x"))
+    assert hub._flagger is f0  # unrelated edit keeps per-session history
+    hub.update_settings(replace(hub.settings, probe_attn=10.0))
+    f1 = hub._flagger
+    assert f1 is not f0
+    hub.update_settings(replace(hub.settings, geometry=replace(hub.settings.geometry, turns=2)))
+    f2 = hub._flagger
+    assert f2 is not f1
+    rec.start("t", {})
+    hub.on_reading(_reading())
+    assert hub._flagger is not f2  # a new run starts a new heuristic session
+    rec.stop()
+
+
+def test_attn_mismatch_event_carries_both_attenuations(tmp_path):
+    hub, rec = _hub(tmp_path, probe_attn=500)
+    rec.start("t", {})
+    hub.on_reading(_reading())
+    ev = next(e for e in rec._events if e["label"] == "scope_attn_mismatch")
+    rec.stop()
+    assert ev["data"]["attn"] == 50.0 and ev["data"]["probe_attn"] == 500.0
+
+
+def test_reading_without_fit_has_none_values_and_is_invalid(tmp_path):
+    hub, _ = _hub(tmp_path)
+    r = _reading()
+    hub.on_reading(Reading(r.host_timestamp_ns, r.capture, None))
+    latest = hub._latest
+    assert latest is not None and latest["valid"] is False
+    assert all(latest[k] is None for k in ("vrms_v", "f0_hz", "resid_v", "h2_pct", "h3_pct",
+                                           "b_pk_mt"))
+    assert latest["vmin_v"] is not None  # raw-capture stats still reported
+
+
+def test_clipped_reading_raises_clipped_event(tmp_path):
+    hub, rec = _hub(tmp_path)
+    rec.start("t", {})
+    r = _reading()
+    hub.on_reading(Reading(r.host_timestamp_ns, replace(r.capture, clipped=True), None))
+    labels = [e["label"] for e in rec._events]
+    rec.stop()
+    assert "scope_clipped" in labels
+
+
+def test_link_error_shows_no_data(tmp_path, monkeypatch):
+    scopes = [FakeScope(fail_after=1)] + [FakeScope(fail_after=0) for _ in range(50)]
+    hub, _ = _live_hub(tmp_path, monkeypatch, scopes)
+    hub.connect()
+    assert _wait(lambda: hub.link.status()["error"] is not None)
+    snap = hub.snapshot()
+    hub.disconnect()
+    assert snap["status"]["connected"] is False and snap["latest"] is None

@@ -47,7 +47,10 @@ def scope_settings(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         })
     except (TypeError, ValueError) as exc:  # unknown nested key / bad limits or geometry
         raise HTTPException(422, str(exc)) from exc
-    hub.update_settings(merged)
+    try:
+        hub.update_settings(merged)
+    except OSError as exc:  # could not persist: nothing was applied
+        raise HTTPException(500, f"could not save scope settings: {exc}") from exc
     return hub.snapshot()
 
 
