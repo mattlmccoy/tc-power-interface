@@ -16,7 +16,6 @@ import { TelemetryPanel } from "../components/TelemetryPanel.tsx";
 import { SenseLoopPanel } from "../components/SenseLoopPanel.tsx";
 import { TimerPanel } from "../components/TimerPanel.tsx";
 import {
-  generatorSummary,
   loadLayout,
   movePanel,
   resetLayout,
@@ -24,12 +23,18 @@ import {
   toggleCollapsed,
 } from "../lib/layout.ts";
 import type { Column, Layout, PanelId } from "../lib/layout.ts";
+import {
+  generatorSummary, matchAidSummary, matchNetSummary, matchTunerSummary, recordingSummary,
+  rfPowerSummary, senseLoopSummary, telemetrySummary, timerSummary,
+} from "../lib/panelSummaries.ts";
+import type { Segment } from "../lib/panelSummaries.ts";
 import { settingsStorage } from "../lib/settings_store.ts";
 
 interface PanelEntry {
   title: string;
+  short?: string;
   el: ReactNode;
-  summary?: { text: string; color: string | null };
+  summary?: Segment[];
 }
 
 export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
@@ -67,6 +72,7 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           zone={zone}
         />
       ),
+      summary: telemetrySummary(t, zone),
     },
     rfpower: {
       title: "RF power",
@@ -99,6 +105,9 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           maxRefl={maxRefl}
         />
       ),
+      summary: rfPowerSummary({
+        connected, armed, faulted, rfOn: t ? t.rf_on : null, setpointW: op.ctrl?.last_setpoint_w, ramp,
+      }),
     },
     generator: {
       title: "Generator",
@@ -118,9 +127,11 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
       el: (
         <SenseLoopPanel scope={op.scope} />
       ),
+      summary: senseLoopSummary(op.scope),
     },
     matchnet: {
       title: "Matching network",
+      short: "Match net",
       el: (
         <MatchingNetworkPanel
           controllable={controllable}
@@ -150,12 +161,14 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           recallPreset={recallPreset}
         />
       ),
+      summary: matchNetSummary(t),
     },
     matchaid: {
       title: "Match aid",
       el: (
         <MatchAidPanel aid={aid} t={t} />
       ),
+      summary: matchAidSummary(aid),
     },
     matchtuner: {
       title: "Match tuner",
@@ -173,9 +186,11 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           fmtDelta={fmtDelta}
         />
       ),
+      summary: matchTunerSummary(mt),
     },
     timer: {
       title: "Auto-shutoff timer",
+      short: "Shutoff timer",
       el: (
         <TimerPanel
           controllable={controllable}
@@ -186,6 +201,7 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           stopTimer={stopTimer}
         />
       ),
+      summary: timerSummary(timer),
     },
     recording: {
       title: "Recording",
@@ -200,6 +216,8 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           textInputStyle={textInputStyle}
         />
       ),
+      // Re-rendered on every status poll, so the elapsed time ticks with the telemetry.
+      summary: recordingSummary(recording, Date.now()),
     },
   };
 
@@ -210,6 +228,7 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           key={id}
           id={id}
           title={panels[id].title}
+          shortTitle={panels[id].short}
           collapsed={layout.collapsed.includes(id)}
           summary={panels[id].summary}
           dragging={dragId === id}

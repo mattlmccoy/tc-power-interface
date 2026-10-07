@@ -1,0 +1,155 @@
+{
+    "device": {
+        "id": "AG 0613",
+        "serial": "SIM-0001",
+        "firmware": {
+            "ui": "1.2",
+            "rf": "3.4"
+        },
+        "frequency_hz": 13560000,
+        "power_limit_w": 600.0
+    },
+    "controller": {
+        "state": "connected",
+        "armed": true,
+        "fault_reasons": [],
+        "invalid_status_reads_recent": 0,
+        "telemetry": {
+            "host_timestamp_ns": 1791399338414429000,
+            "forward_w": 0.0,
+            "reverse_w": 0.0,
+            "load_w": 0.0,
+            "reflected_fraction": 0.0,
+            "rf_on": false,
+            "temperature_c": 30.0,
+            "operation_mode": "normal",
+            "tuner": "analog tuner",
+            "status": 0,
+            "manual_mode": true,
+            "tune_cap_percent": 0.0,
+            "load_cap_percent": 0.0,
+            "dc_voltage": 0,
+            "preset_slot": 0
+        },
+        "last_setpoint_w": null,
+        "warnings": [],
+        "vna_session": {
+            "active": false,
+            "stale": false,
+            "age_s": null
+        },
+        "limits": {
+            "max_forward_w": 350,
+            "max_reflected_w": 25.0,
+            "temperature_c_trip": 70.0,
+            "reflected_fraction_warn": 0.02,
+            "forward_caution_w": 400.0,
+            "forward_danger_w": 500.0
+        }
+    },
+    "recording": {
+        "active": false,
+        "run": null,
+        "run_path": null,
+        "experiments_root": "/experiments"
+    },
+    "thermal": {
+        "running": false,
+        "phase": "ramp",
+        "mode": "advisory",
+        "armed": false,
+        "control_temp_c": 25.0,
+        "target_c": 185.0,
+        "recommended_w": 0.0,
+        "applied_w": null,
+        "source": "simulated",
+        "control_roi": null,
+        "temp_status": "simulated",
+        "available_rois": [],
+        "control_max_c": null,
+        "roi_temps": []
+    },
+    "ramp": {
+        "running": false,
+        "done": false,
+        "output_w": 0.0,
+        "init_w": 0,
+        "target_w": 100,
+        "rate_w_per_s": 10
+    },
+    "timer": {
+        "running": false,
+        "done": false,
+        "minutes": 10,
+        "elapsed_s": 0.0,
+        "remaining_s": 600.0
+    },
+    "presets": {
+        "slots": {
+            "1": null,
+            "2": null,
+            "3": null,
+            "4": null,
+            "5": null,
+            "6": null,
+            "7": null,
+            "8": null,
+            "9": null
+        },
+        "num_slots": 9
+    },
+    "pulse": {
+        "running": false,
+        "on_ms": 1000,
+        "off_ms": 1000,
+        "power_w": 100,
+        "duty": 0.5,
+        "output_on": false
+    },
+    "match_tuner": {
+        "running": false,
+        "armed": false,
+        "phase": "idle",
+        "mode": "advisory",
+        "reverse_fraction": null,
+        "best": null,
+        "last_move": null,
+        "recommended": null
+    },
+    "scope": {
+        "status": {
+            "running": false,
+            "connected": false,
+            "error": null,
+            "last_ns": null,
+            "rate_hz": null,
+            "callback_error": null
+        },
+        "latest": null,
+        "stale": false,
+        "settings": {
+            "resource": "",
+            "channel": 1,
+            "probe_attn": 50.0,
+            "core_label": "core 2",
+            "geometry": {
+                "turns": 1,
+                "cores_linked": 1,
+                "ae_per_core_m2": 0.000158
+            },
+            "limits": {
+                "probe_warn_v": 65.0,
+                "probe_hard_v": 70.0,
+                "flux_stop_mt": 6.0
+            },
+            "tol_w": 1.0,
+            "settle_s": 3.0,
+            "poll_interval_s": 0.2
+        }
+    },
+    "vna_session": {
+        "active": false,
+        "stale": false,
+        "age_s": null
+    }
+}

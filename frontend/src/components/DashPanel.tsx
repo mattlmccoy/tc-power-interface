@@ -5,14 +5,19 @@
 import type { DragEvent, ReactNode } from "react";
 
 import type { PanelId } from "../lib/layout.ts";
+import { summaryText } from "../lib/panelSummaries.ts";
+import type { Segment } from "../lib/panelSummaries.ts";
 
 export type DropWhere = "before" | "after";
 
 interface DashPanelProps {
   id: PanelId;
   title: string;
+  /** Shorter heading for the collapsed bar, leaving room for the numbers in a narrow column. */
+  shortTitle?: string;
   collapsed: boolean;
-  summary?: { text: string; color: string | null };
+  /** Key live numbers shown on the collapsed bar, most important first. */
+  summary?: Segment[];
   dragging: boolean;
   dropMark: DropWhere | null;
   onToggle: (id: PanelId) => void;
@@ -78,13 +83,17 @@ export function DashPanel(p: DashPanelProps) {
       </div>
       {p.collapsed ? (
         <section className="panel panel-collapsed">
-          <h2>{p.title}</h2>
-          {p.summary ? (
-            <span
-              className="panel-summary mono"
-              style={p.summary.color ? { color: p.summary.color } : undefined}
-            >
-              · {p.summary.text}
+          <h2 title={p.shortTitle ? p.title : undefined}>{p.shortTitle ?? p.title}</h2>
+          {p.summary?.length ? (
+            <span className="panel-summary" title={summaryText(p.summary)}>
+              {p.summary.map((seg, i) => (
+                <span key={i} className={`sum-seg${seg.tone ? ` tone-${seg.tone}` : ""}`}>
+                  {seg.label ? <span className="sum-label">{seg.label} </span> : null}
+                  <span className="sum-val" style={seg.color ? { color: seg.color } : undefined}>
+                    {seg.text}
+                  </span>
+                </span>
+              ))}
             </span>
           ) : null}
         </section>
