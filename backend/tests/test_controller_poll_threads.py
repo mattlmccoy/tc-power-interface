@@ -149,3 +149,75 @@ def test_polling_follows_the_current_poll_thread_not_a_stalled_old_one() -> None
     finally:
         release.set()
         c.stop()
+
+
+def test_stale_drop_link_does_not_kill_a_reattached_link() -> None:
+    """An old poll thread that passed its link-gen check on a failed read, then lost the CPU while
+    the operator detached and re-attached, must not tear down the NEW link when it resumes.
+
+    Regression for the 2026-10-07 cockpit merge review: _drop_link set the SHARED ``_stop`` (the
+    new poll thread's event) and cleared ``device``, so the generator stayed live while the
+    operator showed DISCONNECTED."""
+    c = Controller(device=None, poll_interval_s=0.01, link_loss_reads=1)
+    old_dev = CxnDevice(SimulatedCxnTransport())
+    fail = threading.Event()
+    real_old_read = old_dev.read_telemetry
+
+    def failing_read():  # type: ignore[no-untyped-def]
+        if fail.is_set():
+            raise TimeoutError("serial read timed out: got 0 of 1 bytes")
+        return real_old_read()
+
+    old_dev.read_telemetry = failing_read  # type: ignore[method-assign]
+    dropped: list[bool] = []
+    c.on_link_dropped = lambda: dropped.append(True)
+    c.attach_device(old_dev)
+    old_thread = c._thread
+    assert old_thread is not None
+
+    # Pause the old thread in the window between _tick's post-read link-gen check and
+    # _on_read_failure -> _drop_link. _record_read_outcome is the first call after that check on
+    # the read-failure path; there is no device-side hook inside an in-memory window.
+    paused = threading.Event()
+    release = threading.Event()
+    real_record = c._record_read_outcome
+
+    def pausing_record(*, invalid: bool) -> None:
+        if threading.current_thread() is old_thread and fail.is_set() and not paused.is_set():
+            paused.set()
+            release.wait(10.0)
+        real_record(invalid=invalid)
+
+    c._record_read_outcome = pausing_record  # type: ignore[method-assign]
+    fail.set()
+    assert paused.wait(2.0), "old poll thread never reached the post-check window"
+
+    try:
+        c.detach_device()  # join times out: the old thread is paused inside its tick
+        new_dev = CxnDevice(SimulatedCxnTransport())
+        reads = [0]
+        real_new_read = new_dev.read_telemetry
+
+        def counting_read():  # type: ignore[no-untyped-def]
+            reads[0] += 1
+            return real_new_read()
+
+        new_dev.read_telemetry = counting_read  # type: ignore[method-assign]
+        c.attach_device(new_dev)
+        new_thread = c._thread
+        assert c.polling is True
+
+        release.set()  # the old thread resumes: _on_read_failure -> _drop_link on a stale link
+        old_thread.join(2.0)
+        assert not old_thread.is_alive()
+        before = reads[0]
+        time.sleep(0.2)
+        assert c.device is new_dev, "a stale _drop_link detached the freshly attached device"
+        assert c._thread is new_thread and new_thread is not None and new_thread.is_alive()
+        assert c.polling is True, "a stale _drop_link stopped the new poll thread"
+        assert reads[0] > before, "the new poll thread stopped polling"
+        assert c.state.value == "connected"
+        assert dropped == [], "on_link_dropped fired for a link that was already replaced"
+    finally:
+        release.set()
+        c.stop()

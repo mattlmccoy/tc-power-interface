@@ -119,8 +119,9 @@ class Controller:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         #: Link generation, bumped (under _lock) whenever the link changes: attach, detach (at its
-        #: START, before it waits on _io_lock) and _drop_link. A _tick records it before its read
-        #: and DISCARDS the result if it changed meanwhile, so a tick still in flight on a hung read
+        #: START, before it waits on _io_lock) and _drop_link. Each poll loop is started with the
+        #: generation of its link; its _tick DISCARDS a result if it changed meanwhile, and its
+        #: _drop_link is a no-op on a changed generation, so a tick still in flight on a hung read
         #: can never publish, fault, or drop-link onto a detached or re-attached link.
         self._link_gen = 0
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
@@ -179,9 +180,14 @@ class Controller:
         # _stop_polling join timed out (thread stalled in a read or a listener), clearing the shared
         # event would wake that old thread and run TWO poll loops against the generator. The old
         # thread keeps its own (set) event and exits when it unsticks.
+        # The loop also carries the link generation it was started for, so everything it does
+        # (including _drop_link) acts only on ITS link and ITS event, never on a re-attached one.
         self._stop = threading.Event()
         self._thread = threading.Thread(
-            target=self._loop, args=(self._stop,), name="tcp-controller", daemon=True
+            target=self._loop,
+            args=(self._stop, self._link_gen),
+            name="tcp-controller",
+            daemon=True,
         )
         self._thread.start()
 
@@ -327,15 +333,23 @@ class Controller:
         if self.device is None:
             raise RuntimeError("no device connected")
 
-    def _loop(self, stop: threading.Event) -> None:
+    def _loop(self, stop: threading.Event, gen: int) -> None:
         while not stop.is_set():
-            self._tick()
+            self._tick(stop, gen)
             stop.wait(self.poll_interval_s)
 
     # --- core poll cycle -------------------------------------------------------------------
-    def _tick(self) -> None:
-        """One telemetry+protection cycle. Safe to call directly (tests) or from the thread."""
-        gen = self._link_gen
+    def _tick(self, stop: threading.Event | None = None, gen: int | None = None) -> None:
+        """One telemetry+protection cycle. Safe to call directly (tests) or from the thread.
+
+        ``stop``/``gen`` are the calling poll loop's own stop event and link generation (defaults:
+        the current ones, for direct calls). A tick whose link has since changed does nothing."""
+        if stop is None:
+            stop = self._stop
+        if gen is None:
+            gen = self._link_gen
+        if self._link_gen != gen:
+            return  # this loop's link is gone; never read a re-attached device from here
         read_start = self._clock()
         try:
             with self._io_lock:
@@ -343,7 +357,7 @@ class Controller:
         except InvalidStatusWord as exc:
             if self._link_gen != gen:
                 return  # the link changed during the read: this result belongs to no live link
-            if self._on_invalid_status(exc):
+            if self._on_invalid_status(exc, stop, gen):
                 return  # discarded glitch: no state change, no fake sample to listeners
             self._notify()
             return
@@ -351,7 +365,7 @@ class Controller:
             if self._link_gen != gen:
                 return
             self._record_read_outcome(invalid=False)
-            self._on_read_failure(exc)
+            self._on_read_failure(exc, stop=stop, gen=gen)
             self._notify()
             return
         if self._link_gen != gen:
@@ -430,7 +444,12 @@ class Controller:
         self._status_window.clear()
         self._invalid_recent = 0
 
-    def _on_invalid_status(self, exc: InvalidStatusWord) -> bool:
+    def _on_invalid_status(
+        self,
+        exc: InvalidStatusWord,
+        stop: threading.Event | None = None,
+        gen: int | None = None,
+    ) -> bool:
         """Handle a status word with undefined bits. Returns True if the read was DISCARDED.
 
         The status bits are unusable, but the same cycle's forward/reverse power and temperature are
@@ -477,10 +496,16 @@ class Controller:
             exc,
         )
         rf_live = exc.forward_w is not None and exc.forward_w > 1.0
-        self._on_read_failure(exc, rf_maybe_on=rf_live)
+        self._on_read_failure(exc, rf_maybe_on=rf_live, stop=stop, gen=gen)
         return False
 
-    def _on_read_failure(self, exc: Exception, rf_maybe_on: bool = False) -> None:
+    def _on_read_failure(
+        self,
+        exc: Exception,
+        rf_maybe_on: bool = False,
+        stop: threading.Event | None = None,
+        gen: int | None = None,
+    ) -> None:
         """Classify a telemetry read failure — the fix for a turned-off generator latching a stuck
         FAULT. If the last known sample had RF ON, the generator may still be delivering power with
         no telemetry: latch a loud FAULT at once (protection; no debounce). Otherwise it is a benign
@@ -500,28 +525,32 @@ class Controller:
             )
             return
         if self._read_failures >= self.link_loss_reads:
-            self._drop_link()
+            self._drop_link(stop, gen)
 
-    def _drop_link(self) -> None:
+    def _drop_link(self, stop: threading.Event | None = None, gen: int | None = None) -> None:
         """Tear down a lost link from INSIDE the poll loop and return to DISCONNECTED (re-attachable
         for a reconnect). Signals the loop to stop — it runs ON this thread, so it must NEVER join
         itself the way
         :meth:`detach_device` does — then forces RF off and closes the transport best-effort and
         clears published state. Finally fires :attr:`on_link_dropped` (outside the locks) so the app
-        halts its drivers, matching the manual Disconnect path."""
-        self._stop.set()  # let _loop() exit after this tick; do not join our own thread
-        with self._io_lock:
-            dev = self.device
-            if dev is not None:
-                try:
-                    dev.set_rf(False)
-                except Exception:  # noqa: BLE001 - best-effort RF-off; the link is already gone
-                    pass
-                try:
-                    dev.close()
-                except Exception:  # noqa: BLE001 - best-effort close; frees the port for reconnect
-                    pass
+        halts its drivers, matching the manual Disconnect path.
+
+        ``stop``/``gen`` are the detecting loop's own event and link generation (defaults: the
+        current ones). Only that loop's event is set, and if the link generation has changed (a
+        detach + re-attach slipped in after the tick's check) the device and state belong to a
+        NEWER link and are left untouched: no RF-off/close on it, no state reset, no hook."""
+        if stop is None:
+            stop = self._stop
+        if gen is None:
+            gen = self._link_gen
+        stop.set()  # let OUR _loop() exit after this tick; do not join our own thread
+        # Claim the link atomically: check the generation and take the device in one _lock section
+        # (attach sets device + generation together under _lock), so a re-attach can never be torn
+        # down. The RF-off/close then goes to exactly the device this link owned.
         with self._lock:
+            if self._link_gen != gen:
+                return  # stale: the link this loop detected as lost was already replaced
+            dev = self.device
             self.device = None
             self._link_gen += 1
             self.armed = False
@@ -530,6 +559,16 @@ class Controller:
             self.latest_decision = None
             self.fault_reasons = ()
             self._last_setpoint_w = None
+        if dev is not None:
+            with self._io_lock:
+                try:
+                    dev.set_rf(False)
+                except Exception:  # noqa: BLE001 - best-effort RF-off; the link is already gone
+                    pass
+                try:
+                    dev.close()
+                except Exception:  # noqa: BLE001 - best-effort close; frees the port for reconnect
+                    pass
         self._last_sample_monotonic = None
         self._read_failures = 0
         self._reset_invalid_status()
