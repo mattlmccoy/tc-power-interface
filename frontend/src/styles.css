@@ -651,4 +651,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .app { grid-template-rows: auto auto 1fr; grid-template-columns: minmax(0, 1fr); }
   .topbar { flex-wrap: wrap; row-gap: 6px; padding-block: 6px; }
   .topbar .spacer { display: none; }
+  /* The connect popover is right-anchored to the status pill; once the bar wraps the pill sits
+     mid-bar and the 330 px popover hung off the left edge. Anchor it to the full-width bar instead:
+     a full-width sheet just below the bar, scrolling if it is taller than the screen. */
+  .topbar { position: relative; }
+  .connect-wrap { position: static; }
+  .connect-pop { left: 8px; right: 8px; width: auto; max-height: calc(100vh - 140px); overflow-y: auto; }
 }
