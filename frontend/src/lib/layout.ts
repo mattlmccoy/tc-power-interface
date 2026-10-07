@@ -1,5 +1,7 @@
 // Dashboard panel arrangement: which panels sit in which column, in what order, and which are folded.
 // Pure — the DashboardPage renders from it; persisted per browser via settings_store.
+import { fmtTemp } from "./format.ts";
+import { tempBar } from "./instrument.ts";
 import { loadSettings, storeSettings } from "./settings_store.ts";
 
 export const PANEL_IDS = [
@@ -80,4 +82,18 @@ export function saveLayout(storage: Storage | null, layout: Layout): void {
 
 function clone(l: Layout): Layout {
   return { left: [...l.left], right: [...l.right], collapsed: [...l.collapsed] };
+}
+
+/** One-line summary for a collapsed Generator panel: the internal temperature (+ its bar color). */
+export function generatorSummary(
+  t: { temperature_c: number | null } | null | undefined,
+  limits: { temperature_c_trip: number } | null | undefined,
+): { text: string; color: string | null } {
+  const temp = t?.temperature_c ?? null;
+  const text = `internal temp ${fmtTemp(temp)}`;
+  const color =
+    temp != null && Number.isFinite(temp) && limits
+      ? tempBar(temp, 25, limits.temperature_c_trip).color
+      : null;
+  return { text, color };
 }

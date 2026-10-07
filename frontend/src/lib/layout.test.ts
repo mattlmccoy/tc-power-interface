@@ -5,6 +5,7 @@ import {
   DEFAULT_LAYOUT,
   LAYOUT_KEY,
   PANEL_IDS,
+  generatorSummary,
   loadLayout,
   movePanel,
   normalizeLayout,
@@ -80,4 +81,12 @@ test("save/load round-trip; unavailable storage gives the default", () => {
   assert.deepEqual(loadLayout(null), DEFAULT_LAYOUT);
   s.setItem(LAYOUT_KEY, "{not json");
   assert.deepEqual(loadLayout(s), DEFAULT_LAYOUT);
+});
+
+test("generatorSummary: temp text + tempBar color; unknown is never 0 °C", () => {
+  const s = generatorSummary({ temperature_c: 41.2 }, { temperature_c_trip: 60 });
+  assert.equal(s.text, "internal temp 41.2 °C");
+  assert.match(s.color ?? "", /^hsl\(/);
+  assert.deepEqual(generatorSummary(null, { temperature_c_trip: 60 }), { text: "internal temp —", color: null });
+  assert.deepEqual(generatorSummary({ temperature_c: 30 }, undefined), { text: "internal temp 30.0 °C", color: null });
 });
