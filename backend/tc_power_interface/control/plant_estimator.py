@@ -4,6 +4,9 @@ K = a/b (°C per W) and τ = 1/b (s), by recursive least squares on a fixed 5 s 
 tick at or after each grid time is taken). Derivative = central difference of a centred 30 s
 moving average, so each update lags the newest sample by 20 s. T_amb = the temperature at the
 first RF-on grid sample. Pure: no I/O and no actuators. Spec §3.2 of the cockpit design.
+
+Confidence is a heuristic score in [0, 1] (it ignores the a-b covariance and the autocorrelation
+of the residuals), not a probability.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ RESID_ALPHA = 0.05
 MIN_UPDATES = 6
 COV_INIT = 100.0
 MIN_POWER_W = 1.0
+COV_TRACE_MAX = 2 * COV_INIT  # cap on trace(P): stops windup while the plant is held steady
 
 
 @dataclass(frozen=True)
@@ -49,22 +53,41 @@ class PlantEstimator:
         self._r2 = 0.0
         self._n = 0
         self._t_amb: float | None = None
-        self.grid_samples = 0
+        self._grid_samples = 0
+
+    @property
+    def grid_samples(self) -> int:
+        """Real samples taken so far (placeholders for missed grid steps are not counted)."""
+        return self._grid_samples
 
     def add(
         self, t_s: float, power_w: float, temp_c: float | None, *, rf_on: bool
     ) -> PlantEstimate:
+        """Offer one telemetry tick; returns the current estimate.
+
+        Callers must pass ``None`` for an unknown temperature (never 0) and call :meth:`reset`
+        at the start of each run. A non-finite temperature is treated as unknown and a
+        non-finite power as 0 W. If the tick lands more than one grid step past the next grid
+        time (a stalled poll loop), each missed step gets an unknown placeholder first, so the
+        derivative never spans compressed time.
+        """
         if self._t_next is not None and t_s < self._t_next:
             return self.estimate()
-        self._t_next = t_s + GRID_S if self._t_next is None else self._t_next + GRID_S
-        while self._t_next <= t_s:
-            self._t_next += GRID_S
-        p = float(power_w) if rf_on else 0.0
+        if self._t_next is None:
+            self._t_next = t_s + GRID_S
+        else:
+            missed = int((t_s - self._t_next) // GRID_S)
+            for _ in range(missed):
+                self._p.append(0.0)
+                self._t.append(None)
+            self._t_next += (missed + 1) * GRID_S
+        temp = float(temp_c) if temp_c is not None and math.isfinite(temp_c) else None
+        p = float(power_w) if rf_on and math.isfinite(power_w) else 0.0
         self._p.append(p)
-        self._t.append(temp_c)
-        self.grid_samples += 1
-        if self._t_amb is None and p >= MIN_POWER_W and temp_c is not None:
-            self._t_amb = float(temp_c)
+        self._t.append(temp)
+        self._grid_samples += 1
+        if self._t_amb is None and p >= MIN_POWER_W and temp is not None:
+            self._t_amb = temp
         self._update(len(self._t) - 1)
         return self.estimate()
 
@@ -92,6 +115,10 @@ class PlantEstimator:
             [(c[0][0] - gain[0] * pp[0]) / FORGET, (c[0][1] - gain[0] * pp[1]) / FORGET],
             [(c[1][0] - gain[1] * pp[0]) / FORGET, (c[1][1] - gain[1] * pp[1]) / FORGET],
         ]
+        trace = self._cov[0][0] + self._cov[1][1]
+        if trace > COV_TRACE_MAX:
+            scale = COV_TRACE_MAX / trace
+            self._cov = [[v * scale for v in row] for row in self._cov]
         self._r2 = (
             err * err if self._n == 0 else (1 - RESID_ALPHA) * self._r2 + RESID_ALPHA * err * err
         )

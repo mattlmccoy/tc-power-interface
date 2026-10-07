@@ -3,10 +3,13 @@
 Real-data expectations come from the captured 10-02 run.
 """
 import json
+import math
 import random
 from pathlib import Path
 
-from tc_power_interface.control.plant_estimator import PlantEstimator
+import pytest
+
+from tc_power_interface.control.plant_estimator import COV_INIT, PlantEstimator
 
 FIX = json.loads(
     (Path(__file__).parent / "fixtures/flir_20261002_125228_estimator.json").read_text()
@@ -14,16 +17,28 @@ FIX = json.loads(
 SERIES = list(zip(FIX["t_s"], FIX["forward_w"], FIX["rois"]["freehand_sample"], strict=True))
 
 
-def _simulate(k, tau, profile, noise, dt=0.5, t0=24.0, seed=0):
-    """First-order plant dT/dt = (K/tau)P - (T-T0)/tau, sampled every dt with seeded noise."""
+def _simulate(k, tau, profile, noise, dt=0.5, t0=24.0, seed=0, gap=None, corrupt=None):
+    """First-order plant dT/dt = (K/tau)P - (T-T0)/tau, sampled every dt with seeded noise.
+
+    gap=(t_start, t_end) drops every telemetry tick in that window (the plant keeps evolving);
+    corrupt=f(t, temp, power) -> (temp, power) lets a test inject bad readings.
+    """
     rng = random.Random(seed)
     est, temp, out = PlantEstimator(), t0, None
     for n in range(int(profile[-1][0] / dt)):
         t = n * dt
         p = next(w for t_end, w in profile if t < t_end)
         temp += (k / tau * p - (temp - t0) / tau) * dt
-        out = est.add(t, p, temp + rng.gauss(0, noise), rf_on=True)
+        if gap is not None and gap[0] <= t < gap[1]:
+            continue
+        reading, power = temp + rng.gauss(0, noise), p
+        if corrupt is not None:
+            reading, power = corrupt(t, reading, power)
+        out = est.add(t, power, reading, rf_on=True)
     return out
+
+
+STEPS = [(180, 20), (360, 40), (540, 60), (720, 40)]
 
 
 def test_power_steps_recover_gain_and_time_constant_within_10_percent():
@@ -77,3 +92,95 @@ def test_reset_starts_a_new_run():
         est.add(t, p, temp, rf_on=p >= 1)
     est.reset()
     assert est.estimate().updates == 0 and est.estimate().t_amb_c is None
+
+
+def test_a_telemetry_gap_does_not_compress_time():
+    # 120 s of dropped ticks mid-run: the derivative must never span the hole.
+    e = _simulate(0.5, 150, STEPS, noise=0.05, gap=(300, 420))
+    assert e.valid
+    assert abs(e.tau_s - 150) / 150 < 0.10
+    assert abs(e.k_c_per_w - 0.5) / 0.5 < 0.10
+
+
+def test_slow_ticks_are_never_confidently_wrong():
+    # 6 s ticks do not fit the 5 s grid; the estimate may refuse, but must not be wrong.
+    e = _simulate(0.5, 150, STEPS, noise=0.05, dt=6.0)
+    assert (not e.valid) or abs(e.tau_s - 150) / 150 < 0.10
+
+
+def test_a_nan_temperature_does_not_poison_the_filter():
+    def corrupt(t, temp, power):
+        return (float("nan"), power) if 300 <= t < 301 else (temp, power)
+
+    e = _simulate(0.5, 150, STEPS, noise=0.05, corrupt=corrupt)
+    assert e.valid and math.isfinite(e.k_c_per_w) and math.isfinite(e.tau_s)
+    assert abs(e.k_c_per_w - 0.5) / 0.5 < 0.10
+    assert abs(e.tau_s - 150) / 150 < 0.10
+
+
+def test_a_nan_or_inf_power_is_treated_as_zero_not_poison():
+    def corrupt(t, temp, power):
+        if 300 <= t < 301:
+            return temp, float("nan")
+        if 400 <= t < 401:
+            return temp, float("inf")
+        return temp, power
+
+    e = _simulate(0.5, 150, STEPS, noise=0.05, corrupt=corrupt)
+    assert e.valid and math.isfinite(e.k_c_per_w) and math.isfinite(e.tau_s)
+    assert abs(e.tau_s - 150) / 150 < 0.10
+
+
+def test_two_hour_steady_hold_does_not_wind_up_the_covariance():
+    hold = STEPS + [(720 + 7200, 40)]
+    e = _simulate(0.5, 150, hold, noise=0.05)
+    assert e.valid
+    assert abs(e.k_c_per_w - 0.5) / 0.5 < 0.10
+    assert abs(e.tau_s - 150) / 150 < 0.10
+    assert e.confidence >= 0.5
+
+
+def test_zero_confidence_fit_is_reported_as_still_learning():
+    # Pins the confidence>0 gate: >=6 updates and a,b>0, but the covariance says the fit is noise.
+    est = PlantEstimator()
+    est._theta, est._cov, est._r2, est._n = [0.01, 0.02], [[1.0, 0.0], [0.0, 1.0]], 1.0, 10
+    e = est.estimate()
+    assert not e.valid and e.confidence == 0.0 and e.k_c_per_w is None and e.tau_s is None
+
+
+def test_half_second_ticks_give_one_sample_per_five_seconds():
+    est = PlantEstimator()
+    for n in range(1440):  # 720 s
+        est.add(n * 0.5, 40.0, 24.0, rf_on=True)
+    assert est.grid_samples == 144
+
+
+def test_a_late_tick_takes_its_slot_and_the_grid_does_not_drift():
+    est = PlantEstimator()
+    est.add(0.0, 40.0, 24.0, rf_on=True)
+    est.add(5.3, 40.0, 24.0, rf_on=True)  # late: still one sample
+    assert est.grid_samples == 2
+    est.add(9.9, 40.0, 24.0, rf_on=True)  # next grid time is 10.0, not 10.3
+    assert est.grid_samples == 2
+    est.add(10.0, 40.0, 24.0, rf_on=True)
+    assert est.grid_samples == 3
+
+
+def test_a_tick_before_the_next_grid_time_adds_no_sample():
+    est = PlantEstimator()
+    est.add(0.0, 40.0, 24.0, rf_on=True)
+    est.add(2.0, 40.0, 24.0, rf_on=True)
+    assert est.grid_samples == 1
+
+
+def test_grid_samples_is_read_only():
+    est = PlantEstimator()
+    with pytest.raises(AttributeError):
+        est.grid_samples = 5  # type: ignore[misc]
+
+
+def test_covariance_trace_is_capped_during_a_long_steady_hold():
+    est = PlantEstimator()
+    for n in range(int(7200 / 0.5)):  # 2 h dead-steady: the b direction is unexcited
+        est.add(n * 0.5, 40.0, 24.0, rf_on=True)
+    assert est._cov[0][0] + est._cov[1][1] <= 2 * COV_INIT + 1e-9
