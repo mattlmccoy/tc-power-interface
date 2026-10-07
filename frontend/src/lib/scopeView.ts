@@ -163,6 +163,25 @@ export function appendSample(buf: Sample[], r: ScopeReading | null | undefined, 
   return out.length > cap ? out.slice(out.length - cap) : out;
 }
 
+/** Client-side sense-loop history: trend samples + the readings behind the level table. */
+export interface ScopeHistory { samples: Sample[]; readings: ScopeReading[] }
+
+/**
+ * Fold the latest scope status into the history. Readings dedupe by host_timestamp_ns (kept even
+ * when the scope is stale); trend samples skip a stale scope and are blanked when RF is off or the
+ * reading is invalid. Returns the SAME object when nothing changed, so a React state update bails.
+ */
+export function advanceScopeHistory(
+  h: ScopeHistory, scope: ScopeStatus | undefined, caps: { samples: number; readings: number },
+): ScopeHistory {
+  const latest = scope?.latest ?? null;
+  const readings = latest && h.readings.at(-1)?.host_timestamp_ns !== latest.host_timestamp_ns
+    ? [...h.readings.slice(-(caps.readings - 1)), latest]
+    : h.readings;
+  const samples = appendSample(h.samples, scope?.stale ? null : latest, caps.samples);
+  return readings === h.readings && samples === h.samples ? h : { samples, readings };
+}
+
 /** Points in the last windowS seconds (t relative to now, s); a null point breaks the line at any
  * gap longer than gapS (stall / disconnect) so the trace never bridges missing data. */
 export function trendSeries(buf: Sample[], nowNs: number, windowS: number, gapS: number): TrendPoint[] {

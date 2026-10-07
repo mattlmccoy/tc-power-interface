@@ -1,25 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 
 import { api, detail } from "../lib/api.ts";
-import type { ScopeReading, ScopeStatus } from "../lib/scope.ts";
-import { scopeMock } from "../lib/scopeMock.ts";
+import type { ScopeStatus } from "../lib/scope.ts";
+import { SCOPE_MOCK as MOCK } from "../lib/scopeMockEnv.ts";
 import {
-  activeLevel, appendSample, autoOpenSettings, configSummary, flagBanners, heroModel, levelCard,
+  activeLevel, autoOpenSettings, configSummary, flagBanners, heroModel, levelCard,
   levelTable, scopePill, trendSeries,
 } from "../lib/scopeView.ts";
-import type { Meter, Sample } from "../lib/scopeView.ts";
+import type { Meter, ScopeHistory } from "../lib/scopeView.ts";
 import { ScopeTrend } from "./ScopeTrend.tsx";
 import { SenseLoopSettings } from "./SenseLoopSettings.tsx";
 
 const WINDOW_S = 300; // trend strip: last 5 minutes
 const GAP_S = 3; // a longer gap between readings (stall / disconnect) breaks the trace
-const SAMPLE_CAP = 6000; // 5 min at up to 20 Hz
-const READING_CAP = 2000;
-
-/** Screenshot fixtures, only in a `vite build --mode scopemock` build (tree-shaken otherwise). */
-const MOCK = import.meta.env.MODE === "scopemock"
-  ? scopeMock(new URLSearchParams(window.location.search).get("scopeMock") ?? "live")
-  : null;
 
 function MeterBar({ m }: { m: Meter }) {
   return (
@@ -37,17 +30,11 @@ function MeterBar({ m }: { m: Meter }) {
   );
 }
 
-export function SenseLoopPanel({ scope: real }: { scope: ScopeStatus | undefined }) {
+/** `history` is owned by `useScopeHistory` at App level so it survives a tab switch (this panel unmounts). */
+export function SenseLoopPanel({ scope: real, history }: { scope: ScopeStatus | undefined; history: ScopeHistory }) {
   const scope = MOCK?.scope ?? real;
   const latest = scope?.latest ?? null;
 
-  // Client-side history: trend samples (blanked when RF off / invalid) and readings for the table.
-  const samples = useRef<Sample[]>(MOCK?.samples ?? []);
-  const readings = useRef<ScopeReading[]>(MOCK?.readings ?? []);
-  if (latest && readings.current.at(-1)?.host_timestamp_ns !== latest.host_timestamp_ns) {
-    readings.current = [...readings.current.slice(-(READING_CAP - 1)), latest];
-  }
-  samples.current = appendSample(samples.current, scope?.stale ? null : latest, SAMPLE_CAP);
   const [nowNs, setNowNs] = useState(() => Date.now() * 1e6);
   useEffect(() => {
     const id = window.setInterval(() => setNowNs(Date.now() * 1e6), 1000);
@@ -103,8 +90,8 @@ export function SenseLoopPanel({ scope: real }: { scope: ScopeStatus | undefined
   const hero = heroModel(scope);
   const lvl = levelCard(scope);
   const banners = flagBanners(latest?.flags);
-  const rows = levelTable(readings.current, activeLevel(scope));
-  const points = trendSeries(samples.current, nowNs, WINDOW_S, GAP_S);
+  const rows = levelTable(history.readings, activeLevel(scope));
+  const points = trendSeries(history.samples, nowNs, WINDOW_S, GAP_S);
   const lim = (scope?.settings?.limits ?? {}) as Record<string, number>;
   const warnV = lim.probe_warn_v ?? 65;
   const hardV = lim.probe_hard_v ?? 70;
