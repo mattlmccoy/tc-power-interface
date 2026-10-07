@@ -80,6 +80,68 @@ class TestConnectPreservesCaps:
         assert dev.forced == 1
 
 
+class _GlitchyModeDevice(_ModeDevice):
+    """_ModeDevice whose first ``n_invalid`` telemetry reads raise InvalidStatusWord (the 0xFFFF
+    glitch), then report the fixed manual_mode — for connect()'s mode-read retry."""
+
+    def __init__(self, manual_mode: bool, n_invalid: int):
+        super().__init__(manual_mode)
+        self.n_invalid = n_invalid
+        self.reads = 0
+
+    def read_telemetry(self) -> Telemetry:
+        self.reads += 1
+        if self.reads <= self.n_invalid:
+            raise _invalid_word()
+        return super().read_telemetry()
+
+
+class TestConnectRetriesGarbledStatus:
+    """A garbled status word on connect must NOT be read as 'mode unreadable' (which forces
+    manual and RESETS the AIT cap DACs, wiping a hand tune). Retry up to 3 attempts on
+    InvalidStatusWord."""
+
+    def test_one_invalid_then_manual_does_not_force_manual(self):
+        dev = _GlitchyModeDevice(manual_mode=True, n_invalid=1)
+        c = Controller(dev, poll_interval_s=0.01)
+        c._connect_retry_sleep_s = 0.0
+        c.connect()
+        assert c.state is ControllerState.CONNECTED
+        assert dev.forced == 0  # caps kept
+        assert dev.reads == 2
+
+    def test_one_invalid_then_not_manual_still_forces_manual(self):
+        dev = _GlitchyModeDevice(manual_mode=False, n_invalid=1)
+        c = Controller(dev, poll_interval_s=0.01)
+        c._connect_retry_sleep_s = 0.0
+        c.connect()
+        assert dev.forced == 1
+        assert dev.reads == 2
+
+    def test_three_invalid_falls_back_to_forcing_manual(self):
+        dev = _GlitchyModeDevice(manual_mode=True, n_invalid=3)
+        c = Controller(dev, poll_interval_s=0.01)
+        c._connect_retry_sleep_s = 0.0
+        c.connect()
+        assert dev.reads == 3  # three attempts, no more
+        assert dev.forced == 1  # unchanged fallback: unreadable mode -> force manual
+        assert c.state is ControllerState.CONNECTED
+
+    def test_other_read_errors_are_not_retried(self):
+        class _Dead(_ModeDevice):
+            reads = 0
+
+            def read_telemetry(self) -> Telemetry:
+                self.reads += 1
+                raise TimeoutError("no reply")
+
+        dev = _Dead(manual_mode=True)
+        c = Controller(dev, poll_interval_s=0.01)
+        c.connect()
+        assert dev.reads == 1  # today's behavior exactly: one read, then force manual
+        assert dev.forced == 1
+
+
 class TestGuardedRf:
     def test_enable_rf_refused_before_connect(self):
         c = make_controller()

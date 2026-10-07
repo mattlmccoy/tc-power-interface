@@ -37,6 +37,11 @@ class ControllerState(enum.Enum):
 class Controller:
     """Own the control lease, stream telemetry, and enforce protection."""
 
+    #: connect() mode read: total attempts when the status word is garbled (InvalidStatusWord).
+    _CONNECT_MODE_READ_ATTEMPTS = 3
+    #: Pause between those attempts (instance-overridable for tests).
+    _connect_retry_sleep_s = 0.1
+
     def __init__(
         self,
         device: Any,
@@ -130,11 +135,23 @@ class Controller:
         # SAFETY: the built-in auto-tuner must never run. Forcing manual mode guarantees that, but it
         # also zeroes the caps — so only do it if we can't confirm the generator is already manual.
         already_manual = False
-        with self._io_lock:
-            try:
-                already_manual = bool(self.device.read_telemetry().manual_mode)
-            except Exception:  # noqa: BLE001 - unreadable mode -> force manual below, never risk ATUNE
-                already_manual = False
+        # A garbled status word (InvalidStatusWord, e.g. the 0xFFFF of 2026-10-07) is NOT "mode
+        # unreadable": falling through would force manual and reset a hand-tuned AIT. Retry it up
+        # to _CONNECT_MODE_READ_ATTEMPTS total; only if every attempt is garbled use the fallback.
+        # Any other read error keeps the original single-read behavior.
+        for attempt in range(self._CONNECT_MODE_READ_ATTEMPTS):
+            with self._io_lock:
+                try:
+                    already_manual = bool(self.device.read_telemetry().manual_mode)
+                    break
+                except InvalidStatusWord as exc:
+                    logger.warning("connect mode read %d garbled: %s", attempt + 1, exc)
+                    already_manual = False
+                except Exception:  # noqa: BLE001 - unreadable mode -> force manual, never ATUNE
+                    already_manual = False
+                    break
+            if attempt + 1 < self._CONNECT_MODE_READ_ATTEMPTS:
+                time.sleep(self._connect_retry_sleep_s)
         if not already_manual:
             with self._io_lock:
                 self.device.force_manual_mode()  # only when needed; this resets the caps
