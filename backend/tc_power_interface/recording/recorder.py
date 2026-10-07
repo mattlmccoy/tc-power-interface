@@ -100,6 +100,8 @@ class TelemetryRecorder:
     def add_finalizer(self, fn: Callable[[Path], list[str]]) -> None:
         """Register a callback run at stop(), before the manifest.
 
+        Registered once; runs at every stop() for the recorder's lifetime.
+
         Returned file names (relative to the run dir) are checksummed into the manifest. A failing
         finalizer is logged and recorded as an event, never raised."""
         self._finalizers.append(fn)
@@ -222,7 +224,6 @@ class TelemetryRecorder:
             except Exception as exc:  # noqa: BLE001 - a broken finalizer must not lose the run
                 logger.exception("recorder finalizer failed")
                 self.event("finalizer_failed", {"error": str(exc)})
-        self._finalizers = []
 
         (run_dir / "events.json").write_text(json.dumps(self._events, indent=2))
         checksums: dict[str, str] = {

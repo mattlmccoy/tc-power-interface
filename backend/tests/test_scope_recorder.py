@@ -87,3 +87,22 @@ def test_waveform_saved_once_per_level_and_invalid_never(tmp_path: Path) -> None
     sr.record(_reading(50, 50.0), t=[0.0], v=[2.0], header={})
     sr.finalize()
     assert (tmp_path / "scope_waveforms" / "50W.csv").read_text().strip().endswith("1.0")
+
+
+def test_finalizer_runs_on_every_run(tmp_path: Path) -> None:
+    rec = TelemetryRecorder(tmp_path)
+
+    def fin(d: Path) -> list[str]:
+        (d / "extra.csv").write_text("x\n")
+        return ["extra.csv"]
+
+    rec.add_finalizer(fin)
+    runs = []
+    for name in ("a", "b"):
+        runs.append(rec.start(name, {}))
+        rec.stop()
+    assert runs[0] != runs[1]
+    for run in runs:
+        assert (run / "extra.csv").exists()
+        man = json.loads((run / "manifest.json").read_text())
+        assert "extra.csv" in man["checksums"]
