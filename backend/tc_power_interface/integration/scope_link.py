@@ -112,7 +112,8 @@ class ScopeLink:
         # stop() returns no reading from that generation can still reach on_reading.
         self._publish = threading.Lock()
         self._status: dict[str, Any] = {"running": False, "connected": False, "error": None,
-                                        "last_ns": None, "rate_hz": None}
+                                        "last_ns": None, "rate_hz": None,
+                                        "callback_error": None}
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -135,7 +136,7 @@ class ScopeLink:
         stop = threading.Event()
         with self._lock:
             self._stop = stop
-            self._status.update(running=True, error=None)
+            self._status.update(running=True, error=None, callback_error=None)
         self._thread = threading.Thread(
             target=self._run, args=(settings, stop), name="tcp-scope", daemon=True
         )
@@ -150,6 +151,17 @@ class ScopeLink:
                 logger.warning("scope poll thread still blocked after stop(); it exits on its own")
             self._thread = None
         self._set(running=False, connected=False)
+
+    def _deliver(self, stop: threading.Event, r: Reading) -> None:
+        """Hand a reading to the consumer. A consumer failure (disk full, a bug) is NOT a scope
+        fault: report it as callback_error and keep the VISA session open."""
+        try:
+            self._on_reading(r)
+        except Exception as exc:  # noqa: BLE001 - consumer errors must not tear down the link
+            logger.exception("scope reading consumer failed")
+            self._set_if_current(stop, callback_error=f"{type(exc).__name__}: {exc}")
+        else:
+            self._set_if_current(stop, callback_error=None)
 
     def _run(self, s: ScopeSettings, stop: threading.Event) -> None:
         while not stop.is_set():
@@ -173,7 +185,7 @@ class ScopeLink:
                     with self._publish:
                         if not self._set_if_current(stop, last_ns=time.time_ns(), rate_hz=rate):
                             break  # superseded while blocked in acquire: drop the reading
-                        self._on_reading(Reading(time.time_ns(), cap, fit))
+                        self._deliver(stop, Reading(time.time_ns(), cap, fit))
                     last = now
                     stop.wait(s.poll_interval_s)
             except Exception as exc:  # noqa: BLE001 - VISA/USB errors are varied; report and retry

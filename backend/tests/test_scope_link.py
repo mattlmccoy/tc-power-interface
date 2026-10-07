@@ -107,3 +107,33 @@ def test_restart_after_join_timeout_leaves_one_poller_and_drops_old_readings():
     assert not old.is_alive()  # the superseded thread exits on its own stop event
     assert all(ident != old.ident for ident, g in got if g == 1)  # and never publishes again
     assert any(g == 1 for _, g in got)  # the new generation does read
+
+
+def test_callback_error_is_reported_separately_and_does_not_reconnect():
+    opens = []
+    calls = {"n": 0}
+
+    def on_reading(_r):
+        calls["n"] += 1
+        if calls["n"] <= 3:
+            raise OSError("disk full")
+
+    def opener(_r):
+        opens.append(1)
+        return FakeScope()
+
+    link = ScopeLink(opener=opener, on_reading=on_reading, backoff_s=0.05)
+    link.start(ScopeSettings(resource="USB0::fake", poll_interval_s=0.01))
+    deadline = time.monotonic() + 2.0
+    seen_err = None
+    while time.monotonic() < deadline and calls["n"] < 6:
+        st = link.status()
+        seen_err = seen_err or st.get("callback_error")
+        time.sleep(0.005)
+    st = link.status()
+    link.stop()
+    assert seen_err is not None and "disk full" in seen_err
+    assert opens == [1]  # VISA session never torn down
+    assert st["connected"] is True and st["error"] is None
+    assert st["callback_error"] is None  # cleared by the next successful callback
+    assert calls["n"] >= 6  # readings continued
