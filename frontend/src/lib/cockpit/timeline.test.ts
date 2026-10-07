@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { showLevelsOffLine, tempRange, tickStep, timeWindow } from "./timeline.ts";
+import { axisStep, showLevelsOffLine, tempRange, tickStep, timeWindow } from "./timeline.ts";
 
 test("live window: last 15 min, or the whole buffer", () => {
   assert.deepEqual(timeWindow(1200, "15", 0), [300, 1200]);
@@ -71,4 +71,15 @@ test("the levels-off line needs a known run mode and a finite plateau", () => {
   assert.equal(showLevelsOffLine("something-new", { show: true, plateau_c: 60 }), false);
   assert.equal(showLevelsOffLine("ladder", { show: true, plateau_c: null }), false);
   assert.equal(showLevelsOffLine("ladder", { show: true, plateau_c: Number.NaN }), false);
+});
+
+test("axisStep: the smallest 1-2-5 step that keeps gridlines at least minPx apart", () => {
+  assert.equal(axisStep(10, 200, 18), 1); // 20 px per degree
+  assert.equal(axisStep(169, 200, 18), 20); // 18 → 187 °C in a 200 px lane: 10 would be 11.8 px apart
+  assert.equal(axisStep(610, 140, 18), 100); // a 0–610 W power lane in 140 px
+  assert.equal(axisStep(50, 140, 18), 10);
+  assert.equal(axisStep(5000, 100, 20), 1000);
+  assert.equal(axisStep(0, 100), null);
+  assert.equal(axisStep(10, 0), null);
+  assert.equal(axisStep(Number.NaN, 100), null);
 });

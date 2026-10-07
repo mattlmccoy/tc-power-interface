@@ -1,7 +1,9 @@
 // Pure helpers for the live cockpit, computed from the history buffer (lib/cockpit/history.ts) and
 // the latest telemetry. No DOM/React — unit-tested in live.test.ts.
 
+import { mmss } from "./format.ts";
 import type { CockpitSample } from "./history.ts";
+import type { Shadow } from "./shadowText.ts";
 
 const NS = 1e9;
 const fin = (x: number | null | undefined): x is number => x != null && Number.isFinite(x);
@@ -123,4 +125,19 @@ export function toggleWatch(current: string[], name: string, on: boolean, contro
   if (!on) return current.filter((n) => n !== name);
   if (name === controlRoi || current.includes(name) || current.length >= MAX_WATCH) return current;
   return [...current, name];
+}
+
+/**
+ * The Target card's time-to-target line. Only to-temperature mode has one. The backend sends `ttt_s`
+ * null when the part temperature is unknown (then `plateau_c` is null too) or the target is out of
+ * reach at the current power (control/cockpit.py `_shadow_block`); those are said, not blanked.
+ */
+export function tttText(mode: string, s: Shadow | undefined, targetC: number): string {
+  if (mode !== "target") return "Set in To-temperature mode.";
+  if (!s || !s.valid) return "No estimate yet.";
+  if (fin(s.ttt_s)) return `≈ ${mmss(s.ttt_s)} to target at your power`;
+  if (!fin(s.plateau_c)) return "Waiting for part temperature.";
+  if (fin(targetC) && s.plateau_c < targetC)
+    return `Won't reach it at your power (levels off ≈ ${Math.round(s.plateau_c)} °C).`;
+  return "Time to target unknown.";
 }

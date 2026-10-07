@@ -36,3 +36,20 @@ export function tempRange(values: (number | null)[], extras: number[]): [number,
 export function showLevelsOffLine(mode: string, s: { show: boolean; plateau_c: number | null }): boolean {
   return (mode === "ladder" || mode === "fixed") && s.show && s.plateau_c != null && Number.isFinite(s.plateau_c);
 }
+
+/**
+ * Gridline step for a value axis: the smallest 1-2-5 × 10^k step that keeps gridlines at least
+ * `minPx` apart when `range` spans `px` pixels. Null when range or px is not positive and finite.
+ */
+export function axisStep(range: number, px: number, minPx = 18): number | null {
+  if (!(Number.isFinite(range) && range > 0 && Number.isFinite(px) && px > 0)) return null;
+  const needed = (range * minPx) / px;
+  const k = Math.floor(Math.log10(needed));
+  for (const e of [k, k + 1]) {
+    for (const m of [1, 2, 5]) {
+      const step = m * 10 ** e;
+      if (step >= needed - 1e-9) return e < 0 ? Number(step.toFixed(-e)) : step;
+    }
+  }
+  return 10 ** (k + 2);
+}

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { CockpitSample } from "./history.ts";
-import { matchStatus, partRate, retuneNs, runStats, toggleWatch, WATCH_DEFAULTS } from "./live.ts";
+import { matchStatus, partRate, retuneNs, runStats, toggleWatch, tttText, WATCH_DEFAULTS } from "./live.ts";
+import type { Shadow } from "./shadowText.ts";
 
 const S = 1e9; // ns per second
 const smp = (tS: number, o: Partial<CockpitSample> = {}): CockpitSample => ({
@@ -69,4 +70,20 @@ test("toggleWatch: adds/removes, never the control ROI, at most 4", () => {
   assert.deepEqual(toggleWatch(["a", "b", "c", "d"], "e", true, null), ["a", "b", "c", "d"]);
   assert.deepEqual(toggleWatch(["a"], "a", true, null), ["a"]);
   assert.deepEqual(WATCH_DEFAULTS, { tempC: 45, ratePerMin: 3, provisional: true });
+});
+
+const sh = (o: Partial<Shadow> = {}): Shadow => ({
+  valid: true, why: null, k_c_per_w: 0.5, tau_s: 150, confidence: 0.7, t_amb_c: 22, updates: 40,
+  suggest_w: 60, plateau_c: 70, settle_s: 200, ttt_s: 125, show: true, ...o,
+});
+
+test("tttText: time to target only in to-temperature mode; unreachable and unknown are named", () => {
+  assert.equal(tttText("ladder", sh(), 55), "Set in To-temperature mode.");
+  assert.equal(tttText("target", undefined, 55), "No estimate yet.");
+  assert.equal(tttText("target", sh({ valid: false }), 55), "No estimate yet.");
+  assert.equal(tttText("target", sh(), 55), "≈ 2:05 to target at your power");
+  assert.equal(tttText("target", sh({ ttt_s: null, plateau_c: 48.4 }), 55), "Won't reach it at your power (levels off ≈ 48 °C).");
+  assert.equal(tttText("target", sh({ ttt_s: null, plateau_c: null }), 55), "Waiting for part temperature.");
+  assert.equal(tttText("target", sh({ ttt_s: null, plateau_c: 70 }), 55), "Time to target unknown.");
+  assert.equal(tttText("target", sh({ ttt_s: null, plateau_c: 48 }), Number.NaN), "Time to target unknown.");
 });
