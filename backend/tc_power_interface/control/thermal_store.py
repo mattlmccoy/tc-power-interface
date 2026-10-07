@@ -80,13 +80,19 @@ def load_source(root: Path, *, default_type: str) -> dict[str, Any]:
 
 
 def save_source(root: Path, source: dict[str, Any]) -> None:
+    """Persist the source choice. A caller that omits ``"watch"`` keeps the stored watch list; an
+    explicit ``[]`` clears it."""
+    if "watch" in source:
+        watch = _watch_list(source["watch"])
+    else:
+        watch = load_source(root, default_type="simulated")["watch"]
     Path(root).mkdir(parents=True, exist_ok=True)
     (Path(root) / SOURCE_NAME).write_text(
         json.dumps(
             {
                 "type": source.get("type"),
                 "roi": source.get("roi"),
-                "watch": _watch_list(source.get("watch", [])),
+                "watch": watch,
             }
         )
     )

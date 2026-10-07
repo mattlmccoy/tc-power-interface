@@ -1,6 +1,7 @@
 """Watched ROIs (transformer cores first): each one's mean temperature or a reason, plus the rate of
-rise over a trailing 60 s window of VALID samples (None until the window spans 60 s). Display and
-warn only (D3); the RF-off interlock is a separate build (v0.18). Pure."""
+rise over a trailing window of VALID samples that spans AT LEAST 60 s (sparse ticks stretch it; None
+until it does). Display and warn only (D3); the RF-off interlock is a separate build (v0.18).
+Pure."""
 
 from __future__ import annotations
 
@@ -33,8 +34,8 @@ class CoreWatch:
     def update(
         self, t_s: float, roi_temps: list[dict[str, Any]], names: list[str]
     ) -> list[dict[str, Any]]:
-        by_name = {r.get("name"): r for r in roi_temps}
-        watched = names[:MAX_WATCH]
+        by_name = {r["name"]: r for r in roi_temps if isinstance(r.get("name"), str)}
+        watched = list(dict.fromkeys(n for n in names if isinstance(n, str) and n))[:MAX_WATCH]
         for gone in set(self._hist) - set(watched):
             del self._hist[gone]
         out: list[dict[str, Any]] = []
