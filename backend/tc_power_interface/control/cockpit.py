@@ -45,6 +45,11 @@ class CockpitObserver:
         self._suggest: float | None = None
         self._estimate: PlantEstimate = self._est.estimate()
 
+    @property
+    def grid_samples(self) -> int:
+        """5 s grid samples the estimator has taken this run (the shadow steps once per sample)."""
+        return self._est.grid_samples
+
     def observe(
         self,
         *,

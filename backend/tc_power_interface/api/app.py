@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import platform
 import time
 from collections.abc import AsyncIterator
@@ -64,6 +65,11 @@ from tc_power_interface.integration.flir_link import FlirLink
 from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
 from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
+from tc_power_interface.recording.replay_shadow import (
+    has_roi_data,
+    recorded_rois,
+    replay_shadow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1196,20 +1202,53 @@ def create_app(
                             "run": d.name,
                             "complete": (d / "manifest.json").is_file(),
                             "size_bytes": csv_file.stat().st_size,
+                            "has_roi_data": has_roi_data(d),
                         }
                     )
         return {"runs": runs}
 
-    @app.get("/api/recordings/{run}/telemetry.csv")
-    def download_recording(run: str) -> FileResponse:
+    def _run_dir(run: str) -> Path:
+        """The run's directory directly under the experiments root: 400 on any path traversal or
+        nested path, 404 if it does not exist."""
         root = experiments_root.resolve()
         target = (root / run).resolve()
         if target.parent != root:  # reject path traversal / nested paths
             raise HTTPException(status_code=400, detail="invalid run name")
-        csv_file = target / "telemetry.csv"
+        if not target.is_dir():
+            raise HTTPException(status_code=404, detail="no such recording")
+        return target
+
+    @app.get("/api/recordings/{run}/telemetry.csv")
+    def download_recording(run: str) -> FileResponse:
+        csv_file = _run_dir(run) / "telemetry.csv"
         if not csv_file.is_file():
             raise HTTPException(status_code=404, detail="no such recording")
         return FileResponse(csv_file, media_type="text/csv", filename=f"{run}_telemetry.csv")
+
+    @app.get("/api/recordings/{run}/rois")
+    def recording_rois(run: str) -> dict[str, Any]:
+        return {"rois": recorded_rois(_run_dir(run))}
+
+    @app.get("/api/recordings/{run}/events.json")
+    def recording_events(run: str) -> FileResponse:
+        path = _run_dir(run) / "events.json"
+        if not path.is_file():  # written only on a clean stop
+            raise HTTPException(status_code=404, detail="no events for this recording")
+        return FileResponse(path, media_type="application/json")
+
+    @app.get("/api/recordings/{run}/shadow")
+    def recording_shadow(
+        run: str, roi: str, target: float, ceiling: float = 200.0
+    ) -> dict[str, Any]:
+        """Re-run the live shadow loop (same code) over the recording on ``roi``. Sync on purpose:
+        FastAPI runs it in the threadpool, so a long replay never blocks the event loop."""
+        if not (math.isfinite(target) and math.isfinite(ceiling)) or ceiling < 0:
+            raise HTTPException(status_code=422, detail="target and ceiling must be finite numbers")
+        run_dir = _run_dir(run)
+        try:
+            return replay_shadow(run_dir, roi=roi, target_c=target, ceiling_w=ceiling)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/auto-log")
     def get_auto_log() -> dict[str, Any]:

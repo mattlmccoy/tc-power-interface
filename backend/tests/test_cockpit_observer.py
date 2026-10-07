@@ -220,3 +220,13 @@ def test_cannot_actuate_by_construction():
     src = inspect.getsource(cockpit)
     for forbidden in ("set_setpoint", "enable_rf", "set_tune", "set_load"):
         assert forbidden not in src
+
+
+def test_grid_samples_counts_the_estimators_real_grid_samples():
+    obs = CockpitObserver()
+    assert obs.grid_samples == 0
+    _feed(obs, 0.0, 0)
+    _feed(obs, 0.5, 0)  # inside the same 5 s grid step: no new sample
+    assert obs.grid_samples == 1
+    _feed(obs, 5.0, 1)
+    assert obs.grid_samples == 2
