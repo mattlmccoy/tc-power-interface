@@ -32,10 +32,13 @@ from tc_power_interface.integration.scope_settings import (
 from tc_power_interface.recording.recorder import TelemetryRecorder
 from tc_power_interface.recording.scope_recorder import ScopeRecorder
 
-__all__ = ["EVENT_FLAGS", "ScopeHub"]
+__all__ = ["EVENT_FLAGS", "STALE_MIN_S", "STALE_POLLS", "ScopeHub"]
 
 #: Flags that become run events (on onset only, so a persistent condition logs once per episode).
 EVENT_FLAGS = ("probe_warn", "probe_hard", "flux_stop", "clipped", "attn_mismatch")
+#: A reading older than max(STALE_MIN_S, STALE_POLLS x poll interval) is not shown as live.
+STALE_MIN_S = 2.0
+STALE_POLLS = 5
 _TELEMETRY_KEYS = ("forward_w", "reverse_w", "tune_cap_percent", "load_cap_percent")
 
 
@@ -70,10 +73,17 @@ class ScopeHub:
     def connect(self) -> None:
         if not self.settings.resource:
             raise ValueError("set a VISA resource first")
+        self.link.stop()
+        self._clear_latest()  # a new session never shows the previous session's reading
         self.link.start(self.settings)
 
     def disconnect(self) -> None:
         self.link.stop()
+        self._clear_latest()
+
+    def _clear_latest(self) -> None:
+        with self._lock:
+            self._latest = None
 
     @staticmethod
     def resources() -> list[str]:
@@ -178,6 +188,11 @@ class ScopeHub:
         with self._lock:
             latest = None if self._latest is None else dict(self._latest)
         st = self.link.status()
+        stale = False
         if not st["connected"]:
             latest = None  # no data is shown as no data, never as stale or zero values
-        return {"status": st, "latest": latest, "settings": asdict(self.settings)}
+        elif latest is not None:
+            max_age_s = max(STALE_MIN_S, STALE_POLLS * self.settings.poll_interval_s)
+            if (time.time_ns() - int(latest["host_timestamp_ns"])) / 1e9 > max_age_s:
+                latest, stale = None, True  # link up but stalled: the last reading is not live
+        return {"status": st, "latest": latest, "stale": stale, "settings": asdict(self.settings)}

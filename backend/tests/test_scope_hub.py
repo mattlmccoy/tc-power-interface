@@ -1,3 +1,5 @@
+import time
+
 from scope_fakes import FakeScope
 
 from tc_power_interface.analysis.sense_loop_fit import fit_sense_loop
@@ -87,3 +89,61 @@ def test_reading_racing_stop_does_not_reopen_finalized_run(tmp_path):
     # simulate a reading that sampled run_dir just before stop(): must not truncate scope.csv
     hub._open_run(run)
     assert (run / "scope.csv").read_text().count("\n") == 3
+
+
+class _StallAfter(FakeScope):
+    """Delivers n readings, then read_raw stalls (USB hang) for stall_s."""
+
+    def __init__(self, n: int, stall_s: float) -> None:
+        super().__init__()
+        self.n, self.stall_s = n, stall_s
+
+    def read_raw(self) -> bytes:
+        if self.reads >= self.n:
+            time.sleep(self.stall_s)
+        return super().read_raw()
+
+
+def _wait(pred, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _live_hub(tmp_path, monkeypatch, scopes):
+    import tc_power_interface.integration.scope_hub as hub_mod
+
+    monkeypatch.setattr(hub_mod, "open_visa", lambda _r: scopes.pop(0))
+    hub, rec = _hub(tmp_path, resource="USB0::fake", poll_interval_s=0.05)
+    hub.link._join_timeout_s = 0.05
+    return hub, rec
+
+
+def test_stalled_link_shows_no_data_not_the_last_reading(tmp_path, monkeypatch):
+    import tc_power_interface.integration.scope_hub as hub_mod
+
+    monkeypatch.setattr(hub_mod, "STALE_MIN_S", 0.3, raising=False)
+    hub, _ = _live_hub(tmp_path, monkeypatch, [_StallAfter(1, 3.0)])
+    hub.connect()
+    assert _wait(lambda: hub.snapshot()["latest"] is not None)
+    time.sleep(0.5)  # > max(STALE_MIN_S, 5 x poll_interval_s)
+    snap = hub.snapshot()
+    hub.disconnect()
+    assert snap["status"]["connected"] is True
+    assert snap["latest"] is None
+    assert snap["stale"] is True  # distinguishable from "no reading yet"
+
+
+def test_reconnect_does_not_show_the_previous_sessions_reading(tmp_path, monkeypatch):
+    hub, _ = _live_hub(tmp_path, monkeypatch, [FakeScope(), _StallAfter(0, 3.0)])
+    hub.connect()
+    assert _wait(lambda: hub.snapshot()["latest"] is not None)
+    hub.disconnect()
+    hub.connect()  # second session: connected, but no reading yet
+    assert _wait(lambda: hub.snapshot()["status"]["connected"])
+    snap = hub.snapshot()
+    hub.disconnect()
+    assert snap["latest"] is None
