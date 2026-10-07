@@ -49,7 +49,7 @@ test("genHealth: unknown when not connected or no link block (older backend)", (
 });
 
 test("genHealth: ok / slow / dead thresholds with the age label", () => {
-  assert.deepEqual(genHealth(link({ last_ok_age_s: 0.4 }), true), { tone: "ok", label: "0.4 s" });
+  assert.deepEqual(genHealth(link({ last_ok_age_s: 0.4 }), true), { tone: "ok", label: "" }); // calm while healthy
   assert.equal(genHealth(link({ last_ok_age_s: 1.5 }), true).tone, "ok");
   assert.equal(genHealth(link({ last_ok_age_s: 1.6 }), true).tone, "slow");
   assert.equal(genHealth(link({ last_ok_age_s: 5.0 }), true).tone, "slow");
@@ -57,8 +57,15 @@ test("genHealth: ok / slow / dead thresholds with the age label", () => {
   assert.deepEqual(genHealth(link({ last_ok_age_s: 7.25 }), true), { tone: "dead", label: "7.3 s" });
 });
 
+test("genHealth: healthy shows no ticking age; slow and dead show it", () => {
+  for (const age of [0, 0.1, 0.6, 1.5]) assert.equal(genHealth(link({ last_ok_age_s: age }), true).label, "");
+  assert.deepEqual(genHealth(link({ last_ok_age_s: 1.6 }), true), { tone: "slow", label: "1.6 s" });
+  assert.deepEqual(genHealth(link({ last_ok_age_s: 5.1 }), true), { tone: "dead", label: "5.1 s" });
+  assert.equal(genHealth(undefined, true).label, "—");
+});
+
 test("genHealth: a read failure is slow even when the last good read is fresh", () => {
-  assert.equal(genHealth(link({ last_ok_age_s: 0.2, read_failures: 1 }), true).tone, "slow");
+  assert.deepEqual(genHealth(link({ last_ok_age_s: 0.2, read_failures: 1 }), true), { tone: "slow", label: "0.2 s" });
 });
 
 test("genHealth: dead when there has been no good read", () => {

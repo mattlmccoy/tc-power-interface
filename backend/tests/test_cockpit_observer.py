@@ -42,7 +42,10 @@ def test_real_run_snapshot_and_record_fields():
     _replay(obs)
     s = obs.snapshot()
     sh = s["shadow"]
-    assert 0.35 <= sh["k_c_per_w"] <= 0.65 and sh["valid"] and sh["confidence"] >= 0.5
+    assert 0.35 <= sh["k_c_per_w"] <= 0.65 and sh["valid"] and sh["confidence_fit"] >= 0.5
+    # Honest confidence (fit capped by 2-min drift) is 0 here: measured over the run's last 2 min,
+    # tau 318 -> 208 s and K 0.64 -> 0.53 C/W (62 % drift); the estimate was still settling.
+    assert sh["drifting"] and sh["confidence"] < 0.3 and not sh["show"]
     assert 50 <= sh["suggest_w"] <= 75  # to-temperature mode shows a suggestion
     assert sh["plateau_c"] is not None and sh["settle_s"] is not None
     assert s["watch"][0]["name"] == "toroid_C" and s["watch"][0]["rate_c_per_min"] is not None

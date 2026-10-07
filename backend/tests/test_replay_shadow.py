@@ -95,8 +95,11 @@ def test_replay_matches_the_live_observer(tmp_path):
     assert abs(last["confidence"] - live["confidence"]) <= 1e-9
     assert last["temp_c"] == FIX["rois"]["freehand_sample"][-1]
     assert 50 <= last["suggest_w"] <= 75
+    for k in ("confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w"):
+        assert last[k] == live[k]  # the replay card can say "still drifting" / "at the ceiling"
     assert set(last) == {
         "t_s", "temp_c", "k_c_per_w", "tau_s", "confidence", "suggest_w", "plateau_c",
+        "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w",
     }
 
 
