@@ -641,7 +641,7 @@ class TestCommandedSetpoint:
         with TestClient(app) as c:
             ctrl = c.app.state.controller
             assert ctrl.snapshot()["commanded_setpoint_w"] is None  # unknown, not 0
-            c.post("/api/arm")
+            assert c.post("/api/arm").status_code == 200
             c.post("/api/setpoint", json={"watts": 42})
             assert ctrl.snapshot()["commanded_setpoint_w"] == 42
             c.post("/api/estop")
@@ -685,3 +685,24 @@ class TestCommandedSetpoint:
         c.set_setpoint(30)
         c.detach_device()
         assert c.snapshot()["commanded_setpoint_w"] is None
+
+    def test_link_loss_forgets_it(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c._drop_link()
+        assert c.snapshot()["commanded_setpoint_w"] is None
+
+    def test_any_new_device_starts_unknown(self):
+        c = make_controller()
+        c.connect()
+        c.arm()
+        c.set_setpoint(30)
+        c._drop_link()
+        c.commanded_setpoint_w = 30  # stale value left by any path that skipped the reset
+        c.attach_device(CxnDevice(SimulatedCxnTransport()))
+        try:
+            assert c.snapshot()["commanded_setpoint_w"] is None
+        finally:
+            c.detach_device()

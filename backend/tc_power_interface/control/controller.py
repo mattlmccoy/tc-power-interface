@@ -183,6 +183,7 @@ class Controller:
         if backend is not None:
             self.backend = backend
         self.device = device
+        self.commanded_setpoint_w = None  # any new device starts unknown
         try:
             self.connect()  # request control + force MANUAL (never ATUNE) -> CONNECTED
         except Exception:
@@ -380,6 +381,7 @@ class Controller:
         with self._lock:
             self.device = None
             self.armed = False
+            self.commanded_setpoint_w = None  # a lost link: the generator's setpoint is unknown
             self.state = ControllerState.DISCONNECTED
             self.latest_telemetry = None
             self.latest_decision = None
