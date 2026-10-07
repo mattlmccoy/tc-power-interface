@@ -66,19 +66,34 @@ class ShadowLoop:
         target_c: float,
         ceiling_w: float,
     ) -> ShadowOutput:
-        """One grid-sample update; suggest_w is None without a valid estimate or temperature."""
-        if not est.valid or temp_c is None:
+        """One grid-sample update; suggest_w is None without a valid estimate or finite inputs.
+
+        Call once per NEW estimator grid sample: the integral advances by GRID_S per call.
+        ``power_w`` seeds the bumpless start only. Any call that returns None also resets, so the
+        next valid call restarts bumpless from the operator's power at that moment.
+        """
+        if (
+            not est.valid
+            or est.k_c_per_w is None
+            or est.tau_s is None
+            or temp_c is None
+            or not all(math.isfinite(v) for v in (temp_c, target_c, power_w, ceiling_w))
+        ):
+            self.reset()
             return ShadowOutput(None)
-        assert est.k_c_per_w is not None and est.tau_s is not None
         kc, ti = pi_gains(est.k_c_per_w, est.tau_s)
         err = target_c - temp_c
-        if self._integral is None:
+        if self._integral is None or self._prev is None:
             # bumpless: integral AND rate limiter start from the operator's power
             self._integral = float(power_w)
-            self._prev = float(power_w)
-        self._integral = min(ceiling_w, max(0.0, self._integral + kc * err * GRID_S / ti))
-        u = min(ceiling_w, max(0.0, kc * err + self._integral))
-        if self._prev is not None:
-            u = min(self._prev + MAX_STEP_W, max(self._prev - MAX_STEP_W, u))
+            self._prev = min(ceiling_w, max(0.0, float(power_w)))
+        candidate = min(ceiling_w, max(0.0, self._integral + kc * err * GRID_S / ti))
+        raw = kc * err + candidate
+        u = min(ceiling_w, max(0.0, raw))
+        u = min(self._prev + MAX_STEP_W, max(self._prev - MAX_STEP_W, u))
+        u = min(ceiling_w, max(0.0, u))
+        # conditional integration: freeze the integral while saturated in the error's direction
+        if not ((raw > u and err > 0) or (raw < u and err < 0)):
+            self._integral = candidate
         self._prev = u
         return ShadowOutput(u)
