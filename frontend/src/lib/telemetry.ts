@@ -191,7 +191,7 @@ export interface MatchTunerConfig extends MatchTunerForm {
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
-  recording: { active: boolean; run: string | null };
+  recording: { active: boolean; run: string | null; run_path?: string | null; experiments_root?: string };
   thermal: ThermalStatus;
   ramp: RampStatus;
   timer: TimerStatus;

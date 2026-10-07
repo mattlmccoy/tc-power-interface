@@ -171,17 +171,50 @@ export const api = {
     (await fetch(apiUrl(BASE, "/api/auto-log"))).json(),
   setAutoLog: (enabled: boolean) => put("/api/auto-log", { enabled }),
   /** Fetch a run's telemetry.csv and trigger a browser download. Throws with the server detail. */
-  downloadRecording: async (run: string): Promise<void> => {
-    const res = await fetch(apiUrl(BASE, `/api/recordings/${encodeURIComponent(run)}/telemetry.csv`));
-    if (!res.ok) throw new Error(await detail(res));
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${run}_telemetry.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  downloadRecording: (run: string): Promise<void> =>
+    saveDownload(`/api/recordings/${encodeURIComponent(run)}/telemetry.csv`, `${run}_telemetry.csv`),
+  /** Download one whitelisted run file (GET /api/recordings/{run}/files/{path}). */
+  downloadRecordingFile: (run: string, path: string): Promise<void> =>
+    saveDownload(
+      `/api/recordings/${encodeURIComponent(run)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+      `${run}_${path.replaceAll("/", "_")}`,
+    ),
+  /** A run's downloadable file names; null when the run or the endpoint is missing (older backend). */
+  recordingFiles: async (run: string): Promise<string[] | null> => {
+    try {
+      const res = await fetch(apiUrl(BASE, `/api/recordings/${encodeURIComponent(run)}/files`));
+      if (!res.ok) return null;
+      const body = (await res.json()) as { files?: unknown };
+      return Array.isArray(body.files) ? body.files.map(String) : null;
+    } catch {
+      return null;
+    }
   },
+  /** GET /api/recordings runs ({run, path?}); null on failure. */
+  listRecordings: async (): Promise<{ run: string; path?: string }[] | null> => {
+    try {
+      const res = await fetch(apiUrl(BASE, "/api/recordings"));
+      if (!res.ok) return null;
+      const body = (await res.json()) as { runs?: { run: string; path?: string }[] };
+      return Array.isArray(body.runs) ? body.runs : null;
+    } catch {
+      return null;
+    }
+  },
+  /** Open the run folder in the OS file browser (POST, so it carries X-TCP-Client). */
+  revealRecording: (run: string) => post(`/api/recordings/${encodeURIComponent(run)}/reveal`),
 };
+
+async function saveDownload(path: string, filename: string): Promise<void> {
+  const res = await fetch(apiUrl(BASE, path));
+  if (!res.ok) throw new Error(await detail(res));
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
