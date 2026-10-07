@@ -97,14 +97,17 @@ def _slow_first_write(rec, delay_s=0.4):
     """Make the writer thread's first row write slow (a Dropbox stall) so a stop() has a drain."""
     real = rec._write_row
     state = {"slow": True}
+    started = threading.Event()  # set once the slow write is in progress (deterministic drain)
 
     def _slow(row):
         if state["slow"]:
             state["slow"] = False
+            started.set()
             time.sleep(delay_s)
         real(row)
 
     rec._write_row = _slow
+    return started
 
 
 def _wait_state(rec, want, timeout=3.0):
@@ -150,7 +153,7 @@ def test_api_start_during_a_stops_drain_is_409(tmp_path):
         rec = c.app.state.recorder
         c.post("/api/recording/start", json={"name": "one", "notes": ""})
         time.sleep(0.2)  # let a row be queued
-        _slow_first_write(rec, 0.6)
+        assert _slow_first_write(rec, 0.6).wait(3.0)
         stopper = threading.Thread(target=lambda: c.post("/api/recording/stop"))
         stopper.start()
         assert _wait_state(rec, RecorderState.STOPPING)
@@ -197,8 +200,7 @@ def test_link_drop_does_not_block_the_poll_thread(tmp_path):
         c.post("/api/rf/enable")
         assert _wait_active(c, True)
         run = c.get("/api/recording/status").json()["run"]
-        _slow_first_write(c.app.state.recorder, 0.5)
-        time.sleep(0.2)  # a row is queued behind the slow write
+        assert _slow_first_write(c.app.state.recorder, 0.5).wait(3.0)  # writer is mid-stall
         t0 = time.monotonic()
         c.app.state.controller.on_link_dropped()
         assert time.monotonic() - t0 < 0.2
@@ -310,3 +312,52 @@ def test_single_0xffff_status_frame_starts_no_phantom_recording(tmp_path):
         assert status["active"] is False
         assert controller.state.value == "connected"
         assert controller.fault_reasons == ()
+
+
+def _stopping_with_slow_drain(c, drain_s):
+    """Start a manual run, then stop it on a thread whose drain takes ~drain_s. Returns the thread
+    once the recorder is STOPPING."""
+    from tc_power_interface.recording.recorder import RecorderState
+
+    rec = c.app.state.recorder
+    c.post("/api/recording/start", json={"name": "prev", "notes": ""})
+    time.sleep(0.2)
+    started = _slow_first_write(rec, drain_s)
+    assert started.wait(3.0)  # the writer is now stuck in the slow write: the stop will drain
+    stopper = threading.Thread(target=lambda: c.post("/api/recording/stop"))
+    stopper.start()
+    assert _wait_state(rec, RecorderState.STOPPING)
+    return stopper
+
+
+def test_rf_on_edge_skipped_during_a_drain_still_gets_its_recording(tmp_path):
+    with _client(tmp_path) as c:
+        stopper = _stopping_with_slow_drain(c, 0.8)
+        c.post("/api/rf/enable")  # the rising edge lands while the previous run is STOPPING
+        time.sleep(0.3)
+        assert c.get("/api/recording/status").json()["active"] is False  # still draining
+        stopper.join()
+        assert _wait_active(c, True)  # RF is still on: the skipped edge is retried
+        assert "RF_" in c.get("/api/recording/status").json()["run"]
+
+
+def test_rf_off_before_the_drain_ends_cancels_the_pending_auto_start(tmp_path):
+    with _client(tmp_path) as c:
+        stopper = _stopping_with_slow_drain(c, 0.8)
+        c.post("/api/rf/enable")
+        time.sleep(0.2)
+        c.post("/api/rf/disable")
+        time.sleep(0.2)  # the poll loop sees RF off while still draining
+        stopper.join()
+        time.sleep(0.4)
+        assert c.get("/api/recording/status").json()["active"] is False
+
+
+def test_rf_already_on_before_auto_log_is_enabled_is_not_recorded(tmp_path):
+    with _client(tmp_path) as c:
+        c.put("/api/auto-log", json={"enabled": False})
+        c.post("/api/rf/enable")
+        time.sleep(0.3)
+        c.put("/api/auto-log", json={"enabled": True})
+        time.sleep(0.4)  # edge semantics: RF that was on first is not retroactively recorded
+        assert c.get("/api/recording/status").json()["active"] is False

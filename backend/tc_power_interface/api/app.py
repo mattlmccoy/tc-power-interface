@@ -340,26 +340,35 @@ def create_app(
         # (A MANUAL POST /api/recording/start sets current_run from an HTTP thread between ticks, so
         # that run's first row can carry one tick of the previous shadow values — acceptable.)
         app.state.auto_log = True
-        _auto_prev = {"rf": False}
+        # `pending`: the latest RF-on edge was skipped because the previous run was still STOPPING
+        # (draining a stalled disk). It is retried on later ticks while RF stays on, so a real RF
+        # session never goes unrecorded; it is dropped when RF goes off or auto-log is disabled.
+        # RF that was already on before auto-log was enabled never sets it (edge semantics).
+        _auto_prev = {"rf": False, "pending": False}
 
         def _auto_log(snap: dict[str, Any]) -> None:
             rf = bool((snap.get("telemetry") or {}).get("rf_on"))
-            if (
-                app.state.auto_log
-                and rf
-                and not _auto_prev["rf"]
-                and recorder.state is RecorderState.IDLE  # not RECORDING, not mid-STOPPING
-            ):
-                try:
-                    run_dir = recorder.start(
-                        f"RF_{datetime.now():%Y%m%d_%H%M%S}",
-                        {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
-                    )
-                except RuntimeError:  # a stop began since the state check: skip, never block/raise
-                    logger.warning("auto-log skipped: recorder busy")
-                else:
-                    app.state.auto_run = run_dir.name
-                    app.state.current_run = run_dir.name
+            if not rf or not app.state.auto_log:
+                _auto_prev["pending"] = False
+            elif not _auto_prev["rf"] or _auto_prev["pending"]:  # rising edge, or retrying a skip
+                state = recorder.state
+                if state is RecorderState.IDLE:
+                    try:
+                        run_dir = recorder.start(
+                            f"RF_{datetime.now():%Y%m%d_%H%M%S}",
+                            {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
+                        )
+                    except RuntimeError:  # a stop began since the state check: retry next tick
+                        logger.warning("auto-log deferred: recorder busy")
+                        _auto_prev["pending"] = True
+                    else:
+                        _auto_prev["pending"] = False
+                        app.state.auto_run = run_dir.name
+                        app.state.current_run = run_dir.name
+                elif state is RecorderState.STOPPING:
+                    _auto_prev["pending"] = True  # retry once the drain finishes
+                else:  # already RECORDING (e.g. the operator's manual run): nothing to start
+                    _auto_prev["pending"] = False
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
