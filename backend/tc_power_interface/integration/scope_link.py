@@ -97,13 +97,20 @@ class ScopeLink:
         opener: Opener = open_visa,
         on_reading: Callable[[Reading], None],
         backoff_s: float = 2.0,
+        join_timeout_s: float = 5.0,
     ) -> None:
         self._opener = opener
         self._on_reading = on_reading
         self._backoff_s = backoff_s
+        self._join_timeout_s = join_timeout_s
         self._thread: threading.Thread | None = None
+        # One stop Event PER poll thread: a thread stuck in a VISA call past stop()'s join must
+        # still see its own event set after a restart (a shared, re-cleared Event would revive it).
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        # Held across "am I current? -> callback", and by stop() while it sets the event, so once
+        # stop() returns no reading from that generation can still reach on_reading.
+        self._publish = threading.Lock()
         self._status: dict[str, Any] = {"running": False, "connected": False, "error": None,
                                         "last_ns": None, "rate_hz": None}
 
@@ -115,31 +122,45 @@ class ScopeLink:
         with self._lock:
             self._status.update(kw)
 
+    def _set_if_current(self, stop: threading.Event, **kw: Any) -> bool:
+        """Update status only for the current generation; a superseded thread publishes nothing."""
+        with self._lock:
+            if stop is not self._stop or stop.is_set():
+                return False
+            self._status.update(kw)
+            return True
+
     def start(self, settings: ScopeSettings) -> None:
         self.stop()
-        self._stop.clear()
-        self._set(running=True, error=None)
+        stop = threading.Event()
+        with self._lock:
+            self._stop = stop
+            self._status.update(running=True, error=None)
         self._thread = threading.Thread(
-            target=self._run, args=(settings,), name="tcp-scope", daemon=True
+            target=self._run, args=(settings, stop), name="tcp-scope", daemon=True
         )
         self._thread.start()
 
     def stop(self) -> None:
-        self._stop.set()
+        with self._publish, self._lock:
+            self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=5.0)
+            self._thread.join(timeout=self._join_timeout_s)
+            if self._thread.is_alive():
+                logger.warning("scope poll thread still blocked after stop(); it exits on its own")
             self._thread = None
         self._set(running=False, connected=False)
 
-    def _run(self, s: ScopeSettings) -> None:
-        while not self._stop.is_set():
+    def _run(self, s: ScopeSettings, stop: threading.Event) -> None:
+        while not stop.is_set():
             res: ScopeResource | None = None
             try:
                 res = self._opener(s.resource)
                 res.write("CHDR OFF")
-                self._set(connected=True, error=None)
+                if not self._set_if_current(stop, connected=True, error=None):
+                    break
                 last = time.monotonic()
-                while not self._stop.is_set():
+                while not stop.is_set():
                     cap = acquire_once(res, channel=s.channel)
                     fit = None
                     if not cap.clipped:
@@ -148,17 +169,20 @@ class ScopeLink:
                         except ValueError:  # RF off / DC / non-finite: invalid reading
                             fit = None
                     now = time.monotonic()
-                    self._set(last_ns=time.time_ns(), rate_hz=round(1.0 / max(now - last, 1e-6), 2))
+                    rate = round(1.0 / max(now - last, 1e-6), 2)
+                    with self._publish:
+                        if not self._set_if_current(stop, last_ns=time.time_ns(), rate_hz=rate):
+                            break  # superseded while blocked in acquire: drop the reading
+                        self._on_reading(Reading(time.time_ns(), cap, fit))
                     last = now
-                    self._on_reading(Reading(time.time_ns(), cap, fit))
-                    self._stop.wait(s.poll_interval_s)
+                    stop.wait(s.poll_interval_s)
             except Exception as exc:  # noqa: BLE001 - VISA/USB errors are varied; report and retry
                 logger.warning("scope link error: %s", exc)
-                self._set(connected=False, error=f"{type(exc).__name__}: {exc}")
+                self._set_if_current(stop, connected=False, error=f"{type(exc).__name__}: {exc}")
             finally:
                 if res is not None:
                     try:
                         res.close()
                     except Exception:  # noqa: BLE001
                         pass
-            self._stop.wait(self._backoff_s)
+            stop.wait(self._backoff_s)

@@ -1,3 +1,4 @@
+import threading
 import time
 
 import pytest
@@ -67,3 +68,42 @@ def test_settings_from_dict_rejects_bad_limits():
 
     with pytest.raises(ValueError):
         settings_from_dict({"limits": {"probe_warn_v": 80.0, "probe_hard_v": 70.0}})
+
+
+class _BlockingScope(FakeScope):
+    """read_raw blocks (as a stuck VISA call does) for longer than the link's stop() join."""
+
+    def __init__(self, block_s: float) -> None:
+        super().__init__()
+        self.block_s = block_s
+
+    def read_raw(self) -> bytes:
+        time.sleep(self.block_s)
+        return super().read_raw()
+
+
+def test_restart_after_join_timeout_leaves_one_poller_and_drops_old_readings():
+    got: list[tuple[int, int]] = []  # (thread ident, generation)
+    gen = {"n": 0}
+    scopes = [_BlockingScope(0.6), FakeScope()]
+    link = ScopeLink(
+        opener=lambda _r: scopes.pop(0) if scopes else FakeScope(),
+        on_reading=lambda r: got.append((threading.get_ident(), gen["n"])),
+        backoff_s=0.05, join_timeout_s=0.05,
+    )
+    s = ScopeSettings(resource="USB0::fake", poll_interval_s=0.01)
+    link.start(s)
+    time.sleep(0.1)  # old thread is now blocked inside read_raw
+    old = link._thread
+    link.stop()  # join times out; old thread still alive
+    assert old is not None and old.is_alive()
+    gen["n"] = 1
+    link.start(s)
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and old.is_alive():
+        time.sleep(0.02)
+    time.sleep(0.1)
+    link.stop()
+    assert not old.is_alive()  # the superseded thread exits on its own stop event
+    assert all(ident != old.ident for ident, g in got if g == 1)  # and never publishes again
+    assert any(g == 1 for _, g in got)  # the new generation does read
