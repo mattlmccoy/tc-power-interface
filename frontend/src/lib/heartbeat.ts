@@ -21,6 +21,10 @@ export interface RfClockBlock {
   run_rf_on_s: number;
   run: string | null;
   stale: boolean;
+  /** RF state observed on the CURRENT device link (false = no generator: neutral, not a fault). */
+  known?: boolean;
+  /** The finished run's RF-on total, until RF turns on again or a new run starts. */
+  last_run_rf_on_s?: number | null;
 }
 
 export type HealthTone = "ok" | "slow" | "dead" | "unknown";
@@ -70,15 +74,23 @@ export interface RfClockView {
   tone: "live" | "muted" | "warn";
 }
 
-/** The top-bar RF clock text, or null when the backend has no clock (render nothing). `appAlive`
- * false (no recent WebSocket message) means the block is a frozen copy, so it reads as no data. */
+/** The top-bar RF clock text, or null when the backend has no clock (render nothing).
+ * - not `known` (no generator / never read / detached): neutral "RF —", never a warning;
+ * - known but `stale`, or `appAlive` false (the block is a frozen copy): a LOST link, warn. */
 export function rfClockView(
   rc: RfClockBlock | null | undefined,
   appAlive = true,
 ): RfClockView | null {
   if (!rc) return null;
+  const known = rc.known ?? rc.rf_on != null; // older backends have no `known`
+  if (!known) return { text: "RF —", tone: "muted" };
   if (rc.stale || !appAlive) return { text: "RF ? · no data", tone: "warn" };
-  const run = rc.run != null ? ` · run ${fmtDuration(rc.run_rf_on_s)}` : "";
+  const run =
+    rc.run != null
+      ? ` · run ${fmtDuration(rc.run_rf_on_s)}`
+      : rc.last_run_rf_on_s != null
+        ? ` · last run ${fmtDuration(rc.last_run_rf_on_s)}`
+        : "";
   if (rc.rf_on) return { text: `RF ON ${fmtDuration(rc.burn_s)}${run}`, tone: "live" };
   const last = rc.last_burn_s != null ? ` · last ${fmtDuration(rc.last_burn_s)}` : "";
   return { text: `RF off${last}${run}`, tone: "muted" };

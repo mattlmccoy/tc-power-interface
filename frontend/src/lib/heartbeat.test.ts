@@ -18,6 +18,8 @@ const clock = (over: Partial<RfClockBlock> = {}): RfClockBlock => ({
   run_rf_on_s: 0,
   run: null,
   stale: false,
+  known: true,
+  last_run_rf_on_s: null,
   ...over,
 });
 
@@ -107,4 +109,39 @@ test("rfClockView: a dead browser link shows no data (the last status is frozen,
     text: "RF ON 0:09",
     tone: "live",
   });
+});
+
+test("rfClockView: never connected is neutral, never a warning", () => {
+  const never = clock({ rf_on: null, stale: true, known: false });
+  assert.deepEqual(rfClockView(never), { text: "RF —", tone: "muted" });
+  assert.deepEqual(rfClockView(never, false), { text: "RF —", tone: "muted" });
+});
+
+test("rfClockView: connected and fresh renders normally", () => {
+  assert.deepEqual(rfClockView(clock({ known: true, rf_on: false })), { text: "RF off", tone: "muted" });
+});
+
+test("rfClockView: connected then link lost (known + stale) warns no data", () => {
+  assert.deepEqual(rfClockView(clock({ known: true, rf_on: true, burn_s: 9, stale: true })), {
+    text: "RF ? · no data",
+    tone: "warn",
+  });
+});
+
+test("rfClockView: after detach (no longer known) is neutral again", () => {
+  const detached = clock({ rf_on: null, known: false, stale: true, last_burn_s: 20 });
+  assert.deepEqual(rfClockView(detached), { text: "RF —", tone: "muted" });
+});
+
+test("rfClockView: older backend without `known` falls back to whether rf_on was seen", () => {
+  const legacy = { ...clock({ rf_on: null, stale: true }) } as Partial<RfClockBlock>;
+  delete legacy.known;
+  assert.deepEqual(rfClockView(legacy as RfClockBlock), { text: "RF —", tone: "muted" });
+});
+
+test("rfClockView: after a recording stops, the last run total shows muted", () => {
+  assert.deepEqual(
+    rfClockView(clock({ rf_on: false, last_burn_s: 252, run: null, last_run_rf_on_s: 1120 })),
+    { text: "RF off · last 4:12 · last run 18:40", tone: "muted" },
+  );
 });
