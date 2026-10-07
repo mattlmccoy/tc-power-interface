@@ -60,3 +60,54 @@ def test_reattach_after_timed_out_join_runs_exactly_one_poll_loop() -> None:
     finally:
         release.set()
         c.stop()
+
+
+def _tick_in_flight_during_detach(*, read_raises: bool) -> tuple[Controller, list, list]:
+    """Run one _tick whose device read is hung (holding _io_lock) while the operator detaches.
+
+    detach_device starts on another thread and then blocks on _io_lock in _safe_shutdown_device;
+    only then does the hung read complete (return or raise). Returns the controller plus the
+    listener snapshots and on_link_dropped calls produced AFTER the read completed."""
+    dev = CxnDevice(SimulatedCxnTransport())
+    c = Controller(dev, poll_interval_s=0.01, link_loss_reads=1)
+    c.connect()
+    gate = threading.Event()
+    in_read = threading.Event()
+    real_read = dev.read_telemetry
+
+    def hung_read():  # type: ignore[no-untyped-def]
+        in_read.set()
+        gate.wait(10.0)
+        if read_raises:
+            raise TimeoutError("serial read timed out: got 0 of 1 bytes")
+        return real_read()
+
+    dev.read_telemetry = hung_read  # type: ignore[method-assign]
+    notified: list = []
+    dropped: list = []
+    c.add_listener(notified.append)
+    c.on_link_dropped = lambda: dropped.append(True)
+
+    ticker = threading.Thread(target=c._tick)
+    ticker.start()
+    assert in_read.wait(2.0)
+    detacher = threading.Thread(target=c.detach_device)
+    detacher.start()
+    time.sleep(0.2)  # detacher is now past its start and blocked on _io_lock behind the read
+    gate.set()
+    ticker.join(5.0)
+    detacher.join(5.0)
+    assert not ticker.is_alive() and not detacher.is_alive()
+    return c, notified, dropped
+
+
+def test_tick_whose_read_returns_after_detach_publishes_nothing() -> None:
+    c, notified, _ = _tick_in_flight_during_detach(read_raises=False)
+    assert notified == [], "a stale tick published a sample from a link that was being detached"
+    assert c.latest_telemetry is None
+
+
+def test_tick_whose_read_fails_after_detach_does_not_drop_the_link() -> None:
+    c, notified, dropped = _tick_in_flight_during_detach(read_raises=True)
+    assert dropped == [], "a stale tick ran link-loss handling on a link already being detached"
+    assert notified == []
