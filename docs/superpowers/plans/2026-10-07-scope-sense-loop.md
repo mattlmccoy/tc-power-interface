@@ -1278,6 +1278,20 @@ def test_link_produces_readings_and_reports_errors_without_raising():
     assert "usb stall" in (link.status()["error"] or "")
 
 
+def test_rf_off_zero_capture_is_invalid_reading_not_link_error():
+    got = []
+    fake = FakeScope()
+    fake.read_raw = lambda: b"#9000001400" + bytes(1400)  # all-zero codes, as with RF off
+    link = ScopeLink(opener=lambda _r: fake, on_reading=got.append, backoff_s=0.05)
+    link.start(ScopeSettings(resource="USB0::fake", poll_interval_s=0.01))
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and len(got) < 3:
+        time.sleep(0.01)
+    link.stop()
+    assert len(got) >= 3 and all(r.fit is None for r in got)
+    assert link.status()["error"] is None
+
+
 def test_settings_roundtrip_and_defaults(tmp_path):
     s = load_settings(tmp_path)
     assert s.resource == "" and s.geometry.cores_linked == 1 and s.tol_w == 1.0
@@ -1480,7 +1494,12 @@ class ScopeLink:
                 last = time.monotonic()
                 while not self._stop.is_set():
                     cap = acquire_once(res, channel=s.channel)
-                    fit = None if cap.clipped else fit_sense_loop(cap.t, cap.volts)
+                    fit = None
+                    if not cap.clipped:
+                        try:
+                            fit = fit_sense_loop(cap.t, cap.volts)
+                        except ValueError:  # RF off / no fundamental / non-finite: invalid, not a link error
+                            fit = None
                     now = time.monotonic()
                     self._set(last_ns=time.time_ns(), rate_hz=round(1.0 / max(now - last, 1e-6), 2))
                     last = now
