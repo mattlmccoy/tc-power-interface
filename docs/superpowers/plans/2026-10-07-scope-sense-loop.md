@@ -892,6 +892,10 @@ def test_session_fit_uses_only_levels_at_or_above_10w():
     assert k == pytest.approx(0.75)
 
 
+def test_zero_level_rows_are_ignored():
+    assert summarize_levels([_row(0, 1.0, 0.1)]) == []
+
+
 def test_session_fit_none_without_eligible_levels():
     assert session_mt_per_sqrtw(summarize_levels([_row(5, 10, 1.0)]), min_level_w=10.0) is None
 ```
@@ -936,7 +940,7 @@ def _iqr(xs: list[float]) -> float:
 def summarize_levels(rows: Iterable[Mapping[str, Any]]) -> list[LevelSummary]:
     groups: dict[float, list[Mapping[str, Any]]] = defaultdict(list)
     for r in rows:
-        if r.get("valid") and r.get("level_w") is not None:
+        if r.get("valid") and r.get("level_w") is not None and float(r["level_w"]) > 0:
             groups[float(r["level_w"])].append(r)
     out = []
     for level in sorted(groups):
