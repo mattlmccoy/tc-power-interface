@@ -4,7 +4,12 @@
 
 import { mmss } from "../../lib/cockpit/format.ts";
 import type { CockpitSample } from "../../lib/cockpit/history.ts";
+import { gapSegments, minMaxIndices } from "../../lib/cockpit/plotPrep.ts";
 import { axisStep, tempRange, tickStep, timeWindow, type WindowMode } from "../../lib/cockpit/timeline.ts";
+
+/** Longer than this between samples = the link dropped: lines lift and the forward fill breaks
+ *  (the same 5 s as runStats in lib/cockpit/live.ts). */
+const MAX_GAP_S = 5;
 
 /** Watched-ROI colours and dashes, in watch order (mockup v4). The first is the --ck-core token. */
 export const WATCH_COLORS = ["var(--ck-core)", "#f78c6c", "#c3e88d", "#82aaff"];
@@ -108,26 +113,44 @@ export function drawTimeline(cv: HTMLCanvasElement, inp: TimelineInput): void {
   };
   for (const h of inp.hlines) hline(Yt(h.c), col(h.kind === "target" ? "var(--live)" : "var(--ck-shadow)"));
 
+  // Times of the visible samples, the gap-free runs, and one pixel bucket per plot pixel. Dense
+  // series are thinned to the min and max per pixel (peaks survive; ~2 points per pixel).
+  const vt = vis.map(ts);
+  const segs = gapSegments(vt, MAX_GAP_S);
+  const buckets = Math.max(1, Math.round(plotW));
+  const keep = (vals: (number | null)[], a: number, b: number) => minMaxIndices(vt, vals, a, b, tStart, span, buckets);
   const line = (val: (s: CockpitSample) => number | null, Y: (v: number) => number, color: string, dash: number[], alpha: number) => {
+    const vals = vis.map(val);
     ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(dash); ctx.beginPath();
-    let pen = false;
-    for (const s of vis) {
-      const v = val(s);
-      if (v == null || !Number.isFinite(v)) { pen = false; continue; }
-      if (pen) ctx.lineTo(X(ts(s)), Y(v)); else ctx.moveTo(X(ts(s)), Y(v));
-      pen = true;
+    for (const [a, b] of segs) {
+      let pen = false; // a gap lifts the pen
+      for (const i of keep(vals, a, b)) {
+        const v = vals[i];
+        if (v == null || !Number.isFinite(v)) { pen = false; continue; }
+        if (pen) ctx.lineTo(X(vt[i]), Y(v)); else ctx.moveTo(X(vt[i]), Y(v));
+        pen = true;
+      }
     }
     ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   };
 
-  // Power lane: filled forward, then its line.
+  // Power lane: filled forward (one fill per gap-free run, unknown forward = no fill), then its line.
   const fwdCol = col("var(--trace-fwd)");
-  if (vis.length) {
-    ctx.fillStyle = fwdCol; ctx.globalAlpha = 0.18; ctx.beginPath();
-    ctx.moveTo(X(ts(vis[0])), Yp(0));
-    for (const s of vis) ctx.lineTo(X(ts(s)), Yp(Number.isFinite(s.fwd) ? s.fwd : 0));
-    ctx.lineTo(X(ts(vis[vis.length - 1])), Yp(0)); ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+  const fwdVals = vis.map((s) => (Number.isFinite(s.fwd) ? s.fwd : null));
+  ctx.fillStyle = fwdCol; ctx.globalAlpha = 0.18;
+  for (const [a, b] of segs) {
+    let open = false, lastX = 0;
+    const close = () => { if (open) { ctx.lineTo(lastX, Yp(0)); ctx.closePath(); ctx.fill(); open = false; } };
+    for (const i of keep(fwdVals, a, b)) {
+      const v = fwdVals[i];
+      if (v == null) { close(); continue; }
+      const x = X(vt[i]);
+      if (!open) { ctx.beginPath(); ctx.moveTo(x, Yp(0)); open = true; }
+      ctx.lineTo(x, Yp(v)); lastX = x;
+    }
+    close();
   }
+  ctx.globalAlpha = 1;
   line((s) => s.fwd, Yp, fwdCol, [], 0.7);
   if (inp.showSuggest) line((s) => s.suggest, Yp, col("var(--ck-shadow)"), [5, 4], 0.9);
   line((s) => (s.rf && s.fwd > 1 ? (100 * s.rev) / s.fwd : null), Yr, col("var(--trace-refl)"), [], 0.9);

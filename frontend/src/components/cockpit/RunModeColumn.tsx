@@ -73,7 +73,9 @@ function LadderPanel({ op, rm }: { op: Operator; rm: RunMode }) {
         />
         <button className="btn" onClick={save} disabled={!dirty}>Save</button>
       </div>
-      <div className="ck-sub ck-line ck-warnc">{parsed.rejected.length ? `ignored: ${parsed.rejected.join(", ")}` : ""}</div>
+      <div className="ck-sub ck-oneline ck-warnc" title={parsed.rejected.join(", ")}>
+        {parsed.rejected.length ? `ignored: ${parsed.rejected.join(", ")}` : ""}
+      </div>
       <dl className="ck-kv">
         <dt>Steps</dt>
         <dd>
@@ -95,7 +97,8 @@ function LadderPanel({ op, rm }: { op: Operator; rm: RunMode }) {
           // A commanded/forward base would send setpointRef + N − base: wrong whenever they differ.
           onClick={() => next != null && op.nudgeSetpoint(next - op.setpointRef.current)}
         >
-          {next != null ? `Next step → ${next} W` : rm.ladder_w.length ? "Ladder done" : "Set steps first"}
+          {/* The generator takes whole watts and the nudge rounds (stepSetpoint): label = what is sent. */}
+          {next != null ? `Next step → ${Math.round(next)} W` : rm.ladder_w.length ? "Ladder done" : "Set steps first"}
         </button>
       </div>
       <div className="ck-sub">You click to advance; nothing steps on its own.</div>

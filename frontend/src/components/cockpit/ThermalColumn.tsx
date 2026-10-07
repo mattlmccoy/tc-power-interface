@@ -50,12 +50,12 @@ export function ThermalColumn({ op, buf }: { op: Operator; buf: CockpitSample[] 
         <div className="ck-card">
           <div className="ck-lbl">Part</div>
           <div className="ck-big">{f1(th?.control_temp_c)}<small> °C</small></div>
-          <div className="ck-sub">{rate == null ? "rate: needs 30 s of readings" : `${rate >= 0 ? "+" : ""}${rate.toFixed(1)} °C/min`}</div>
+          <div className="ck-sub ck-clamp2">{rate == null ? "rate: needs 30 s of readings" : `${rate >= 0 ? "+" : ""}${rate.toFixed(1)} °C/min`}</div>
         </div>
         <div className="ck-card">
           <div className="ck-lbl">Target</div>
           <div className="ck-big">{mode === "target" && fin(target) ? <>{target.toFixed(0)}<small> °C</small></> : "—"}</div>
-          <div className="ck-sub">{tttText(mode, sh, target)}</div>
+          <div className="ck-sub ck-clamp2" title={tttText(mode, sh, target)}>{tttText(mode, sh, target)}</div>
         </div>
       </div>
       <div className="ck-card ck-shadowcard">

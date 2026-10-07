@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { mmss } from "../../lib/cockpit/format.ts";
 import type { CockpitSample } from "../../lib/cockpit/history.ts";
 import { retuneNs } from "../../lib/cockpit/live.ts";
+import { plateauForAxis } from "../../lib/cockpit/plotPrep.ts";
 import type { Shadow } from "../../lib/cockpit/shadowText.ts";
 import { showLevelsOffLine, type WindowMode } from "../../lib/cockpit/timeline.ts";
 import { drawTimeline, WATCH_COLORS } from "./drawTimeline.ts";
@@ -17,6 +18,8 @@ export interface TimelineReplay {
   cursorS: number;
   /** Levels-off plateau at the cursor (shown at ≥ 30 % confidence), or null. */
   plateauC: number | null;
+  /** Part temperature at the cursor (judges whether the plateau is plausible enough to plot). */
+  partC: number | null;
 }
 
 interface Props {
@@ -43,27 +46,38 @@ export function CockpitTimeline({ buf, mode, shadow, targetC, watch, controlRoi,
   let showSuggest: boolean;
   if (replay) {
     if (fin(targetC)) hlines.push({ c: targetC, kind: "target" });
-    if (fin(replay.plateauC)) hlines.push({ c: replay.plateauC, kind: "plateau" });
+    const p = plateauForAxis(replay.plateauC, replay.partC, targetC);
+    if (p !== null) hlines.push({ c: p, kind: "plateau" });
     showSuggest = true; // replay samples carry the suggestion only where confidence ≥ 30 %
   } else {
     if (mode === "target" && fin(targetC)) hlines.push({ c: targetC, kind: "target" });
-    else if (shadow && showLevelsOffLine(mode, shadow) && fin(shadow.plateau_c)) hlines.push({ c: shadow.plateau_c, kind: "plateau" });
+    else if (shadow && showLevelsOffLine(mode, shadow)) {
+      const p = plateauForAxis(shadow.plateau_c, buf.length ? buf[buf.length - 1].part : null, targetC);
+      if (p !== null) hlines.push({ c: p, kind: "plateau" }); // a wild fit is not plotted (it would squash the lane)
+    }
     showSuggest = mode === "target" && !!shadow?.show;
   }
   const hkey = hlines.map((h) => `${h.kind}${h.c}`).join("|");
   const cursorNs = replay ? Math.round(replay.cursorS * 1e9) : null;
 
+  // One paint per data change; the ResizeObserver (created once) repaints with the LATEST inputs
+  // through the ref, so a new sample neither paints twice nor re-creates the observer.
+  const paintRef = useRef<() => void>(() => {});
+  paintRef.current = () => {
+    if (cv.current) drawTimeline(cv.current, { buf, win, watch, hlines, showSuggest, retunes, cursorNs });
+  };
   useEffect(() => {
-    const el = cv.current;
-    if (!el) return;
-    const paint = () => drawTimeline(el, { buf, win, watch, hlines, showSuggest, retunes, cursorNs });
-    paint();
-    const ro = new ResizeObserver(paint);
-    ro.observe(el);
-    return () => ro.disconnect();
+    paintRef.current();
     // hlines is rebuilt each render; hkey carries its content.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buf, win, watch.join("|"), hkey, showSuggest, retunes, cursorNs]);
+  useEffect(() => {
+    const el = cv.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => paintRef.current());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const targetMode = replay ? true : mode === "target";
   return (

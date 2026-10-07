@@ -230,7 +230,7 @@ export function RunsView({ defaults }: { defaults: RunsDefaults }) {
         targetC={fin(target) ? target : null}
         watch={[]}
         controlRoi={shownRoi ?? (ready && !ready.rois.length ? "recorded control ROI" : roi || null)}
-        replay={{ cursorS, plateauC: sh?.show ? sh.plateau_c : null }}
+        replay={{ cursorS, plateauC: sh?.show ? sh.plateau_c : null, partC: partAt }}
       />
       <div className="ck-scrub">
         <button className="btn ck-playbtn" disabled={!rows.length} onClick={() => {
