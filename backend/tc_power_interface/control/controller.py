@@ -54,8 +54,6 @@ class Controller:
     ) -> None:
         self.device = device
         self.limits = limits or SafetyLimits()
-        #: Last setpoint TC-POWER sent (front-panel changes are not seen); None = unknown, not 0.
-        self.commanded_setpoint_w: int | None = None
         self.poll_interval_s = poll_interval_s
         self._clock = clock
         #: Consecutive failed telemetry reads that mean "the link is gone" (generator off / cable
@@ -108,8 +106,16 @@ class Controller:
         self.fault_reasons: tuple[str, ...] = ()
 
         self._last_sample_monotonic: float | None = None
+        #: Count of SUCCESSFUL telemetry reads (display-only: the UI's GEN heartbeat blinks when it
+        #: changes). Written only by the poll thread; never read by protection.
+        self._poll_seq = 0
         self._lock = threading.Lock()  # guards published state
         self._io_lock = threading.Lock()  # serializes all transport access
+        # Last setpoint TC-POWER commanded (no device readback; front-panel changes are not seen);
+        # None = unknown, not 0. Guarded by _lock; never taken while holding _io_lock. Published in
+        # the snapshot as BOTH `last_setpoint_w` (scope level tracker, dashboard summaries) and
+        # `commanded_setpoint_w` (recorder setpoint_w column, cockpit power dial): one value.
+        self._last_setpoint_w: int | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
@@ -130,16 +136,20 @@ class Controller:
 
     # --- lifecycle -------------------------------------------------------------------------
     def connect(self) -> None:
-        """Acquire the control lease and ensure MANUAL tuning (never the forbidden auto-tuner) — WITHOUT
+        """Acquire the control lease and ensure MANUAL tuning (never the forbidden auto-tuner) —
+        WITHOUT
         disturbing the cap positions. Sending the manual-mode command resets the AG 0613's cap DACs,
-        which would wipe a hand-tuned AIT match, so only force it when the generator is NOT already in
-        manual mode. If it already is, it is safe and we leave the caps exactly where they are. If the
+        which would wipe a hand-tuned AIT match, so only force it when the generator is NOT already
+        in
+        manual mode. If it already is, it is safe and we leave the caps exactly where they are. If
+        the
         mode cannot be read, force it (never risk a live ATUNE)."""
         with self._io_lock:
             granted = self.device.request_control()
         if not granted:
             raise RuntimeError("generator denied control request")
-        # SAFETY: the built-in auto-tuner must never run. Forcing manual mode guarantees that, but it
+        # SAFETY: the built-in auto-tuner must never run. Forcing manual mode guarantees that, but
+        # it
         # also zeroes the caps — so only do it if we can't confirm the generator is already manual.
         # Mode comes from the GT/match block ONLY (the same field read_telemetry reports), so a
         # garbled GS status word can never be mistaken for "mode unreadable" and reset the caps.
@@ -207,7 +217,8 @@ class Controller:
         if backend is not None:
             self.backend = backend
         self.device = device
-        self.commanded_setpoint_w = None  # any new device starts unknown
+        with self._lock:
+            self._last_setpoint_w = None  # any new device starts unknown
         try:
             self.connect()  # request control + force MANUAL (never ATUNE) -> CONNECTED
         except Exception:
@@ -249,6 +260,7 @@ class Controller:
         """Emergency stop: force RF off and setpoint 0 on the device (BYPASSING the arm gate) and
         disarm. Best-effort and safe in any state (no device / disarmed / faulted) — it must never
         be blocked by a gate."""
+        zeroed = False
         with self._io_lock:
             dev = self.device
             if dev is not None:
@@ -258,9 +270,12 @@ class Controller:
                     pass
                 try:
                     dev.set_setpoint(0)
-                    self.commanded_setpoint_w = 0  # only once the write succeeded
+                    zeroed = True  # recorded as 0 only once the write succeeded
                 except Exception:  # noqa: BLE001
                     pass
+        if zeroed:
+            with self._lock:
+                self._last_setpoint_w = 0
         self.armed = False
 
     def detach_device(self) -> None:
@@ -276,11 +291,11 @@ class Controller:
         with self._lock:
             self.device = None
             self.armed = False
-            self.commanded_setpoint_w = None  # a new device's setpoint is unknown
             self.state = ControllerState.DISCONNECTED
             self.latest_telemetry = None
             self.latest_decision = None
             self.fault_reasons = ()
+            self._last_setpoint_w = None
         self._last_sample_monotonic = None
         self._reset_invalid_status()  # the next link starts with a clean glitch history
 
@@ -312,6 +327,7 @@ class Controller:
             return
         self._record_read_outcome(invalid=False)
         self._read_failures = 0  # a good read clears the link-loss debounce
+        self._poll_seq += 1  # display-only heartbeat counter
         self._invalid_status_reads = 0
 
         # Staleness = the IDLE GAP between reads (a stalled/starved poll loop), NOT the duration of
@@ -475,11 +491,11 @@ class Controller:
         with self._lock:
             self.device = None
             self.armed = False
-            self.commanded_setpoint_w = None  # a lost link: the generator's setpoint is unknown
             self.state = ControllerState.DISCONNECTED
             self.latest_telemetry = None
             self.latest_decision = None
             self.fault_reasons = ()
+            self._last_setpoint_w = None
         self._last_sample_monotonic = None
         self._read_failures = 0
         self._reset_invalid_status()
@@ -515,7 +531,8 @@ class Controller:
         clamped = self.limits.clamp_setpoint(watts)
         with self._io_lock:
             self.device.set_setpoint(clamped)
-            self.commanded_setpoint_w = clamped
+        with self._lock:
+            self._last_setpoint_w = clamped
         return clamped
 
     def set_limits(self, limits: SafetyLimits) -> None:
@@ -606,11 +623,15 @@ class Controller:
             d = self.latest_decision
             vna_active = self._vna_session_active
             vna_hb_ns = self._vna_hb_ns
+            last_sp = self._last_setpoint_w
+            poll_seq = self._poll_seq
+            last_ok = self._last_sample_monotonic
+            read_failures = self._read_failures
         age_s = None if vna_hb_ns is None else (time.monotonic_ns() - vna_hb_ns) / 1e9
         return {
             "state": self.state.value,
             "armed": self.armed,
-            "commanded_setpoint_w": self.commanded_setpoint_w,
+            "commanded_setpoint_w": last_sp,
             "fault_reasons": list(self.fault_reasons),
             "invalid_status_reads_recent": self._invalid_recent,
             "telemetry": None
@@ -632,7 +653,15 @@ class Controller:
                 "dc_voltage": t.dc_voltage,
                 "preset_slot": t.preset_slot,
             },
+            "last_setpoint_w": last_sp,
             "warnings": [] if d is None else list(d.warnings),
+            # Display-only link heartbeat (operator<->generator): good-read counter, age of the last
+            # good read on the controller clock, and the consecutive read-failure count.
+            "link": {
+                "poll_seq": poll_seq,
+                "last_ok_age_s": None if last_ok is None else max(0.0, self._clock() - last_ok),
+                "read_failures": read_failures,
+            },
             "vna_session": {
                 "active": vna_active,
                 "stale": bool(vna_active and age_s is not None and age_s > self._vna_stale_s),

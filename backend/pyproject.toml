@@ -12,6 +12,12 @@ dependencies = [
     # Runtime, not dev: the FLIR link / control-telemetry / ROI-temps clients import it. It was only
     # under `dev`, so every fresh install (install.sh / install.ps1) crashed with ModuleNotFoundError.
     "httpx>=0.27",
+    # Scope sense-loop logging (2026-10-07): numpy for the sine fit; pyvisa + pyvisa-py (+ pyusb for USB-TMC,
+    # needs libusb) so USB0::… and TCPIP0::… go through one resource string with no NI-VISA install.
+    "numpy>=1.26",
+    "pyvisa>=1.14",
+    "pyvisa-py>=0.7",
+    "pyusb>=1.2",
 ]
 
 [project.optional-dependencies]

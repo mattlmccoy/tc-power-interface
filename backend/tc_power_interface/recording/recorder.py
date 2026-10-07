@@ -19,6 +19,7 @@ import queue
 import re
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -54,14 +55,30 @@ _THERMAL_FIELDS = {
 #: pre-existing columns so readers keyed on the old layout are unaffected. Added 2026-09-24: an
 #: in-run Load retune preceded a transformer-core runaway and the log had no tune/load positions.
 _MATCH_FIELDS = ["tune_cap_percent", "load_cap_percent", "manual_mode", "dc_voltage", "preset_slot"]
-#: Cockpit columns (2026-10-07, spec §3.4), APPENDED after all pre-existing columns.
+#: Scope sense-loop columns, APPENDED after the match fields (same precedent). Column -> key in
+#: the snapshot's ``scope`` sub-dict (ScopeHub.recording_fields()); blank (never 0) when the
+#: scope is disconnected or its reading is stale.
+_SCOPE_FIELDS = {
+    "scope_vrms_v": "vrms_v",
+    "scope_b_pk_mt": "b_pk_mt",
+    "scope_f0_hz": "f0_hz",
+    "scope_h2_pct": "h2_pct",
+    "scope_h3_pct": "h3_pct",
+    "scope_level_w": "level_w",
+    "scope_level_state": "level_state",
+    "scope_valid": "valid",
+    "scope_flags": "flags",
+    "scope_age_ms": "age_ms",
+}
+#: Cockpit columns (2026-10-07, spec §3.4), APPENDED after all pre-existing columns
+#: (incl. main's scope_* block, which shipped first).
 #: Unknown = blank.
 _COCKPIT_FIELDS = [
     "part_roi", "part_temp_c", "temp_status", "shadow_k", "shadow_tau_s", "shadow_conf",
     "shadow_suggest_w", "shadow_plateau_c", "shadow_ttt_s", "run_mode", "target_c",
 ]
 _CSV_FIELDS = [
-    *_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS,
+    *_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS, *_SCOPE_FIELDS,
     "setpoint_w", *_COCKPIT_FIELDS,
 ]
 #: Long-format sidecar (roi_temps.csv): the telemetry header is fixed at run start but FLIR ROI
@@ -134,6 +151,23 @@ class TelemetryRecorder:
         # start() only TRY-acquires it, so a start (e.g. the auto-logger on the poll thread) never
         # waits behind a stop that is draining a stalled disk.
         self._stop_lock = threading.Lock()
+        self._finalizers: list[Callable[[Path], list[str]]] = []
+        # event_for() vs the RECORDING -> STOPPING flip in stop()
+        self._event_lock = threading.Lock()
+
+    @property
+    def run_dir(self) -> Path | None:
+        """The active run directory, or None when idle (or stopping)."""
+        return self._dir if self.state is RecorderState.RECORDING else None
+
+    def add_finalizer(self, fn: Callable[[Path], list[str]]) -> None:
+        """Register a callback run at stop(), before the manifest.
+
+        Registered once; runs at every stop() for the recorder's lifetime.
+
+        Returned file names (relative to the run dir) are checksummed into the manifest. A failing
+        finalizer is logged and recorded as an event, never raised."""
+        self._finalizers.append(fn)
 
     def start(self, name: str, metadata: dict[str, Any]) -> Path:
         if not self._stop_lock.acquire(blocking=False):
@@ -218,6 +252,10 @@ class TelemetryRecorder:
             row[col] = thermal.get(key)
         for key in _MATCH_FIELDS:
             row[key] = telemetry.get(key)
+        scope = snapshot.get("scope")
+        scope = scope if isinstance(scope, dict) else {}
+        for col, key in _SCOPE_FIELDS.items():
+            row[col] = scope.get(key)
         # Optional extras: junk here must never cost the core telemetry row.
         row["setpoint_w"] = _clean_cell(snapshot.get("commanded_setpoint_w"))
         cockpit = snapshot.get("cockpit")
@@ -278,6 +316,15 @@ class TelemetryRecorder:
             }
         )
 
+    def event_for(self, run_dir: Path, label: str, data: dict[str, Any] | None = None) -> bool:
+        """Append an event only if run_dir is still the active run (for other threads, e.g. the
+        scope poller, whose view of the run may be stale). Returns whether it was recorded."""
+        with self._event_lock:
+            if self.state is not RecorderState.RECORDING or self._dir != run_dir:
+                return False
+            self.event(label, data)
+            return True
+
     def stop(self) -> Path | None:
         with self._stop_lock:
             return self._stop_locked()
@@ -307,7 +354,8 @@ class TelemetryRecorder:
 
         # Stop new rows enqueuing, then let the writer drain everything already queued before we
         # close the file and checksum it — so the manifest hashes the COMPLETE telemetry.csv.
-        self.state = RecorderState.STOPPING  # record() no-ops; start() refused until IDLE
+        with self._event_lock:  # event_for() sees RECORDING or STOPPING, never a torn flip
+            self.state = RecorderState.STOPPING  # record() no-ops; start() refused until IDLE
         try:
             self._finalize(run_dir)
         finally:  # even if finalizing fails, never leave the recorder wedged in STOPPING
@@ -330,17 +378,28 @@ class TelemetryRecorder:
             self._roi_file = None
         self._roi_writer = None
 
+        extra_files: list[str] = []
+        for fn in self._finalizers:
+            try:
+                extra_files.extend(fn(run_dir))
+            except Exception as exc:  # noqa: BLE001 - a broken finalizer must not lose the run
+                logger.exception("recorder finalizer failed")
+                self.event("finalizer_failed", {"error": str(exc)})
+
         (run_dir / "events.json").write_text(json.dumps(self._events, indent=2))
+        checksums: dict[str, str] = {
+            "metadata.json": _sha256(run_dir / "metadata.json"),
+            "events.json": _sha256(run_dir / "events.json"),
+            "telemetry.csv": _sha256(run_dir / "telemetry.csv"),
+            "roi_temps.csv": _sha256(run_dir / "roi_temps.csv"),
+        }
+        for name in extra_files:
+            checksums[name] = _sha256(run_dir / name)
 
         manifest = {
             "complete": True,
             "sample_count": self._sample_count,
             "duration_s": round(time.monotonic() - self._started_monotonic, 3),
-            "checksums": {
-                "metadata.json": _sha256(run_dir / "metadata.json"),
-                "events.json": _sha256(run_dir / "events.json"),
-                "telemetry.csv": _sha256(run_dir / "telemetry.csv"),
-                "roi_temps.csv": _sha256(run_dir / "roi_temps.csv"),
-            },
+            "checksums": checksums,
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))

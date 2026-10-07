@@ -80,7 +80,11 @@ def replay_recorded(
         steps.append(
             ReplayStep(
                 t=float(t),
-                temp_c=round(loop.control_temp_c, 2) if loop.control_temp_c is not None else float("nan"),
+                temp_c=(
+                    round(loop.control_temp_c, 2)
+                    if loop.control_temp_c is not None
+                    else float("nan")
+                ),
                 phase=loop.phase.value,
                 commanded_w=round(loop.recommended_w, 1),
             )

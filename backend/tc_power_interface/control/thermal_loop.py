@@ -118,7 +118,8 @@ class ThermalController:
         self.running = False
         self.armed = False
         self.phase = ThermalPhase.RAMP
-        # None = no trustworthy reading (never 0.0: TC-POWER logged 0.0 C in 43 of 45 runs that way).
+        # None = no trustworthy reading (never 0.0: TC-POWER logged 0.0 C in 43 of 45 runs that
+        # way).
         self.control_temp_c: float | None = None
         self.recommended_w = 0.0
         self.applied_w: float | None = None
@@ -235,7 +236,9 @@ class ThermalController:
             "phase": self.phase.value,
             "mode": self.mode,
             "armed": self.armed,
-            "control_temp_c": None if self.control_temp_c is None else round(self.control_temp_c, 1),
+            "control_temp_c": (
+                None if self.control_temp_c is None else round(self.control_temp_c, 1)
+            ),
             "target_c": self.plan.target_c,
             "recommended_w": round(self.recommended_w, 1),
             "applied_w": self.applied_w,

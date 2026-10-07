@@ -1,14 +1,20 @@
 """The FLIR temperature path, end to end (2026-10-06 root cause).
 
-TC-POWER recorded ``thermal_control_temp_c == 0.0`` in 43 of 45 runs because (1) the loop's temperature
-was only read while the loop was RUNNING and otherwise kept its initial 0.0, which the recorder logged on
-every sample; (2) an invalid reading also stored 0.0; (3) the source defaulted to the SIMULATED source on
-the real generator; (4) the FLIR source asked for a hard-coded ROI name (``circle_medium_small``) that the
-redrawn FLIR sessions no longer have, and the choice reset on every restart. Unknown must never read as a
+TC-POWER recorded ``thermal_control_temp_c == 0.0`` in 43 of 45 runs because (1) the loop's
+temperature
+was only read while the loop was RUNNING and otherwise kept its initial 0.0, which the recorder
+logged on
+every sample; (2) an invalid reading also stored 0.0; (3) the source defaulted to the SIMULATED
+source on
+the real generator; (4) the FLIR source asked for a hard-coded ROI name (``circle_medium_small``)
+that the
+redrawn FLIR sessions no longer have, and the choice reset on every restart. Unknown must never
+read as a
 temperature (data-contract rule 5).
 """
 
 from fastapi.testclient import TestClient
+from test_flir_roi_temps import _LIVE_A70_HEALTHY, _LIVE_NOT_ACQUIRING  # captured real payloads
 
 from tc_power_interface.api.app import create_app
 from tc_power_interface.control.safety import SafetyLimits
@@ -17,8 +23,6 @@ from tc_power_interface.control.thermal_loop import ThermalController, ThermalPl
 from tc_power_interface.control.thermal_store import load_source, save_source
 from tc_power_interface.integration.control_telemetry import build_control_telemetry
 from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
-
-from test_flir_roi_temps import _LIVE_A70_HEALTHY, _LIVE_NOT_ACQUIRING  # captured real payloads
 
 
 class _Fake:
@@ -34,7 +38,10 @@ class _Fake:
         return w
 
     def snapshot(self):
-        return {"state": "connected", "telemetry": {"rf_on": self._rf_on, "forward_w": 40.0, "load_w": 39.0}}
+        return {
+            "state": "connected",
+            "telemetry": {"rf_on": self._rf_on, "forward_w": 40.0, "load_w": 39.0},
+        }
 
 
 class _Fixed:
@@ -95,10 +102,14 @@ def test_flir_source_says_why_there_is_no_reading():
     src.set_roi("front_electrode")
     src.poll_once()
     assert src.status == "ok" and src.read().valid is True
-    nolive = FlirPollingSource("http://x", roi_name="front_electrode", _get=_Get([_LIVE_NOT_ACQUIRING]))
+    nolive = FlirPollingSource(
+        "http://x", roi_name="front_electrode", _get=_Get([_LIVE_NOT_ACQUIRING])
+    )
     nolive.poll_once()
     assert nolive.status == "not_live"
-    down = FlirPollingSource("http://x", roi_name="front_electrode", _get=_Get([OSError("refused")]))
+    down = FlirPollingSource(
+        "http://x", roi_name="front_electrode", _get=_Get([OSError("refused")])
+    )
     down.poll_once()
     assert down.status == "no_feed"
 
@@ -112,7 +123,9 @@ def test_source_and_roi_choice_persist_with_no_invented_default(tmp_path):
 
 def test_api_has_no_hardcoded_roi_and_remembers_the_operators_choice(tmp_path):
     def client():
-        return TestClient(create_app(backend="simulated", poll_interval_s=0.05, experiments_root=tmp_path))
+        return TestClient(
+            create_app(backend="simulated", poll_interval_s=0.05, experiments_root=tmp_path)
+        )
 
     with client() as c:
         assert c.get("/api/thermal/rois").json()["control_roi"] is None
@@ -124,8 +137,12 @@ def test_api_has_no_hardcoded_roi_and_remembers_the_operators_choice(tmp_path):
 def test_a_wrong_roi_is_reported_even_while_the_camera_is_off():
     # REAL captured payload: no camera, but the FLIR session's ROI roster is present.
     from test_flir_roi_temps import _LIVE_NO_CAMERA_ROSTER
+
     from tc_power_interface.integration.flir_roi_temps import control_status
 
-    assert control_status(_LIVE_NO_CAMERA_ROSTER, "freehand_sample") == "roi_not_in_feed"  # fix the ROI first
-    assert control_status(_LIVE_NO_CAMERA_ROSTER, "circle_medium_small") == "not_live"  # right ROI, camera off
-    assert control_status(_LIVE_NOT_ACQUIRING, "freehand_sample") == "not_live"  # no roster: can't tell
+    # fix the ROI first
+    assert control_status(_LIVE_NO_CAMERA_ROSTER, "freehand_sample") == "roi_not_in_feed"
+    # right ROI, camera off
+    assert control_status(_LIVE_NO_CAMERA_ROSTER, "circle_medium_small") == "not_live"
+    # no roster: can't tell
+    assert control_status(_LIVE_NOT_ACQUIRING, "freehand_sample") == "not_live"

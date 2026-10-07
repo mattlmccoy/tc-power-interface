@@ -245,6 +245,17 @@ export function useOperator() {
     });
   };
 
+  // APP heartbeat. A stopped socket fires no onmessage, so a 250 ms tick re-renders the top bar and
+  // lets the APP LED (and the RF clock) go dead when updates stop.
+  const [msgSeq, setMsgSeq] = useState(0);
+  const lastMsgAtRef = useRef<number | null>(null);
+  const [heartbeatNow, setHeartbeatNow] = useState(() => performance.now());
+  useEffect(() => {
+    const id = setInterval(() => setHeartbeatNow(performance.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+  const msSinceMsg = lastMsgAtRef.current == null ? null : Math.max(0, heartbeatNow - lastMsgAtRef.current);
+
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;
@@ -257,6 +268,8 @@ export function useOperator() {
       };
       ws.onmessage = (ev) => {
         const s = JSON.parse(ev.data) as Status;
+        lastMsgAtRef.current = performance.now(); // APP heartbeat: browser<->operator updates
+        setMsgSeq((n) => n + 1);
         setStatus(s);
         if (s.recording?.run) setLastRun(s.recording.run);
         const tel = s.controller.telemetry;
@@ -423,6 +436,7 @@ export function useOperator() {
   const thermal = status?.thermal;
   const ramp = status?.ramp;
   const timer = status?.timer;
+  const scope = status?.scope;
   const presets = status?.presets;
   const presetEntries = presets
     ? Object.entries(presets.slots)
@@ -775,6 +789,7 @@ export function useOperator() {
   } as const;
 
   return {
+    msgSeq, msSinceMsg,
     status, reachable, wsFails, health, toast, flash, view, setView, showGauges, toggleGauges,
     showRoiOverlay, toggleRoiOverlay, heroTrace, roiTrace, showHelp,
     toggleHelp, showStartup, setShowStartup, setpointInput, setSetpointInput, setpointRef,
@@ -788,7 +803,7 @@ export function useOperator() {
     flirUrlInput, setFlirUrlInput, flirEnabled, flirLast, applyFlirUrl, toggleFlirEnabled,
     thermalMode, setThermalMode, thermalFlirUrl, setThermalFlirUrl, startThermal, stopThermal,
     armThermal, disarmThermal, applyThermalSource, applyControlRoi, pulseForm, setPulseForm,
-    startPulse, stopPulse, plot, ctrl, t, limits, device, recording, thermal, ramp, timer, presets,
+    startPulse, stopPulse, plot, ctrl, t, limits, device, recording, thermal, ramp, timer, scope, presets,
     pulse, mt, presetEntries, connected, armed, controllable, faulted, pillState, handshake,
     maxRefl, reflW, zone, reflFillPct, powerCeil, fwdCaution, fwdDanger, requested, textInputStyle,
     base, baseInput, setBaseInput, applyBase, showConnect, setShowConnect, ports, connectBusy,

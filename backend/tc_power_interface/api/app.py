@@ -32,6 +32,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from tc_power_interface import __version__
+from tc_power_interface.api.recording_files import router as recording_files_router
+from tc_power_interface.api.scope_routes import router as scope_router
 from tc_power_interface.control.cockpit import CockpitObserver
 from tc_power_interface.control.controller import Controller
 from tc_power_interface.control.core_watch import MAX_WATCH
@@ -43,6 +45,7 @@ from tc_power_interface.control.match_tuner import (
 from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, RampPlan
 from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
 from tc_power_interface.control.pulse import PULSE_BOUNDS, PulseController, PulsePlan
+from tc_power_interface.control.rf_clock import RfClock
 from tc_power_interface.control.run_mode import (
     RunMode,
     load_run_mode,
@@ -66,6 +69,7 @@ from tc_power_interface.integration.control_telemetry import (
 from tc_power_interface.integration.flir_link import FlirLink
 from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
 from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
+from tc_power_interface.integration.scope_hub import ScopeHub
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 from tc_power_interface.recording.replay_shadow import (
     DamagedRecordingError,
@@ -85,6 +89,8 @@ _DAMAGE = (DamagedRecordingError, csv.Error, UnicodeError, OSError)
 OBSERVER_LOG_EVERY_S = 60.0
 
 API_VERSION = "0.1"
+#: The RF clock is marked stale when the last good generator read is older than this (s).
+_RF_CLOCK_STALE_S = 5.0
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2].parent / "frontend" / "dist"
 
 
@@ -296,6 +302,8 @@ def create_app(
                 CxnDevice(transport), limits=active_limits, poll_interval_s=poll_interval_s
             )
         recorder = TelemetryRecorder(experiments_root)
+        scope_hub = ScopeHub(experiments_root, recorder)  # warn-only: never commands the generator
+        app.state.scope_hub = scope_hub
         flir_link = FlirLink(flir_url or "", enabled=bool(flir_url))
         # RF on/off -> FLIR: announced from BOTH the API command (immediate; catches pulses shorter
         # than one telemetry poll) and the observed telemetry edge (front panel / faults), deduped.
@@ -309,8 +317,12 @@ def create_app(
         heartbeat_gate = HeartbeatGate(period_s=1.0)  # power-only heartbeat cadence (manual runs)
         # Temperature source + control ROI: the operator's saved choice. No ROI name is invented
         # (the old hard-coded "circle_medium_small" vanished when the FLIR ROIs were redrawn, so the
-        # loop silently read nothing and logged 0 C). Real hardware with a FLIR link defaults to FLIR.
-        src_cfg = load_source(experiments_root, default_type="flir" if (flir_url and backend != "simulated") else "simulated")
+        # loop silently read nothing and logged 0 C). Real hardware with a FLIR link defaults to
+        # FLIR.
+        src_cfg = load_source(
+            experiments_root,
+            default_type="flir" if (flir_url and backend != "simulated") else "simulated",
+        )
         app.state.control_roi = src_cfg["roi"]
         app.state.watch_rois = src_cfg["watch"]
         # Run mode is display/bookkeeping only; a stale file is re-clamped to the real limit.
@@ -319,11 +331,15 @@ def create_app(
         )
         app.state.current_run = None  # set before the listeners can fire (the observer reads it)
         app.state.auto_run = None  # name of the run the auto-log started (None: none / operator's)
-        app.state.flir_roi_url = f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
+        app.state.flir_roi_url = (
+            f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
+        )
         initial_source: Any = SimulatedThermalSource()
         app.state.thermal_source = "simulated"
         if src_cfg["type"] == "flir" and app.state.flir_roi_url:
-            initial_source = FlirPollingSource(app.state.flir_roi_url, roi_name=app.state.control_roi)
+            initial_source = FlirPollingSource(
+                app.state.flir_roi_url, roi_name=app.state.control_roi
+            )
             initial_source.start()
             app.state.thermal_source = "flir"
         controller.backend = backend
@@ -333,7 +349,8 @@ def create_app(
             mode="advisory",
         )
         # Listener order (each poll tick, in registration order): rf_notifier -> auto-log ->
-        # thermal tick (loop + cockpit observer + FLIR post) -> recorder -> drivers.
+        # thermal tick (loop + cockpit observer + FLIR post) -> RF clock -> recorder -> scope hub
+        # -> drivers.
         # Auto-log: on an RF-on rising edge, start a recording if one isn't already running. It
         # runs BEFORE the thermal tick, so the observer sees the new run id (and resets) on the
         # same tick, and BEFORE the recorder, so the run's first sample has a fresh estimate.
@@ -489,6 +506,16 @@ def create_app(
 
         idle_thread = threading.Thread(target=_idle_loop, name="tcp-idle-observer", daemon=True)
 
+        # RF on-time clock (display-only). After _auto_log so an auto-started run is seen on the
+        # same tick; getattr because polling starts before app.state.current_run is first set.
+        rf_clock = RfClock()
+        app.state.rf_clock = rf_clock
+        controller.add_listener(lambda snap: rf_clock.update(
+            time.monotonic(),
+            (snap.get("telemetry") or {}).get("rf_on"),
+            getattr(app.state, "current_run", None),
+        ))
+
         def _cockpit_fields() -> dict[str, Any]:
             """The cockpit's CSV columns, or {} (blank cells) if the observer fails: a cockpit bug
             must never cost the core telemetry row."""
@@ -500,9 +527,11 @@ def create_app(
 
         controller.add_listener(lambda snap: recorder.record({
             **snap, "thermal": thermal.snapshot(), "cockpit": _cockpit_fields(),
-            "roi_temps": tick_cache["roi_temps"],
+            "roi_temps": tick_cache["roi_temps"], "scope": scope_hub.recording_fields(),
         }))
-        app.state.thermal = thermal  # (thermal_source was set above from the operator's saved choice)
+        controller.add_listener(scope_hub.on_snapshot)
+        # (thermal_source was set above from the operator's saved choice)
+        app.state.thermal = thermal
 
         # Software power ramp (init -> target at W/s); ticks from the poll, drives the setpoint.
         ramp = RampController(
@@ -591,6 +620,7 @@ def create_app(
         finally:
             idle_stop.set()
             idle_thread.join(timeout=2.0)
+            app.state.scope_hub.disconnect()
             recorder.stop()  # no-op when idle; waits out a stop already draining
             controller.stop()
 
@@ -670,6 +700,7 @@ def create_app(
         drivers AND clear the device metadata, so the UI shows a clean 'no device / disconnected'
         instead of the pill going grey while the top bar still names the (now absent) generator."""
         _stop_all_features()
+        app.state.rf_clock.reset_link()  # the next generator starts with an unknown RF state
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
@@ -723,18 +754,27 @@ def create_app(
     def _status_payload() -> dict[str, Any]:
         rec = _recorder()
         ctrl_snap = _controller().snapshot()
+        link_age = ctrl_snap["link"]["last_ok_age_s"]
+        rf_clock_snap = app.state.rf_clock.snapshot(
+            time.monotonic(),
+            link_ok=link_age is not None and link_age <= _RF_CLOCK_STALE_S,
+            attached=ctrl_snap["state"] in ("connected", "fault"),
+        )
         return {
             "device": app.state.device_info,
             "controller": ctrl_snap,
             "recording": {
                 "active": rec.state is RecorderState.RECORDING,
                 "run": app.state.current_run,
+                "run_path": None if rec.run_dir is None else str(rec.run_dir.resolve()),
+                "experiments_root": str(experiments_root.resolve()),
             },
             "thermal": {
                 **_thermal().snapshot(),
                 "source": app.state.thermal_source,
                 "control_roi": app.state.control_roi,
-                # why there is / isn't a control temperature (ok, no_roi_selected, roi_not_in_feed, ...)
+                # why there is / isn't a control temperature (ok, no_roi_selected, roi_not_in_feed,
+                # ...)
                 "temp_status": getattr(_thermal().source, "status", "simulated"),
                 "available_rois": _available_rois(),
                 **thermal_extra(_thermal().source),
@@ -748,9 +788,11 @@ def create_app(
             "presets": _presets_payload(),
             "pulse": _pulse().snapshot(),
             "match_tuner": _match_tuner().snapshot(),
+            "scope": app.state.scope_hub.snapshot(),
             # Surface the VNA-session interlock at the top level too (mirrors `match_tuner`), so the
             # frontend banner/panel read `status.vna_session`; the same block stays in `controller`.
             "vna_session": ctrl_snap["vna_session"],
+            "rf_clock": rf_clock_snap,
         }
 
     @app.get("/api/status")
@@ -791,6 +833,7 @@ def create_app(
                 device = CxnDevice(create_transport("simulated"))
             else:
                 raise HTTPException(400, f"unknown backend {req.backend!r}")
+            app.state.rf_clock.reset_link()  # a new link starts with an unknown RF state
             _controller().attach_device(device, backend=req.backend)
         except HTTPException:
             raise
@@ -808,6 +851,7 @@ def create_app(
         _stop_all_features()
         _stop_auto_run("recording_stopped_disconnected", background=False)
         _controller().detach_device()
+        app.state.rf_clock.reset_link()
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
@@ -1171,7 +1215,8 @@ def create_app(
 
     @app.post("/api/vna-session/end")
     def vna_session_end() -> dict[str, Any]:
-        """Leave VNA-tune mode; RF is allowed again (arm/connected/not-faulted gates still apply)."""
+        """Leave VNA-tune mode; RF is allowed again (arm/connected/not-faulted gates still
+        apply)."""
         _controller().end_vna_session()
         _record_event("vna_session_end")
         return _status_payload()
@@ -1319,6 +1364,7 @@ def create_app(
                 runs.append(
                     {
                         "run": d.name,
+                        "path": str(d.resolve()),
                         "complete": (d / "manifest.json").is_file(),
                         "size_bytes": size,
                         "has_roi_data": has_roi_data(d),  # never raises
@@ -1420,6 +1466,9 @@ def create_app(
         rec = _recorder()
         if rec.state is RecorderState.RECORDING:
             rec.event(label, data)
+
+    app.include_router(scope_router)
+    app.include_router(recording_files_router)
 
     # --- static frontend -------------------------------------------------------------------
     dist = frontend_dist or _DEFAULT_FRONTEND_DIST

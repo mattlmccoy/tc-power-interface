@@ -38,7 +38,8 @@ class TestConnect:
 
 
 class _ModeDevice:
-    """Fake generator that reports a fixed manual_mode and records force_manual_mode calls, so we can
+    """Fake generator that reports a fixed manual_mode and records force_manual_mode calls, so we
+    can
     prove connect() does NOT reset the caps (via force-manual) when the device is already manual."""
 
     def __init__(self, manual_mode: bool):
@@ -52,7 +53,12 @@ class _ModeDevice:
         self.forced += 1
 
     def read_telemetry(self) -> Telemetry:
-        return replace(_benign_telemetry(), manual_mode=self._manual, tune_cap_percent=35.0, load_cap_percent=66.0)
+        return replace(
+            _benign_telemetry(),
+            manual_mode=self._manual,
+            tune_cap_percent=35.0,
+            load_cap_percent=66.0,
+        )
 
     def read_match(self) -> GtBlock:
         return GtBlock(manual_mode=self._manual, load_capacity=66.0, tune_capacity=35.0,
@@ -67,7 +73,8 @@ class _ModeDevice:
 
 class TestConnectPreservesCaps:
     def test_already_manual_does_not_force_manual(self):
-        """The AG resets the cap DACs when told to enter manual mode; if it is ALREADY manual we must
+        """The AG resets the cap DACs when told to enter manual mode; if it is ALREADY manual we
+        must
         not send that command, or a hand-tuned AIT match would be wiped on connect."""
         dev = _ModeDevice(manual_mode=True)
         c = Controller(dev, poll_interval_s=0.01)
@@ -76,7 +83,8 @@ class TestConnectPreservesCaps:
         assert dev.forced == 0  # caps left exactly where they were
 
     def test_not_manual_forces_manual(self):
-        """If the generator is NOT in manual (could be the forbidden ATUNE), we must force manual even
+        """If the generator is NOT in manual (could be the forbidden ATUNE), we must force manual
+        even
         though it resets the caps — the interlock wins over preserving a position."""
         dev = _ModeDevice(manual_mode=False)
         c = Controller(dev, poll_interval_s=0.01)
@@ -750,12 +758,26 @@ class TestCommandedSetpoint:
         c.arm()
         c.set_setpoint(30)
         c._drop_link()
-        c.commanded_setpoint_w = 30  # stale value left by any path that skipped the reset
+        c._last_setpoint_w = 30  # stale value left by any path that skipped the reset
         c.attach_device(CxnDevice(SimulatedCxnTransport()))
         try:
             assert c.snapshot()["commanded_setpoint_w"] is None
         finally:
             c.detach_device()
+
+    def test_both_snapshot_keys_report_the_same_value(self):
+        # Merge of main's scope `last_setpoint_w` with the cockpit's `commanded_setpoint_w`: one
+        # underlying value, two consumer-facing names; they must never disagree.
+        c = make_controller()
+        c.connect()
+        assert c.snapshot()["last_setpoint_w"] is c.snapshot()["commanded_setpoint_w"] is None
+        c.arm()
+        c.set_setpoint(30)
+        snap = c.snapshot()
+        assert snap["last_setpoint_w"] == snap["commanded_setpoint_w"] == 30
+        c.estop()
+        snap = c.snapshot()
+        assert snap["last_setpoint_w"] == snap["commanded_setpoint_w"] == 0
 class _ScriptedDevice:
     """Fake generator that plays a script of reads: each entry is a Telemetry (good read) or an
     Exception instance (raised). Models the 2026-10-07 incident: one checksum-valid GS frame whose

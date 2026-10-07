@@ -1,6 +1,8 @@
 // Telemetry types (mirror of the backend snapshot JSON) + a small ring buffer for plots.
 
 import type { RunModeName, Shadow } from "./cockpit/shadowText.ts";
+import type { LinkBlock, RfClockBlock } from "./heartbeat.ts";
+import type { ScopeStatus } from "./scope.ts";
 
 export interface Telemetry {
   host_timestamp_ns: number;
@@ -51,6 +53,10 @@ export interface Snapshot {
   limits: Limits;
   /** The last setpoint WE wrote to the generator (backend controller.py snapshot). null = unknown. */
   commanded_setpoint_w?: number | null;
+  /** Operator<->generator link heartbeat (absent on older backends). */
+  link?: LinkBlock;
+  /** Last setpoint the server applied (controller.py); null until one is sent. Absent on older operators. */
+  last_setpoint_w?: number | null;
 }
 
 export interface DeviceInfo {
@@ -209,16 +215,20 @@ export interface MatchTunerConfig extends MatchTunerForm {
 export interface Status {
   device: DeviceInfo;
   controller: Snapshot;
-  recording: { active: boolean; run: string | null };
+  recording: { active: boolean; run: string | null; run_path?: string | null; experiments_root?: string };
   thermal: ThermalStatus;
   ramp: RampStatus;
   timer: TimerStatus;
+  /** Read-only sense-loop scope (absent on older backends). */
+  scope?: ScopeStatus;
   presets: PresetsStatus;
   pulse: PulseStatus;
   match_tuner: MatchTunerStatus;
   /** VNA pre-run auto-tune interlock: while `active`, RF-enable is refused (409). `stale` marks a
    * lost heartbeat (reported, but only an explicit End clears the session). */
   vna_session?: { active: boolean; stale: boolean; age_s: number | null };
+  /** RF on-time clock: current burn, last burn, RF-on total in the run (absent on older backends). */
+  rf_clock?: RfClockBlock;
 }
 
 export interface Point {

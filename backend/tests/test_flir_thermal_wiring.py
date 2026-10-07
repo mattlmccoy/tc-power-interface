@@ -68,7 +68,8 @@ def test_control_roi_is_selectable_from_the_live_roster(tmp_path, monkeypatch):
         c.post("/api/thermal/source", json={"type": "flir", "url": "http://127.0.0.1:8000"})
         rois = c.get("/api/thermal/rois").json()
         assert rois["available_rois"] == ["part_center", "circle_medium_small", "hotspot"]
-        assert rois["control_roi"] is None  # no default (the old hard-coded name vanished 09-08 → 10-02)
+        # no default (the old hard-coded name vanished 09-08 → 10-02)
+        assert rois["control_roi"] is None
         # The operator selects a different live ROI (ROIs change print-to-print).
         r = c.post("/api/thermal/roi", json={"name": "part_center"})
         assert r.status_code == 200

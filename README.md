@@ -26,6 +26,14 @@ implemented but **opt-in and unproven on the physical unit** — see Safety belo
 | FastAPI + `/ws/telemetry` API + `create_app` | `backend/.../api/` | tested (7); live-verified |
 | Operator UI (live telemetry, gauge, plot, gated controls) | `frontend/` (Vite + React + TS) | logic tested (9); browser-verified |
 | CLIs: `tcp-serve`, `tcp-probe` (read-only), `tcp-monitor` | `backend/.../api/server.py`, `probe.py`, `monitor.py` | run against the simulator |
+| Scope sense-loop logging (Siglent SDS1202X-E via VISA, Vrms/B/f0 per reading) | `backend/.../integration/scope_codec.py`, `tools/scope/capture_replies.py` | tested; hardware-verified 2026-10-07 over LAN (`TCPIP0::192.168.7.50::INSTR`, ~4 Hz in-app, 4–37 ms per waveform read) |
+
+## Scope setup
+
+- Use **LAN**: on the scope, Utility → I/O → LAN, set a static IP (here 192.168.7.50). USB works only with libusb on macOS or NI-VISA / a libusb driver on Windows.
+- Set the probe ×N on the scope channel to match the PHA0150 switch (currently 500X); a mismatch raises the `attn_mismatch` flag.
+- Resource strings: `TCPIP0::192.168.7.50::INSTR` (LAN, VXI-11 via pyvisa-py), `USB0::...::INSTR` (USB; list candidates with `pyvisa`'s `ResourceManager().list_resources()`).
+- `tools/scope/capture_replies.py` is a read-only capture of raw replies and waveforms (see its docstring).
 
 ## Scientific / engineering stance
 

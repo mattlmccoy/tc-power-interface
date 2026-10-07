@@ -61,8 +61,11 @@ def select_control_temp(
     )
 
 
-def control_status(payload: dict[str, Any], roi_name: str | None, *, max_age_ms: float = 1000.0) -> str:
-    """WHY there is (or is not) a control temperature, for the operator: ``ok``, ``no_roi_selected``,
+def control_status(
+    payload: dict[str, Any], roi_name: str | None, *, max_age_ms: float = 1000.0
+) -> str:
+    """WHY there is (or is not) a control temperature, for the operator: ``ok``,
+    ``no_roi_selected``,
     ``not_live`` (no camera / stale / old frame), ``roi_not_in_feed`` (the chosen ROI isn't drawn in
     this FLIR session) or ``roi_invalid`` (saturated / null stat)."""
     if not roi_name:
@@ -72,7 +75,12 @@ def control_status(payload: dict[str, Any], roi_name: str | None, *, max_age_ms:
     if rois and roi is None:
         return "roi_not_in_feed"  # the roster is known even with the camera off: fix the ROI first
     age_ms = payload.get("age_ms")
-    if not payload.get("live", False) or payload.get("stale", False) or age_ms is None or age_ms > max_age_ms:
+    if (
+        not payload.get("live", False)
+        or payload.get("stale", False)
+        or age_ms is None
+        or age_ms > max_age_ms
+    ):
         return "not_live"
     if roi is None:
         return "roi_not_in_feed"
