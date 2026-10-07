@@ -46,3 +46,21 @@ def test_fit_matches_reference_script(name, vrms, resid, f0, vmin, vmax, h2, h3)
 def test_fit_rejects_too_few_points():
     with pytest.raises(ValueError, match="points"):
         fit_sense_loop(np.zeros(5), np.zeros(5))
+
+
+def test_fit_rejects_all_zero_capture():
+    with pytest.raises(ValueError, match="no fundamental"):
+        fit_sense_loop(np.arange(1400) * 1e-9, np.zeros(1400))
+
+
+def test_fit_rejects_constant_dc_capture():
+    with pytest.raises(ValueError, match="no fundamental"):
+        fit_sense_loop(np.arange(1400) * 1e-9, np.full(1400, 3.0))
+
+
+def test_fit_rejects_non_finite_samples():
+    t = np.arange(1400) * 1e-9
+    v = np.sin(2 * np.pi * 13.56e6 * t)
+    v[10] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        fit_sense_loop(t, v)

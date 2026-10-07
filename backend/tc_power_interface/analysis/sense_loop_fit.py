@@ -17,6 +17,7 @@ F_LO_HZ = 13.50e6
 F_HI_HZ = 13.62e6
 N_GRID = 121
 MIN_POINTS = 64
+MIN_FUND_V = 1e-9
 
 
 @dataclass(frozen=True)
@@ -37,9 +38,15 @@ def _lstsq(a: NDArray[np.float64], v: NDArray[np.float64]) -> NDArray[np.float64
 
 
 def fit_sense_loop(t: NDArray[np.float64], v: NDArray[np.float64]) -> FitResult:
-    """Fit one capture (time in s, volts) and return Vrms, f0, residual, extrema, H2/H3 in %."""
+    """Fit one capture (time in s, volts) and return Vrms, f0, residual, extrema, H2/H3 in %.
+
+    Raises ValueError for too few points, non-finite samples, or no fundamental (e.g. RF off);
+    callers treat that as "no valid reading".
+    """
     if len(t) < MIN_POINTS or len(t) != len(v):
         raise ValueError(f"need >= {MIN_POINTS} matching points, got {len(t)}/{len(v)}")
+    if not (np.isfinite(t).all() and np.isfinite(v).all()):
+        raise ValueError("non-finite samples")
     ones = np.ones_like(t)
     best: tuple[float, float, float] | None = None
     for f_try in np.linspace(F_LO_HZ, F_HI_HZ, N_GRID):
@@ -51,9 +58,13 @@ def fit_sense_loop(t: NDArray[np.float64], v: NDArray[np.float64]) -> FitResult:
             best = (r, float(f_try), float(np.hypot(c[0], c[1])))
     assert best is not None
     resid, f0, amp = best
+    if amp < MIN_FUND_V:
+        raise ValueError("no fundamental (amplitude below MIN_FUND_V)")
     cols = [fn(2 * np.pi * k * f0 * t) for k in (1, 2, 3) for fn in (np.sin, np.cos)]
     c = _lstsq(np.c_[np.array(cols).T, ones], v)
     fund = float(np.hypot(c[0], c[1]))
+    if fund < MIN_FUND_V:
+        raise ValueError("no fundamental (amplitude below MIN_FUND_V)")
     return FitResult(
         vrms_v=amp / math.sqrt(2),
         f0_hz=f0,
