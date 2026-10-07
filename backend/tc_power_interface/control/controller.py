@@ -17,6 +17,7 @@ import enum
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -37,10 +38,10 @@ class ControllerState(enum.Enum):
 class Controller:
     """Own the control lease, stream telemetry, and enforce protection."""
 
-    #: connect() mode read: total attempts when the status word is garbled (InvalidStatusWord).
-    _CONNECT_MODE_READ_ATTEMPTS = 3
-    #: Pause between those attempts (instance-overridable for tests).
-    _connect_retry_sleep_s = 0.1
+    #: Invalid status words tolerated in a sliding window of recent reads: the LIMIT-th invalid
+    #: word within the last WINDOW reads is a read failure even if the glitches are not consecutive.
+    INVALID_STATUS_WINDOW_READS = 20
+    INVALID_STATUS_WINDOW_LIMIT = 3
 
     def __init__(
         self,
@@ -65,6 +66,10 @@ class Controller:
         #: is a persisting garbled link and goes through _on_read_failure (fail safe). Only a good
         #: read resets it (and a detach / link drop, so a new link starts clean).
         self._invalid_status_reads = 0
+        #: Sliding window of recent read outcomes (True = invalid status word) and its count, which
+        #: the poll thread maintains and snapshot() reports as invalid_status_reads_recent.
+        self._status_window: deque[bool] = deque(maxlen=self.INVALID_STATUS_WINDOW_READS)
+        self._invalid_recent = 0
         #: Consecutive LATE-but-successful reads (idle gap > telemetry_timeout_s) needed before the
         #: staleness watchdog faults. Debounces a single stalled poll cycle (e.g. a disk/flush
         #: hiccup) so it never faults a healthy run; 1 restores the original trip-on-first behavior.
@@ -134,24 +139,14 @@ class Controller:
             raise RuntimeError("generator denied control request")
         # SAFETY: the built-in auto-tuner must never run. Forcing manual mode guarantees that, but it
         # also zeroes the caps — so only do it if we can't confirm the generator is already manual.
+        # Mode comes from the GT/match block ONLY (the same field read_telemetry reports), so a
+        # garbled GS status word can never be mistaken for "mode unreadable" and reset the caps.
         already_manual = False
-        # A garbled status word (InvalidStatusWord, e.g. the 0xFFFF of 2026-10-07) is NOT "mode
-        # unreadable": falling through would force manual and reset a hand-tuned AIT. Retry it up
-        # to _CONNECT_MODE_READ_ATTEMPTS total; only if every attempt is garbled use the fallback.
-        # Any other read error keeps the original single-read behavior.
-        for attempt in range(self._CONNECT_MODE_READ_ATTEMPTS):
-            with self._io_lock:
-                try:
-                    already_manual = bool(self.device.read_telemetry().manual_mode)
-                    break
-                except InvalidStatusWord as exc:
-                    logger.warning("connect mode read %d garbled: %s", attempt + 1, exc)
-                    already_manual = False
-                except Exception:  # noqa: BLE001 - unreadable mode -> force manual, never ATUNE
-                    already_manual = False
-                    break
-            if attempt + 1 < self._CONNECT_MODE_READ_ATTEMPTS:
-                time.sleep(self._connect_retry_sleep_s)
+        with self._io_lock:
+            try:
+                already_manual = bool(self.device.read_match().manual_mode)
+            except Exception:  # noqa: BLE001 - unreadable mode -> force manual below, never risk ATUNE
+                already_manual = False
         if not already_manual:
             with self._io_lock:
                 self.device.force_manual_mode()  # only when needed; this resets the caps
@@ -276,7 +271,7 @@ class Controller:
             self.latest_decision = None
             self.fault_reasons = ()
         self._last_sample_monotonic = None
-        self._invalid_status_reads = 0  # the next link starts with a clean glitch streak
+        self._reset_invalid_status()  # the next link starts with a clean glitch history
 
     def _require_device(self) -> None:
         if self.device is None:
@@ -300,9 +295,11 @@ class Controller:
             self._notify()
             return
         except Exception as exc:  # noqa: BLE001 - a read failure is a lost link, or (RF-on) a protection event
+            self._record_read_outcome(invalid=False)
             self._on_read_failure(exc)
             self._notify()
             return
+        self._record_read_outcome(invalid=False)
         self._read_failures = 0  # a good read clears the link-loss debounce
         self._invalid_status_reads = 0
 
@@ -364,37 +361,77 @@ class Controller:
                 return True
             return False
 
+    def _record_read_outcome(self, *, invalid: bool) -> None:
+        self._status_window.append(invalid)
+        self._invalid_recent = sum(self._status_window)
+
+    def _reset_invalid_status(self) -> None:
+        self._invalid_status_reads = 0
+        self._status_window.clear()
+        self._invalid_recent = 0
+
     def _on_invalid_status(self, exc: InvalidStatusWord) -> bool:
         """Handle a status word with undefined bits. Returns True if the read was DISCARDED.
 
-        The first in a row is discarded (the 2026-10-07 0xFFFF: one garbled word in a frame whose
-        power and temperature were sane): no fault, latest_telemetry/decision untouched, listeners
-        not notified (so the auto-logger never sees a phantom RF-on edge), and it does not count
-        toward link loss. A second consecutive one means the link is persistently garbled, so it is
-        treated exactly like a read failure (RF on -> loud FAULT now; RF off -> link-loss debounce).
+        The status bits are unusable, but the same cycle's forward/reverse power and temperature are
+        real readings, so the absolute limits are enforced on EVERY invalid word (FAULT at once).
+        Otherwise the first invalid word in a row is discarded as a glitch (the 2026-10-07 0xFFFF:
+        sane power and temperature): no state change, latest sample untouched, listeners not
+        notified (no phantom RF-on edge for the auto-logger), not counted toward link loss, and the
+        staleness clock refreshed (the device did answer). A second consecutive one, or the
+        INVALID_STATUS_WINDOW_LIMIT-th in the recent window, is a broken link and goes through
+        _on_read_failure, with RF classified as live if forward power says so.
         """
         self._invalid_status_reads += 1
-        if self._invalid_status_reads == 1:
+        self._record_read_outcome(invalid=True)
+        word = f"0x{exc.raw_word:04X}"
+        lim = self.limits
+        reasons: list[str] = []
+        if exc.reverse_w is not None and exc.reverse_w > lim.max_reflected_w:
+            reasons.append(
+                f"reflected {exc.reverse_w:.1f} W over limit {lim.max_reflected_w:.1f} W "
+                f"(status word unreadable {word})"
+            )
+        if exc.temperature_c is not None and exc.temperature_c > lim.temperature_c_trip:
+            reasons.append(
+                f"heat-sink temperature {exc.temperature_c:.1f} C over limit "
+                f"{lim.temperature_c_trip:.1f} C (status word unreadable {word})"
+            )
+        if reasons:
+            logger.warning("invalid status read with a limit exceeded: %s", "; ".join(reasons))
+            self._enter_fault(tuple(reasons))
+            return False
+        if (
+            self._invalid_status_reads == 1
+            and self._invalid_recent < self.INVALID_STATUS_WINDOW_LIMIT
+        ):
             logger.warning("discarded invalid status read (first in a row): %s", exc)
+            self._last_sample_monotonic = self._clock()  # the device answered
             return True
         logger.warning(
-            "invalid status read #%d in a row, treating as a read failure: %s",
+            "invalid status read (%d in a row, %d in the last %d reads), treating as a read "
+            "failure: %s",
             self._invalid_status_reads,
+            self._invalid_recent,
+            self.INVALID_STATUS_WINDOW_READS,
             exc,
         )
-        self._on_read_failure(exc)
+        rf_live = exc.forward_w is not None and exc.forward_w > 1.0
+        self._on_read_failure(exc, rf_maybe_on=rf_live)
         return False
 
-    def _on_read_failure(self, exc: Exception) -> None:
+    def _on_read_failure(self, exc: Exception, rf_maybe_on: bool = False) -> None:
         """Classify a telemetry read failure — the fix for a turned-off generator latching a stuck
         FAULT. If the last known sample had RF ON, the generator may still be delivering power with
         no telemetry: latch a loud FAULT at once (protection; no debounce). Otherwise it is a benign
         lost link (generator off / cable pulled) — debounce one flaky read, then go DISCONNECTED so
         the UI shows the truth and the state is cleanly re-attachable, not a fault that can never be
-        cleared while reads keep failing."""
+        cleared while reads keep failing. ``rf_maybe_on`` (forward power seen in a partial read,
+        e.g. a garbled status word) also counts as RF ON — RF may have been enabled since the last
+        good sample."""
         self._read_failures += 1
         last = self.latest_telemetry
-        if last is not None and last.rf_on:
+        if (last is not None and last.rf_on) or rf_maybe_on:
             self._enter_fault(
                 (
                     "link lost while RF was ON — the generator may still be live; "
@@ -433,7 +470,7 @@ class Controller:
             self.fault_reasons = ()
         self._last_sample_monotonic = None
         self._read_failures = 0
-        self._invalid_status_reads = 0
+        self._reset_invalid_status()
         hook = self.on_link_dropped
         if hook is not None:
             try:
@@ -561,6 +598,7 @@ class Controller:
             "state": self.state.value,
             "armed": self.armed,
             "fault_reasons": list(self.fault_reasons),
+            "invalid_status_reads_recent": self._invalid_recent,
             "telemetry": None
             if t is None
             else {

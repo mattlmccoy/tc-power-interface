@@ -67,7 +67,27 @@ STATUS_DEFINED_MASK: int = functools.reduce(operator.or_, (int(f) for f in Statu
 
 class InvalidStatusWord(ValueError):  # noqa: N818 - name fixed by the hotfix design
     """A ``GS`` status word with bits outside :data:`STATUS_DEFINED_MASK` — an invalid read, never
-    real alarms. The controller decides how to treat it (discard once, fail safe if it persists)."""
+    real alarms. The controller decides how to treat it (discard once, fail safe if it persists).
+
+    ``raw_word`` is set by :func:`parse_status`. The device layer attaches the same cycle's
+    ``forward_w``/``reverse_w`` (GP, read before GS) and ``temperature_c`` (same GS frame) so the
+    controller can still enforce the absolute limits; they stay ``None`` when not available.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_word: int,
+        forward_w: float | None = None,
+        reverse_w: float | None = None,
+        temperature_c: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_word = raw_word
+        self.forward_w = forward_w
+        self.reverse_w = reverse_w
+        self.temperature_c = temperature_c
 
 
 #: Operation-mode word (GS bytes [4:6]) -> name. 2 is documented as invalid.
@@ -143,7 +163,8 @@ def parse_status(data: bytes) -> Status:
     if word & ~STATUS_DEFINED_MASK:
         raise InvalidStatusWord(
             f"status word 0x{word:04X} has undefined bits 0x{word & ~STATUS_DEFINED_MASK:04X} "
-            f"set (defined mask 0x{STATUS_DEFINED_MASK:04X}) — invalid read, not real alarms"
+            f"set (defined mask 0x{STATUS_DEFINED_MASK:04X}) — invalid read, not real alarms",
+            raw_word=word,
         )
     return Status(word)
 

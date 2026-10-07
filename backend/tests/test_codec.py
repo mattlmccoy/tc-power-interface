@@ -241,3 +241,10 @@ class TestInvalidStatusWord:
         for flag in codec.Status:
             expected |= int(flag)
         assert codec.STATUS_DEFINED_MASK == expected == 0x4F71
+
+    def test_parse_status_exception_carries_the_raw_word(self):
+        with pytest.raises(codec.InvalidStatusWord) as info:
+            codec.parse_status(self._gs(0xFFFF))
+        assert info.value.raw_word == 0xFFFF
+        # parse_status sees only GS bytes; the device layer attaches the power readings.
+        assert info.value.forward_w is None and info.value.reverse_w is None

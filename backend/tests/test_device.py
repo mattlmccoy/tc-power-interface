@@ -155,3 +155,32 @@ class TestInvalidStatusWordPropagates:
         device.transport._status_word = lambda: 0xFFFF  # type: ignore[method-assign]
         with pytest.raises(codec.InvalidStatusWord):
             device.read_telemetry()
+
+    def test_invalid_status_word_carries_same_cycle_power_and_temperature(self):
+        """GP is read before GS, and temperature is in the same GS frame, so the device attaches
+        them: the controller can still enforce reflected/temperature limits on a garbled word."""
+        device = CxnDevice(
+            create_transport("simulated", reflected_fraction=0.2, temperature_c=41.5)
+        )
+        device.request_control()
+        device.set_setpoint(100)
+        device.set_rf(True)
+        device.transport._status_word = lambda: 0xFFFF  # type: ignore[method-assign]
+        with pytest.raises(codec.InvalidStatusWord) as info:
+            device.read_telemetry()
+        exc = info.value
+        assert exc.raw_word == 0xFFFF
+        assert exc.forward_w == 100.0
+        assert exc.reverse_w == pytest.approx(20.0)
+        assert exc.temperature_c == 41.5
+
+
+class TestProbeInvalidStatusWord:
+    def test_probe_sample_reports_raw_word_instead_of_crashing(self):
+        from tc_power_interface.probe import _telemetry_dict
+
+        device = CxnDevice(create_transport("simulated"))
+        device.transport._status_word = lambda: 0xFFFF  # type: ignore[method-assign]
+        d = _telemetry_dict(device)
+        assert d["invalid_status_word"] == "0xFFFF"
+        assert "forward_w" in d and "temperature_c" in d
