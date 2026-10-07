@@ -36,3 +36,13 @@ def test_limit_flags():
     assert limit_flags(58.0, 6.1, lim) == ("flux_stop",)
     assert limit_flags(71.0, 7.5, lim) == ("probe_hard", "flux_stop")
     assert limit_flags(71.0, None, lim) == ("probe_hard",)
+
+
+def test_limits_reject_inconsistent_values():
+    with pytest.raises(ValueError):
+        ScopeLimits(probe_warn_v=0.0)
+    with pytest.raises(ValueError):
+        ScopeLimits(probe_warn_v=71.0, probe_hard_v=70.0)
+    with pytest.raises(ValueError):
+        ScopeLimits(flux_stop_mt=0.0)
+    ScopeLimits(probe_warn_v=70.0, probe_hard_v=70.0)  # equal is allowed

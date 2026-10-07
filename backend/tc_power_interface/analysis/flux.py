@@ -33,6 +33,10 @@ class ScopeLimits:
     probe_hard_v: float = 70.0
     flux_stop_mt: float = 6.0
 
+    def __post_init__(self) -> None:
+        if not (0 < self.probe_warn_v <= self.probe_hard_v) or self.flux_stop_mt <= 0:
+            raise ValueError("need 0 < probe_warn_v <= probe_hard_v and flux_stop_mt > 0")
+
 
 def b_pk_mt(vrms_v: float, f_hz: float, geo: LoopGeometry) -> float:
     area = geo.turns * geo.cores_linked * geo.ae_per_core_m2
