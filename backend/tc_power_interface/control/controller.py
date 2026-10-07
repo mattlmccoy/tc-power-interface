@@ -389,6 +389,7 @@ class Controller:
             self.latest_telemetry = None
             self.latest_decision = None
             self.fault_reasons = ()
+            self._last_setpoint_w = None
         self._last_sample_monotonic = None
         self._read_failures = 0
         hook = self.on_link_dropped

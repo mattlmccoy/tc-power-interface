@@ -28,3 +28,19 @@ def test_estop_records_zero_and_detach_clears() -> None:
     assert c.snapshot()["last_setpoint_w"] == 0
     c.detach_device()
     assert c.snapshot()["last_setpoint_w"] is None
+
+
+def test_link_drop_forgets_commanded_setpoint() -> None:
+    dev = CxnDevice(SimulatedCxnTransport())
+    c = Controller(dev, limits=SafetyLimits(), poll_interval_s=0.01, link_loss_reads=1)
+    c.connect()
+    c.set_setpoint(50)
+    c._tick()  # one good read: RF is off, so a later failure is a benign idle link drop
+
+    def _lost() -> None:
+        raise TimeoutError("serial read timed out: got 0 of 1 bytes")
+
+    dev.read_telemetry = _lost  # type: ignore[method-assign, assignment]
+    c._tick()  # failure 1 == link_loss_reads -> _drop_link
+    assert c.device is None
+    assert c.snapshot()["last_setpoint_w"] is None
