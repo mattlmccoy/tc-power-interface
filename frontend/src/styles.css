@@ -62,6 +62,9 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px;
   box-shadow: var(--shadow); padding: 12px; display: flex; flex-direction: column; gap: 14px;
   text-transform: none; letter-spacing: normal; font-size: 13px;
+  /* The top-bar overflow guard sets `.topbar > * { white-space: nowrap }`, which this popover (a
+     descendant of the bar) inherits — so the power-on-order warning ran out of the box. Reset it. */
+  white-space: normal;
 }
 .connect-head { display: flex; justify-content: space-between; align-items: center; }
 .pop-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; }
