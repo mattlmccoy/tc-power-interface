@@ -1,5 +1,6 @@
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 from scope_fakes import FakeScope
 
@@ -118,3 +119,39 @@ def test_scope_path_never_commands_the_generator(tmp_path, monkeypatch):
         assert calls == []
     run = next(p for p in tmp_path.iterdir() if p.is_dir())
     assert "scope_probe_hard" in (run / "events.json").read_text()  # warned, not acted on
+
+
+BAD_SETTINGS = [
+    {"probe_attn": "abc"},
+    {"probe_attn": 0},
+    {"channel": 3},
+    {"channel": "one"},
+    {"poll_interval_s": 0},
+    {"tol_w": -1},
+    {"settle_s": -0.5},
+    {"geometry": {"turns": "x"}},
+    {"geometry": "not-a-dict"},
+    {"limits": {"flux_stop_mt": "high"}},
+    {"resource": 5},
+    {"probe_atn": 50},  # typo of a real key: rejected, never silently ignored
+]
+
+
+@pytest.mark.parametrize("body", BAD_SETTINGS)
+def test_bad_typed_settings_are_422_and_change_nothing(tmp_path, monkeypatch, body):
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        before = c.get("/api/scope").json()["settings"]
+        assert c.post("/api/scope/settings", json=body).status_code == 422
+        assert c.get("/api/scope").json()["settings"] == before
+    assert not (tmp_path / "scope_settings.json").exists()
+
+
+def test_numeric_strings_are_coerced(tmp_path, monkeypatch):
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        body = {"probe_attn": "500", "channel": "2", "geometry": {"turns": "2"},
+                "limits": {"flux_stop_mt": "5.5"}}
+        r = c.post("/api/scope/settings", json=body)
+        assert r.status_code == 200
+        s = r.json()["settings"]
+        assert s["probe_attn"] == 500.0 and s["channel"] == 2
+        assert s["geometry"]["turns"] == 2 and s["limits"]["flux_stop_mt"] == 5.5
