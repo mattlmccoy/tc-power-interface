@@ -31,11 +31,15 @@ def _power(telemetry: dict[str, Any]) -> float:
 
 
 class CockpitObserver:
+    # Thread-safety: snapshot()/record_fields() may read across one tick boundary. Attribute
+    # reassignments are atomic under the GIL, so there is no lock; the worst case is one 0.5 s
+    # tick of plateau/settle inconsistency.
     def __init__(self) -> None:
         self._est = PlantEstimator()
         self._shadow = ShadowLoop()
         self._watch = CoreWatch()
         self._run_id: str | None = None
+        self._mode: str | None = None
         self._last: dict[str, Any] = {}
         self._watch_out: list[dict[str, Any]] = []
         self._suggest: float | None = None
@@ -66,21 +70,28 @@ class CockpitObserver:
             self._estimate = self._est.estimate()
         if run_id is not None:
             self._run_id = run_id
-        power = _power(telemetry)
         rf_on = bool(telemetry.get("rf_on"))
+        power = _power(telemetry) if rf_on else 0.0  # RF off: any forward reading is not heating
+        if run_mode.mode != self._mode:  # a switch restarts the shadow bumplessly
+            self._shadow.reset()
+            self._suggest = None
+            self._mode = run_mode.mode
         before = self._est.grid_samples
         self._estimate = self._est.add(t_s, power, part_temp_c, rf_on=rf_on)
+        if part_temp_c is None or not math.isfinite(part_temp_c):
+            self._suggest = None  # never leave a suggestion standing on an unknown temperature
         if self._est.grid_samples != before:  # the shadow loop steps once per 5 s grid sample
-            out = self._shadow.step(
-                self._estimate,
-                temp_c=part_temp_c,
-                power_w=power,
-                target_c=target_c,
-                ceiling_w=ceiling_w,
-            )
-            self._suggest = out.suggest_w if run_mode.mode == "target" else None
-        elif run_mode.mode != "target":
-            self._suggest = None
+            if run_mode.mode == "target":  # only to-temperature mode has a target to track
+                out = self._shadow.step(
+                    self._estimate,
+                    temp_c=part_temp_c,
+                    power_w=power,
+                    target_c=target_c,
+                    ceiling_w=ceiling_w,
+                )
+                self._suggest = out.suggest_w
+            else:
+                self._suggest = None
         self._watch_out = self._watch.update(t_s, roi_temps, watch)
         self._last = {
             "part_roi": part_roi,
