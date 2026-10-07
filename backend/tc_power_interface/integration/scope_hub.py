@@ -65,10 +65,22 @@ class ScopeHub:
 
     # --- settings / connection ---
     def update_settings(self, s: ScopeSettings) -> None:
+        """Apply new settings. Link-level fields restart a running link, so the poll thread and
+        the hub (waveform header, channel) always agree; the level tracker is rebuilt only when
+        its own rules change, so a label edit never drops an assigned level."""
         with self._lock:
+            old = self.settings
             self.settings = s
-            self._tracker = LevelTracker(s.tol_w, s.settle_s)
+            if (s.tol_w, s.settle_s) != (old.tol_w, old.settle_s):
+                self._tracker = LevelTracker(s.tol_w, s.settle_s)
         save_settings(self.root, s)
+        link_fields = ("resource", "channel", "poll_interval_s")
+        changed = any(getattr(s, f) != getattr(old, f) for f in link_fields)
+        if changed and self.link.status()["running"]:
+            if s.resource:
+                self.connect()  # restart on the new resource/channel/rate
+            else:
+                self.disconnect()  # resource cleared: nothing to poll
 
     def connect(self) -> None:
         if not self.settings.resource:

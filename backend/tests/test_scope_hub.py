@@ -1,4 +1,5 @@
 import time
+from dataclasses import replace
 
 from scope_fakes import FakeScope
 
@@ -147,3 +148,43 @@ def test_reconnect_does_not_show_the_previous_sessions_reading(tmp_path, monkeyp
     snap = hub.snapshot()
     hub.disconnect()
     assert snap["latest"] is None
+
+
+class _AnyChannel(FakeScope):
+    """Answers C1 or C2 queries with the real capture's replies and logs every query."""
+
+    log: list[str] = []
+
+    def query(self, cmd: str) -> str:
+        _AnyChannel.log.append(cmd)
+        return super().query(cmd.replace("C2:", "C1:"))
+
+
+def test_channel_change_while_connected_restarts_the_link(tmp_path, monkeypatch):
+    import tc_power_interface.integration.scope_hub as hub_mod
+
+    _AnyChannel.log = []
+    monkeypatch.setattr(hub_mod, "open_visa", lambda _r: _AnyChannel())
+    hub, _ = _hub(tmp_path, resource="USB0::fake", poll_interval_s=0.05)
+    hub.connect()
+    assert _wait(lambda: "C1:ATTN?" in _AnyChannel.log)
+    hub.update_settings(replace(hub.settings, channel=2))
+    ok = _wait(lambda: "C2:ATTN?" in _AnyChannel.log)
+    running = hub.link.status()["running"]
+    hub.disconnect()
+    assert ok and running
+
+
+def test_unrelated_setting_change_keeps_an_assigned_level(tmp_path):
+    hub, _ = _hub(tmp_path, settle_s=0.2)
+    snap = {"last_setpoint_w": 50.0, "telemetry": {"forward_w": 50.0, "rf_on": True}}
+    hub.on_snapshot(snap)
+    time.sleep(0.25)
+    hub.on_snapshot(snap)
+    assert hub._ctx["level_state"] == "assigned"
+    hub.update_settings(replace(hub.settings, core_label="core 3"))
+    hub.on_snapshot(snap)
+    assert hub._ctx["level_state"] == "assigned"  # tracker not rebuilt for a label edit
+    hub.update_settings(replace(hub.settings, settle_s=5.0))
+    hub.on_snapshot(snap)
+    assert hub._ctx["level_state"] == "settling"  # but rebuilt when settling rules change
