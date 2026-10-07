@@ -57,7 +57,11 @@ Data findings this builds on: `docs/superpowers/notes/2026-10-06-closed-loop-dat
 - Recursive least squares with forgetting factor λ = 0.995. Residual variance is tracked as an EWMA (α = 0.05).
   Updates only while RF is on, P ≥ 1 W, and the temperature is valid.
 - Confidence = clip(1 − (se_a/a + se_b/b), 0, 1) from the RLS covariance scaled by the residual variance.
-- Output is valid only once there have been ≥ 6 updates and a > 0, b > 0. Otherwise every field is None ("learning").
+- Output is valid only once there have been ≥ 6 updates and a > 0, b > 0. Otherwise every field is None ("learning")
+  Also invalid when confidence is 0 (added 2026-10-07: on steady power the fit can have a, b > 0 but be pure
+  noise, e.g. K 1–5 °C/W at 0 % confidence; that must read as learning, never as an estimate). Confidence is a
+  heuristic score, not a probability. Missed 5 s grid steps are filled with unknowns, so a stalled poll loop
+  can't squash time, and the covariance is capped so a long steady hold doesn't decay the estimate.
 - Resets at each new recording, the same rule as drift (`withRun`).
 
 ### 3.3 Shadow controller (new module `control/shadow_loop.py`, pure)
