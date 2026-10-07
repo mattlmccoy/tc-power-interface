@@ -775,8 +775,19 @@ def create_app(
 
     @app.post("/api/thermal/start")
     def thermal_start(body: ThermalStartBody) -> dict[str, Any]:
+        # D12 (2026-10-07): no loop may drive power until the core interlock exists (v0.18). The
+        # ThermalController can still run "auto" (unit tests), but the API only ever starts it in
+        # advisory mode — this is the ONLY route that sets thermal.mode. Refused before any state
+        # changes, so a rejected request leaves the loop exactly as it was.
+        if body.mode == "auto":
+            raise HTTPException(
+                status_code=409,
+                detail="auto is locked until the core interlock (v0.18); advisory mode still works",
+            )
+        if body.mode != "advisory":
+            raise HTTPException(status_code=422, detail=f"unknown thermal mode: {body.mode!r}")
         th = _thermal()
-        th.mode = body.mode
+        th.mode = "advisory"
         th.start()
         return th.snapshot()
 
