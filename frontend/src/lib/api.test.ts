@@ -148,7 +148,11 @@ test("cockpit writes: setWatch, setRunMode and engageLoop post to their routes w
   assert.match(calls[2].url, /\/api\/thermal\/engage$/);
 });
 
-/** A fetch stub that answers every request with one canned response (json and text). */
+/** A fetch stub that answers every request with one canned response (json and text).
+ * The bodies passed to it below are HAND-WRITTEN, SHAPE-ONLY fixtures (they follow the backend
+ * handlers in api/app.py and recording/replay_shadow.py, but were not captured from a live
+ * response), except the events.json entry's timestamp and label, which come from a real recorder run (its `data` is simplified). These tests
+ * prove URL/method/body wiring and error handling, not that the backend's JSON means what is assumed. */
 function stubReply(status: number, body: unknown): Captured[] {
   const calls: Captured[] = [];
   globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
@@ -159,7 +163,8 @@ function stubReply(status: number, body: unknown): Captured[] {
   return calls;
 }
 
-test("recording reads hit the run's routes and return the parsed body", async () => {
+test("recording reads hit the run's routes and return the parsed body (shape-only fixtures)", async () => {
+  // shape-only (hand-written): GET /api/recordings -> {runs:[{run, complete, size_bytes, has_roi_data}]}
   const runs = { runs: [{ run: "20261007_141544_cap", complete: true, size_bytes: 1234, has_roi_data: true }] };
   let calls = stubReply(200, runs);
   assert.deepEqual(await api.recordings(), runs.runs);
@@ -169,6 +174,7 @@ test("recording reads hit the run's routes and return the parsed body", async ()
   assert.deepEqual(await api.recordingRois("r 1"), ["SQ SAMPLE", "core 1"]);
   assert.match(calls[0].url, /\/api\/recordings\/r%201\/rois$/);
 
+  // timestamp/label captured from a real events.json written by TelemetryRecorder (2026-10-07); data simplified
   const ev = [{ host_timestamp_ns: 1791396878208639000, label: "recording_started", data: { name: "x" } }];
   calls = stubReply(200, ev);
   assert.deepEqual(await api.recordingEvents("r"), ev);
@@ -178,13 +184,14 @@ test("recording reads hit the run's routes and return the parsed body", async ()
   assert.equal(await api.recordingCsv("r"), "a,b\r\n1,2\r\n");
   assert.match(calls[0].url, /\/api\/recordings\/r\/telemetry\.csv$/);
 
+  // shape-only (hand-written): GET /api/recordings/{run}/shadow -> {roi, target_c, points:[...]}
   const shadow = { roi: "SQ SAMPLE", target_c: 55, points: [{ t_s: 0, temp_c: 30, k_c_per_w: null, tau_s: null, confidence: 0, suggest_w: null, plateau_c: null }] };
   calls = stubReply(200, shadow);
   assert.deepEqual(await api.replayShadow("r", "SQ SAMPLE", 55), shadow);
   assert.match(calls[0].url, /\/api\/recordings\/r\/shadow\?roi=SQ%20SAMPLE&target=55$/);
 });
 
-test("recording reads throw the server's detail on an error status", async () => {
+test("recording reads throw the server's detail on an error status (shape-only error bodies)", async () => {
   stubReply(404, { detail: "no events for this recording" });
   await assert.rejects(api.recordingEvents("r"), /no events for this recording/);
   stubReply(422, { detail: "damaged recording: x" });

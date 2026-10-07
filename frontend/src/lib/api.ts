@@ -79,7 +79,9 @@ export interface RecordingRun {
   has_roi_data: boolean;
 }
 
-/** One entry of a run's events.json (written by the recorder on a clean stop). */
+/** One entry of a run's events.json (written by the recorder on a clean stop). `host_timestamp_ns`
+ * is time.time_ns() at the event (recorder.py:275), not a telemetry-row timestamp: comparable with
+ * rows only at poll-interval scale. */
 export interface RecordingEvent {
   host_timestamp_ns: number;
   label: string;
