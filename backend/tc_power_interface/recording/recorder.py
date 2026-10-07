@@ -13,6 +13,7 @@ import enum
 import hashlib
 import json
 import logging
+import math
 import platform
 import queue
 import re
@@ -69,14 +70,50 @@ _SCOPE_FIELDS = {
     "scope_flags": "flags",
     "scope_age_ms": "age_ms",
 }
+#: Cockpit columns (2026-10-07, spec §3.4), APPENDED after all pre-existing columns
+#: (incl. main's scope_* block, which shipped first).
+#: Unknown = blank.
+_COCKPIT_FIELDS = [
+    "part_roi", "part_temp_c", "temp_status", "shadow_k", "shadow_tau_s", "shadow_conf",
+    "shadow_suggest_w", "shadow_plateau_c", "shadow_ttt_s", "run_mode", "target_c",
+]
 _CSV_FIELDS = [
     *_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS, *_SCOPE_FIELDS,
+    "setpoint_w", *_COCKPIT_FIELDS,
 ]
+#: Long-format sidecar (roi_temps.csv): the telemetry header is fixed at run start but FLIR ROI
+#: names change between sessions, so every ROI is one row per sample here. Unknown mean = blank.
+_ROI_FIELDS = ["host_timestamp_ns", "roi", "mean_c"]
+
+
+def _clean_cell(value: Any) -> Any:
+    """Cockpit/setpoint cell: strings and bools pass through; any other value that is a
+    non-finite number (NaN/inf, any numeric type) becomes None (blank) — never 'nan'/'inf'."""
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return value
+    return value if math.isfinite(f) else None
+
+
+def _roi_mean(value: Any) -> float | None:
+    """ROI mean as a finite float, else None (blank). Bools and non-numeric text are not
+    temperatures."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 class RecorderState(enum.Enum):
     IDLE = "idle"
     RECORDING = "recording"
+    STOPPING = "stopping"  # a stop is draining/finalizing; start() is refused until IDLE
 
 
 def _slug(name: str) -> str:
@@ -98,21 +135,29 @@ class TelemetryRecorder:
         self._dir: Path | None = None
         self._csv_file: TextIO | None = None
         self._csv_writer: Any = None
+        self._roi_file: TextIO | None = None
+        self._roi_writer: Any = None
         self._events: list[dict[str, Any]] = []
         self._sample_count = 0
         self._started_monotonic = 0.0
         # Disk writes run on a background thread so a slow flush (e.g. Dropbox syncing the csv) can
         # NEVER block the caller — the controller poll loop records from its own thread, and a
         # stalled write there would trip the staleness watchdog. record() only enqueues.
-        self._queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._writer_thread: threading.Thread | None = None
         self._writer_stop = threading.Event()
+        # Serializes the run lifecycle. stop() can be reached from the poll thread (link drop) and
+        # an HTTP thread (operator Stop) at once; the lock lets exactly one finalize.
+        # start() only TRY-acquires it, so a start (e.g. the auto-logger on the poll thread) never
+        # waits behind a stop that is draining a stalled disk.
+        self._stop_lock = threading.Lock()
         self._finalizers: list[Callable[[Path], list[str]]] = []
-        self._event_lock = threading.Lock()  # event_for() vs the RECORDING -> IDLE flip in stop()
+        # event_for() vs the RECORDING -> STOPPING flip in stop()
+        self._event_lock = threading.Lock()
 
     @property
     def run_dir(self) -> Path | None:
-        """The active run directory, or None when idle."""
+        """The active run directory, or None when idle (or stopping)."""
         return self._dir if self.state is RecorderState.RECORDING else None
 
     def add_finalizer(self, fn: Callable[[Path], list[str]]) -> None:
@@ -125,6 +170,16 @@ class TelemetryRecorder:
         self._finalizers.append(fn)
 
     def start(self, name: str, metadata: dict[str, Any]) -> Path:
+        if not self._stop_lock.acquire(blocking=False):
+            raise RuntimeError("recorder busy (stopping)")
+        try:
+            return self._start_locked(name, metadata)
+        finally:
+            self._stop_lock.release()
+
+    def _start_locked(self, name: str, metadata: dict[str, Any]) -> Path:
+        if self.state is RecorderState.STOPPING:
+            raise RuntimeError("recorder busy (stopping)")
         if self.state is RecorderState.RECORDING:
             raise RuntimeError("recorder already recording")
         self.experiments_root.mkdir(parents=True, exist_ok=True)
@@ -151,9 +206,21 @@ class TelemetryRecorder:
         }
         (run_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
-        self._csv_file = (run_dir / "telemetry.csv").open("w", newline="")
-        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=_CSV_FIELDS)
-        self._csv_writer.writeheader()
+        try:
+            self._csv_file = (run_dir / "telemetry.csv").open("w", newline="")
+            self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=_CSV_FIELDS)
+            self._csv_writer.writeheader()
+            self._roi_file = (run_dir / "roi_temps.csv").open("w", newline="")
+            self._roi_writer = csv.DictWriter(self._roi_file, fieldnames=_ROI_FIELDS)
+            self._roi_writer.writeheader()
+            self._roi_file.flush()
+        except BaseException:
+            for fh in (self._csv_file, self._roi_file):
+                if fh is not None:
+                    fh.close()
+            self._csv_file = self._roi_file = None
+            self._csv_writer = self._roi_writer = None
+            raise
 
         self._dir = run_dir
         self._events = []
@@ -185,10 +252,30 @@ class TelemetryRecorder:
             row[col] = thermal.get(key)
         for key in _MATCH_FIELDS:
             row[key] = telemetry.get(key)
-        scope = snapshot.get("scope") or {}
+        scope = snapshot.get("scope")
+        scope = scope if isinstance(scope, dict) else {}
         for col, key in _SCOPE_FIELDS.items():
             row[col] = scope.get(key)
-        self._queue.put(row)  # unbounded; rows are tiny and a stall lasts only seconds
+        # Optional extras: junk here must never cost the core telemetry row.
+        row["setpoint_w"] = _clean_cell(snapshot.get("commanded_setpoint_w"))
+        cockpit = snapshot.get("cockpit")
+        cockpit = cockpit if isinstance(cockpit, dict) else {}
+        for key in _COCKPIT_FIELDS:
+            row[key] = _clean_cell(cockpit.get(key))
+        ts = telemetry.get("host_timestamp_ns")
+        rois = snapshot.get("roi_temps")
+        roi_rows = [
+            {
+                "host_timestamp_ns": ts,
+                "roi": r["name"],
+                "mean_c": _roi_mean(r.get("mean_c")) if r.get("valid") else None,
+            }
+            for r in (rois if isinstance(rois, list) else [])
+            if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"]
+        ]
+        self._queue.put(("telemetry", row))  # unbounded; rows are tiny, a stall lasts only seconds
+        if roi_rows:
+            self._queue.put(("roi", roi_rows))
         self._sample_count += 1
 
     def _write_row(self, row: dict[str, Any]) -> None:
@@ -198,15 +285,25 @@ class TelemetryRecorder:
             if self._csv_file is not None:
                 self._csv_file.flush()
 
+    def _write_roi_rows(self, rows: list[dict[str, Any]]) -> None:
+        """Write+flush one sample's ROI rows. Runs ONLY on the writer thread (seam for tests)."""
+        if self._roi_writer is not None:
+            self._roi_writer.writerows(rows)
+            if self._roi_file is not None:
+                self._roi_file.flush()
+
     def _writer_loop(self) -> None:
         """Drain the row queue to disk until stopped AND empty, so no queued row is lost on stop."""
         while not self._writer_stop.is_set() or not self._queue.empty():
             try:
-                row = self._queue.get(timeout=0.1)
+                kind, payload = self._queue.get(timeout=0.1)
             except queue.Empty:
                 continue
             try:
-                self._write_row(row)
+                if kind == "roi":
+                    self._write_roi_rows(payload)
+                else:
+                    self._write_row(payload)
             except Exception:  # noqa: BLE001 - a failed write must not kill the writer thread
                 logger.exception("telemetry recorder write failed")
 
@@ -229,6 +326,27 @@ class TelemetryRecorder:
             return True
 
     def stop(self) -> Path | None:
+        with self._stop_lock:
+            return self._stop_locked()
+
+    def stop_if_current(self, run_name: str, event: str | None = None) -> Path | None:
+        """Atomically stop the run named ``run_name`` ONLY if it is still the one recording.
+
+        Returns None (and writes nothing, event included) when a different run is recording or
+        none is. ``event`` is recorded just before the stop, inside the same critical section, so a
+        stale caller can never label or stop a newer run."""
+        with self._stop_lock:
+            if (
+                self.state is not RecorderState.RECORDING
+                or self._dir is None
+                or self._dir.name != run_name
+            ):
+                return None
+            if event:
+                self.event(event, {})
+            return self._stop_locked()
+
+    def _stop_locked(self) -> Path | None:
         if self.state is not RecorderState.RECORDING or self._dir is None:
             return None
         run_dir = self._dir
@@ -236,8 +354,16 @@ class TelemetryRecorder:
 
         # Stop new rows enqueuing, then let the writer drain everything already queued before we
         # close the file and checksum it — so the manifest hashes the COMPLETE telemetry.csv.
-        with self._event_lock:
+        with self._event_lock:  # event_for() sees RECORDING or STOPPING, never a torn flip
+            self.state = RecorderState.STOPPING  # record() no-ops; start() refused until IDLE
+        try:
+            self._finalize(run_dir)
+        finally:  # even if finalizing fails, never leave the recorder wedged in STOPPING
             self.state = RecorderState.IDLE
+            self._dir = None
+        return run_dir
+
+    def _finalize(self, run_dir: Path) -> None:
         if self._writer_thread is not None:
             self._writer_stop.set()
             self._writer_thread.join(timeout=5.0)
@@ -247,6 +373,10 @@ class TelemetryRecorder:
             self._csv_file.close()
             self._csv_file = None
         self._csv_writer = None
+        if self._roi_file is not None:
+            self._roi_file.close()
+            self._roi_file = None
+        self._roi_writer = None
 
         extra_files: list[str] = []
         for fn in self._finalizers:
@@ -261,6 +391,7 @@ class TelemetryRecorder:
             "metadata.json": _sha256(run_dir / "metadata.json"),
             "events.json": _sha256(run_dir / "events.json"),
             "telemetry.csv": _sha256(run_dir / "telemetry.csv"),
+            "roi_temps.csv": _sha256(run_dir / "roi_temps.csv"),
         }
         for name in extra_files:
             checksums[name] = _sha256(run_dir / name)
@@ -272,7 +403,3 @@ class TelemetryRecorder:
             "checksums": checksums,
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-
-        self.state = RecorderState.IDLE
-        self._dir = None
-        return run_dir

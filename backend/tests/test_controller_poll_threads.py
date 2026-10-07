@@ -111,3 +111,41 @@ def test_tick_whose_read_fails_after_detach_does_not_drop_the_link() -> None:
     c, notified, dropped = _tick_in_flight_during_detach(read_raises=True)
     assert dropped == [], "a stale tick ran link-loss handling on a link already being detached"
     assert notified == []
+
+
+def test_polling_follows_the_current_poll_thread_not_a_stalled_old_one() -> None:
+    """The idle observer keys off ``polling``. A stalled old poll thread that outlived detach's
+    join timeout is still alive but told to stop: it must not read as a live loop, and a re-attach
+    beside it must read as live (the new thread with its own unset stop event)."""
+    c = Controller(device=None, poll_interval_s=0.01)
+    old_thread: list[threading.Thread] = []
+    stall = threading.Event()
+    stalled = threading.Event()
+    release = threading.Event()
+
+    def listener(_snap: dict) -> None:
+        if stall.is_set() and threading.current_thread() is old_thread[0]:
+            stalled.set()
+            release.wait(10.0)
+
+    c.add_listener(listener)
+    c.attach_device(CxnDevice(SimulatedCxnTransport()))
+    assert c.polling is True
+    assert c._thread is not None
+    old_thread.append(c._thread)
+    stall.set()
+    assert stalled.wait(2.0)
+    try:
+        c.detach_device()  # join times out: the old thread is alive, stuck in the listener
+        assert old_thread[0].is_alive()
+        assert c.polling is False, "a stalled, stopped poll thread read as a live poll loop"
+        c.attach_device(CxnDevice(SimulatedCxnTransport()))
+        assert c.polling is True
+        release.set()
+        old_thread[0].join(1.0)
+        assert c.polling is True  # the old thread exiting does not end the new loop
+        c.detach_device()
+        assert c.polling is False
+    finally:
+        release.set()
+        c.stop()

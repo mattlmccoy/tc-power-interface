@@ -141,3 +141,22 @@ def test_converges_toward_target_in_sim():
         ThermalPhase.COOL,
         ThermalPhase.DONE,
     )
+
+
+class _FixedSource:
+    def __init__(self, celsius):
+        self.celsius = celsius
+
+    def read(self) -> TemperatureSample:
+        return TemperatureSample(celsius=self.celsius, valid=True, ts=0.0)
+
+
+def test_observe_reads_the_temperature_and_never_commands_power():
+    """observe() is the stopped-loop read (no generator polling): it refreshes the temperature and
+    can never drive power, even if the loop was started (running + auto + sim drives on tick)."""
+    fake = FakeController(backend="simulated", rf_on=True)
+    tc = ThermalController(fake, _FixedSource(42.0), plan=ThermalPlan(), mode="auto")
+    tc.start()
+    tc.observe(0.5)
+    assert tc.control_temp_c == 42.0
+    assert fake.last_setpoint is None and fake.enable_calls == 0

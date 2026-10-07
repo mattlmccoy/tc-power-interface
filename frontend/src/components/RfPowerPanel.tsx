@@ -1,9 +1,8 @@
 import type { KeyboardEvent as ReactKeyboardEvent, MutableRefObject } from "react";
 import type { Limits, RampStatus, Telemetry } from "../lib/telemetry.ts";
 import { fmtWatts } from "../lib/format.ts";
+import { SetpointEntry } from "./cockpit/SetpointEntry.tsx";
 
-const SP_FINE = 5; // live power nudge: fine step (W) — ↑/↓ and the ±5 buttons
-const SP_COARSE = 25; // live power nudge: coarse step (W) — Shift+↑/↓ and the ±25 buttons
 
 interface RfPowerPanelProps {
   connected: boolean;
@@ -100,46 +99,16 @@ export function RfPowerPanel(props: RfPowerPanelProps) {
                   <label className="field-label" htmlFor="sp">
                     Forward power setpoint (W)
                   </label>
-                  <div className="setpoint-entry">
-                    <input
-                      id="sp"
-                      className="setpoint-input"
-                      type="number"
-                      min={0}
-                      value={setpointInput}
-                      onChange={(e) => {
-                        setSetpointInput(e.target.value);
-                        const n = Number(e.target.value);
-                        if (e.target.value.trim() !== "" && !Number.isNaN(n)) setpointRef.current = n;
-                      }}
-                      onKeyDown={onSetpointKey}
-                    />
-                    <span className="setpoint-unit">W</span>
-                    <button className="btn accent" onClick={applySetpoint} disabled={!controllable}>
-                      Apply
-                    </button>
-                  </div>
-                  {/* Live power nudge — each press sends instantly (no Apply), clamped to the ceiling.
-                      Single-click only (no auto-repeat), like the cap steppers. ↑/↓ = ±fine on the
-                      field, Shift+↑/↓ = ±coarse. */}
-                  <div className="setpoint-nudge">
-                    <button className="btn step-btn" onClick={() => nudgeSetpoint(-SP_COARSE)} disabled={!controllable}>
-                      −{SP_COARSE}
-                    </button>
-                    <button className="btn step-btn" onClick={() => nudgeSetpoint(-SP_FINE)} disabled={!controllable}>
-                      −{SP_FINE}
-                    </button>
-                    <button className="btn step-btn" onClick={() => nudgeSetpoint(SP_FINE)} disabled={!controllable}>
-                      +{SP_FINE}
-                    </button>
-                    <button className="btn step-btn" onClick={() => nudgeSetpoint(SP_COARSE)} disabled={!controllable}>
-                      +{SP_COARSE}
-                    </button>
-                  </div>
-                  <div className="hint">
-                    Live −/+ sends at once (no Apply) · ↑/↓ ±{SP_FINE}, Shift ±{SP_COARSE} W · ceiling{" "}
-                    {limits?.max_forward_w ?? "—"} W (clamped). Edit in Settings.
-                  </div>
+                  <SetpointEntry
+                    controllable={controllable}
+                    setpointInput={setpointInput}
+                    setSetpointInput={setSetpointInput}
+                    setpointRef={setpointRef}
+                    applySetpoint={applySetpoint}
+                    nudgeSetpoint={nudgeSetpoint}
+                    onSetpointKey={onSetpointKey}
+                    ceilingW={limits?.max_forward_w ?? null}
+                  />
                   <div className="setpoint-ramp">
                     <label className="switch" title="Ramp 0 → setpoint at the set rate">
                       <input

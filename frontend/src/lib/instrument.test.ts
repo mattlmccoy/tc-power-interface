@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  needleAngle,
   approachFromBelow,
   capSettled,
   capVolts,
@@ -11,7 +12,6 @@ import {
   gaugeAngle,
   generatorModes,
   LOAD_CAL,
-  needleAngle,
   statusLeds,
   stepSetpoint,
   tempBar,

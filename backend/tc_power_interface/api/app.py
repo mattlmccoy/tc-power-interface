@@ -13,10 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import csv
 import json
+import logging
+import math
 import platform
+import threading
 import time
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -24,12 +29,14 @@ from typing import Any, cast
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tc_power_interface import __version__
 from tc_power_interface.api.recording_files import router as recording_files_router
 from tc_power_interface.api.scope_routes import router as scope_router
+from tc_power_interface.control.cockpit import CockpitObserver
 from tc_power_interface.control.controller import Controller
+from tc_power_interface.control.core_watch import MAX_WATCH
 from tc_power_interface.control.match_tuner import (
     MATCH_TUNER_BOUNDS,
     MatchTuner,
@@ -39,6 +46,12 @@ from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, R
 from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
 from tc_power_interface.control.pulse import PULSE_BOUNDS, PulseController, PulsePlan
 from tc_power_interface.control.rf_clock import RfClock
+from tc_power_interface.control.run_mode import (
+    RunMode,
+    load_run_mode,
+    parse_run_mode,
+    save_run_mode,
+)
 from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
@@ -58,6 +71,22 @@ from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
 from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
 from tc_power_interface.integration.scope_hub import ScopeHub
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
+from tc_power_interface.recording.replay_shadow import (
+    DamagedRecordingError,
+    has_roi_data,
+    recorded_rois,
+    replay_shadow,
+    run_file,
+)
+
+logger = logging.getLogger(__name__)
+
+#: A recording file that exists but cannot be parsed / read: a clean 422, never a 500.
+_DAMAGE = (DamagedRecordingError, csv.Error, UnicodeError, OSError)
+
+#: A failing cockpit observer is logged once, then at most once per this many seconds (it would
+#: otherwise log every poll tick).
+OBSERVER_LOG_EVERY_S = 60.0
 
 API_VERSION = "0.1"
 #: The RF clock is marked stale when the last good generator read is older than this (s).
@@ -174,6 +203,17 @@ class ThermalRoiBody(BaseModel):
     name: str
 
 
+class WatchBody(BaseModel):
+    names: list[str] = Field(default_factory=list, max_length=MAX_WATCH)
+
+
+class RunModeBody(BaseModel):
+    mode: str
+    ladder_w: list[float] = Field(default_factory=list)
+    fixed_w: float = 0
+    fixed_min: float = 0
+
+
 class AutoLogBody(BaseModel):
     enabled: bool
 
@@ -221,6 +261,11 @@ def thermal_extra(source: Any) -> dict[str, Any]:
         "control_max_c": getattr(source, "latest_max_c", None),
         "roi_temps": fn() if callable(fn) else [],
     }
+
+
+def run_mode_payload(m: RunMode) -> dict[str, Any]:
+    """A run mode as JSON (the ladder tuple as a list)."""
+    return {**asdict(m), "ladder_w": list(m.ladder_w)}
 
 
 def create_app(
@@ -279,6 +324,13 @@ def create_app(
             default_type="flir" if (flir_url and backend != "simulated") else "simulated",
         )
         app.state.control_roi = src_cfg["roi"]
+        app.state.watch_rois = src_cfg["watch"]
+        # Run mode is display/bookkeeping only; a stale file is re-clamped to the real limit.
+        app.state.run_mode = load_run_mode(
+            experiments_root, max_forward_w=active_limits.max_forward_w
+        )
+        app.state.current_run = None  # set before the listeners can fire (the observer reads it)
+        app.state.auto_run = None  # name of the run the auto-log started (None: none / operator's)
         app.state.flir_roi_url = (
             f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
         )
@@ -296,10 +348,116 @@ def create_app(
             plan=load_plan(experiments_root, max_forward_w=active_limits.max_forward_w),
             mode="advisory",
         )
+        # Listener order (each poll tick, in registration order): rf_notifier -> auto-log ->
+        # thermal tick (loop + cockpit observer + FLIR post) -> RF clock -> recorder -> scope hub
+        # -> drivers.
+        # Auto-log: on an RF-on rising edge, start a recording if one isn't already running. It
+        # runs BEFORE the thermal tick, so the observer sees the new run id (and resets) on the
+        # same tick, and BEFORE the recorder, so the run's first sample has a fresh estimate.
+        # (A MANUAL POST /api/recording/start sets current_run from an HTTP thread between ticks, so
+        # that run's first row can carry one tick of the previous shadow values — acceptable.)
+        app.state.auto_log = True
+        # `pending`: the latest RF-on edge was skipped because the previous run was still STOPPING
+        # (draining a stalled disk). It is retried on later ticks while RF stays on, so a real RF
+        # session never goes unrecorded; it is dropped when RF goes off or auto-log is disabled.
+        # RF that was already on before auto-log was enabled never sets it (edge semantics).
+        _auto_prev = {"rf": False, "pending": False}
+
+        def _auto_log(snap: dict[str, Any]) -> None:
+            rf = bool((snap.get("telemetry") or {}).get("rf_on"))
+            if not rf or not app.state.auto_log:
+                _auto_prev["pending"] = False
+            elif not _auto_prev["rf"] or _auto_prev["pending"]:  # rising edge, or retrying a skip
+                state = recorder.state
+                if state is RecorderState.IDLE:
+                    try:
+                        run_dir = recorder.start(
+                            f"RF_{datetime.now():%Y%m%d_%H%M%S}",
+                            {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
+                        )
+                    except RuntimeError:  # a stop began since the state check: retry next tick
+                        logger.warning("auto-log deferred: recorder busy")
+                        _auto_prev["pending"] = True
+                    else:
+                        _auto_prev["pending"] = False
+                        app.state.auto_run = run_dir.name
+                        app.state.current_run = run_dir.name
+                elif state is RecorderState.STOPPING:
+                    _auto_prev["pending"] = True  # retry once the drain finishes
+                else:  # already RECORDING (e.g. the operator's manual run): nothing to start
+                    _auto_prev["pending"] = False
+            _auto_prev["rf"] = rf
+
+        controller.add_listener(_auto_log)
+
+        # Cockpit observer (estimate + shadow loop + core watch). It is handed NUMBERS only — never
+        # the controller — so it cannot command power, RF or caps.
+        cockpit = CockpitObserver()
+        app.state.cockpit = cockpit
+
+        # Per-tick values shared between listeners: the FLIR roster is copied ONCE per tick (in
+        # _thermal_tick) and reused by the recorder listener, which runs later in the same tick.
+        tick_cache: dict[str, Any] = {"roi_temps": []}
+        last_logged: dict[str, float] = {}  # failure kind -> monotonic time it was last logged
+
+        def _log_cockpit_failure(kind: str) -> None:
+            """Log a cockpit failure (with traceback) the first time, then at most once per
+            OBSERVER_LOG_EVERY_S per kind — a persistent bug would otherwise log every poll tick."""
+            now = time.monotonic()
+            last = last_logged.get(kind)
+            if last is None or now - last >= OBSERVER_LOG_EVERY_S:
+                last_logged[kind] = now
+                logger.exception("cockpit %s failed; continuing without it (rate-limited)", kind)
+
+        def _observe(
+            snap: dict[str, Any], roi_temps: list[dict[str, Any]], *, power_known: bool = True
+        ) -> None:
+            src = thermal.source  # swappable at runtime by POST /api/thermal/source
+            cockpit.observe(
+                t_s=time.monotonic(),
+                telemetry=snap.get("telemetry") or {},
+                part_roi=app.state.control_roi,
+                part_temp_c=thermal.control_temp_c,
+                temp_status=getattr(src, "status", "simulated"),
+                roi_temps=roi_temps,
+                watch=app.state.watch_rois,
+                run_id=app.state.current_run,
+                run_mode=app.state.run_mode,
+                target_c=thermal.plan.target_c,
+                ceiling_w=float(min(thermal.plan.loop_ceiling_w, controller.limits.max_forward_w)),
+                power_known=power_known,
+            )
+
         # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
         # POST the control-telemetry row to the FLIR logger (best-effort; never blocks the tick).
+        # The observe path is shared by the generator's poll tick and the idle observer below. The
+        # lock serialises them (the thermal loop and the cockpit are not thread-safe); the stamp of
+        # the last poll tick (with controller.polling) keeps the idle observer silent while polling.
+        observe_lock = threading.Lock()
+        last_poll_tick = {"t": time.monotonic()}
+
+        def _observe_roster(
+            snap: dict[str, Any], *, power_known: bool = True
+        ) -> list[dict[str, Any]]:
+            """Copy the FLIR roster once and feed the cockpit observer; returns the roster ([] if
+            it failed). A display-only observer must never stop the caller's loop."""
+            try:
+                roi_temps: list[dict[str, Any]] = thermal_extra(thermal.source)["roi_temps"]
+            except Exception:  # noqa: BLE001
+                _log_cockpit_failure("observer")
+                return []
+            try:
+                _observe(snap, roi_temps, power_known=power_known)
+            except Exception:  # noqa: BLE001
+                _log_cockpit_failure("observer")
+            return roi_temps
+
         def _thermal_tick(snap: dict[str, Any]) -> None:
-            thermal.tick(poll_interval_s)
+            with observe_lock:
+                last_poll_tick["t"] = time.monotonic()
+                tick_cache["roi_temps"] = []  # never let a stale roster outlive a failed read
+                thermal.tick(poll_interval_s)
+                tick_cache["roi_temps"] = _observe_roster(snap)
             poster = app.state.control_telemetry
             if thermal.running and poster.enabled:
                 body = build_control_telemetry(
@@ -319,27 +477,35 @@ def create_app(
 
         controller.add_listener(_thermal_tick)
 
-        # Auto-log: on an RF-on rising edge, start a recording if one isn't already running. This
-        # runs BEFORE the recorder listener so the first sample of the run is captured.
-        app.state.auto_log = True
-        _auto_prev = {"rf": False}
+        def _idle_observe() -> None:
+            """No generator polling (backend "none", disconnected, link dropped): observe the FLIR
+            temperature + watched cores anyway, so the cockpit never shows "ok" with no number or
+            "nothing watched" while cores are configured. OBSERVE-ONLY: the stopped-loop read (never
+            a loop step), the cockpit with RF off and power UNKNOWN (not 0 W). Never the
+            controller, the device, the recorder or the FLIR poster. Silent while poll ticks are
+            arriving."""
+            with observe_lock:
+                # The generator path owns the observe while its poll loop is live (a real ~1 s read
+                # spaces ticks wider than the window) or a poll tick landed recently.
+                recent = time.monotonic() - last_poll_tick["t"] < 2 * poll_interval_s
+                if controller.polling or recent:
+                    return
+                # The read only (never a loop step), even with the loop started: with no generator
+                # the loop cannot step, and skipping the read left control_temp_c None for good.
+                thermal.observe(poll_interval_s)
+                _observe_roster({"telemetry": {}}, power_known=False)  # no generator: power unknown
 
-        def _auto_log(snap: dict[str, Any]) -> None:
-            rf = bool((snap.get("telemetry") or {}).get("rf_on"))
-            if (
-                app.state.auto_log
-                and rf
-                and not _auto_prev["rf"]
-                and recorder.state is not RecorderState.RECORDING
-            ):
-                run_dir = recorder.start(
-                    f"RF_{datetime.now():%Y%m%d_%H%M%S}",
-                    {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
-                )
-                app.state.current_run = run_dir.name
-            _auto_prev["rf"] = rf
+        idle_stop = threading.Event()
 
-        controller.add_listener(_auto_log)
+        def _idle_loop() -> None:
+            while not idle_stop.wait(poll_interval_s):
+                try:
+                    _idle_observe()
+                except Exception:  # noqa: BLE001 - the idle observer must never die silently
+                    _log_cockpit_failure("idle observer")
+
+        idle_thread = threading.Thread(target=_idle_loop, name="tcp-idle-observer", daemon=True)
+
         # RF on-time clock (display-only). After _auto_log so an auto-started run is seen on the
         # same tick; getattr because polling starts before app.state.current_run is first set.
         rf_clock = RfClock()
@@ -349,8 +515,20 @@ def create_app(
             (snap.get("telemetry") or {}).get("rf_on"),
             getattr(app.state, "current_run", None),
         ))
-        controller.add_listener(lambda snap: recorder.record(
-            {**snap, "thermal": thermal.snapshot(), "scope": scope_hub.recording_fields()}))
+
+        def _cockpit_fields() -> dict[str, Any]:
+            """The cockpit's CSV columns, or {} (blank cells) if the observer fails: a cockpit bug
+            must never cost the core telemetry row."""
+            try:
+                return cockpit.record_fields()
+            except Exception:  # noqa: BLE001 - display-only extras; the row must still be written
+                _log_cockpit_failure("record_fields")
+                return {}
+
+        controller.add_listener(lambda snap: recorder.record({
+            **snap, "thermal": thermal.snapshot(), "cockpit": _cockpit_fields(),
+            "roi_temps": tick_cache["roi_temps"], "scope": scope_hub.recording_fields(),
+        }))
         controller.add_listener(scope_hub.on_snapshot)
         # (thermal_source was set above from the operator's saved choice)
         app.state.thermal = thermal
@@ -435,14 +613,15 @@ def create_app(
         app.state.device_info = device_info
         app.state.backend = backend
         app.state.connected_port = None
-        app.state.current_run = None
         app.state.flir_link = flir_link
+        idle_thread.start()
         try:
             yield
         finally:
+            idle_stop.set()
+            idle_thread.join(timeout=2.0)
             app.state.scope_hub.disconnect()
-            if recorder.state is RecorderState.RECORDING:
-                recorder.stop()
+            recorder.stop()  # no-op when idle; waits out a stop already draining
             controller.stop()
 
     app = FastAPI(title="T&C Power Interface", version=__version__, lifespan=lifespan)
@@ -525,6 +704,35 @@ def create_app(
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
+        # The generator is gone: an auto-started run would sit open with no rows (2026-10-06, run
+        # 20261006_164701, 14+ min). A run the operator started by hand is theirs to stop. Off the
+        # poll thread: the stop joins the writer (up to 5 s under a Dropbox stall).
+        _stop_auto_run("recording_stopped_link_lost", background=True)
+
+    def _stop_auto_run(event: str, *, background: bool) -> None:
+        """Stop the auto-log-started run (never an operator-started one) because the generator is
+        gone. The run is named up front and stopped atomically by name, so a stale decision can
+        never stop a newer manual run."""
+        run = app.state.auto_run
+        if run is None:
+            return
+
+        def _do() -> None:
+            try:
+                if _recorder().stop_if_current(run, event) is not None:
+                    logger.info("stopped auto-started run %s (%s)", run, event)
+            except Exception:  # noqa: BLE001 - best-effort; the run is also finalized at shutdown
+                logger.exception("could not stop auto-started run %s", run)
+            finally:
+                if app.state.auto_run == run:
+                    app.state.auto_run = None
+                if app.state.current_run == run:
+                    app.state.current_run = None
+
+        if background:
+            threading.Thread(target=_do, name="tcp-stop-auto-run", daemon=True).start()
+        else:
+            _do()
 
     def _presets_payload() -> dict[str, Any]:
         return {
@@ -572,6 +780,10 @@ def create_app(
                 "temp_status": getattr(_thermal().source, "status", "simulated"),
                 "available_rois": _available_rois(),
                 **thermal_extra(_thermal().source),
+                **app.state.cockpit.snapshot(),  # "shadow" + "watch"
+                "run_mode": run_mode_payload(app.state.run_mode),
+                # D12: the temperature loop may not drive power until the core interlock exists.
+                "engage": {"available": False, "reason": "core interlock not built yet"},
             },
             "ramp": _ramp().snapshot(),
             "timer": _timer().snapshot(),
@@ -639,6 +851,7 @@ def create_app(
         """Detach the current generator (RF off, lease released, port closed) and go idle. Halts
         every driver first so nothing is left 'running' with no device attached."""
         _stop_all_features()
+        _stop_auto_run("recording_stopped_disconnected", background=False)
         _controller().detach_device()
         app.state.rf_clock.reset_link()
         app.state.backend = "none"
@@ -720,8 +933,21 @@ def create_app(
 
     @app.post("/api/thermal/start")
     def thermal_start(body: ThermalStartBody) -> dict[str, Any]:
+        # D12 (2026-10-07): no loop may drive power until the core interlock exists. The
+        # ThermalController can still run "auto" (unit tests), but the API only ever starts it in
+        # advisory mode — this is the ONLY route that sets thermal.mode. Refused before any state
+        # changes, so a rejected request leaves the loop exactly as it was.
+        if body.mode == "auto":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "auto is locked until the core interlock is built; advisory mode still works"
+                ),
+            )
+        if body.mode != "advisory":
+            raise HTTPException(status_code=422, detail=f"unknown thermal mode: {body.mode!r}")
         th = _thermal()
-        th.mode = body.mode
+        th.mode = "advisory"
         th.start()
         return th.snapshot()
 
@@ -760,15 +986,18 @@ def create_app(
         else:
             th.source = SimulatedThermalSource()
             app.state.thermal_source = "simulated"
-        save_source(
-            experiments_root,
-            {"type": app.state.thermal_source, "roi": app.state.control_roi},
-        )
+        _save_source()
         return {"source": app.state.thermal_source}
 
     @app.get("/api/thermal/rois")
     def thermal_rois() -> dict[str, Any]:
         return {"available_rois": _available_rois(), "control_roi": app.state.control_roi}
+
+    def _save_source() -> None:
+        save_source(experiments_root, {
+            "type": app.state.thermal_source, "roi": app.state.control_roi,
+            "watch": app.state.watch_rois,
+        })
 
     @app.post("/api/thermal/roi")
     def thermal_roi(body: ThermalRoiBody) -> dict[str, Any]:
@@ -777,11 +1006,38 @@ def create_app(
         setter = getattr(_thermal().source, "set_roi", None)
         if callable(setter):
             setter(app.state.control_roi)
-        save_source(
-            experiments_root,
-            {"type": app.state.thermal_source, "roi": app.state.control_roi},
-        )
+        _save_source()
         return {"control_roi": app.state.control_roi, "available_rois": _available_rois()}
+
+    @app.post("/api/thermal/watch")
+    def thermal_watch(body: WatchBody) -> dict[str, Any]:
+        # Core-watch ROIs: display/record only. More than MAX_WATCH names is a 422 (WatchBody).
+        app.state.watch_rois = list(dict.fromkeys(n for n in body.names if n))[:MAX_WATCH]
+        _save_source()
+        return {"watch": app.state.watch_rois}
+
+    @app.get("/api/run-mode")
+    def get_run_mode() -> dict[str, Any]:
+        return run_mode_payload(app.state.run_mode)
+
+    @app.post("/api/run-mode")
+    def set_run_mode(body: RunModeBody) -> dict[str, Any]:
+        # Bookkeeping only: the run mode never sets power.
+        try:
+            m = parse_run_mode(body.model_dump(), max_forward_w=_controller().limits.max_forward_w)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        app.state.run_mode = m
+        save_run_mode(experiments_root, m)
+        return run_mode_payload(m)
+
+    @app.post("/api/thermal/engage")
+    def thermal_engage() -> dict[str, Any]:
+        # D12: the temperature loop may not drive power until the core interlock exists.
+        # Refused server-side so a UI bug can never unlock it.
+        raise HTTPException(
+            status_code=409, detail="locked: the core interlock is not built yet"
+        )
 
     # --- power ramp ------------------------------------------------------------------------
     def _ramp_payload() -> dict[str, Any]:
@@ -1063,15 +1319,19 @@ def create_app(
         rec = _recorder()
         if rec.state is RecorderState.RECORDING:
             raise HTTPException(status_code=409, detail="already recording")
-        run_dir = rec.start(
-            req.name,
-            {
-                "notes": req.notes,
-                "backend": app.state.backend,
-                "device": app.state.device_info,
-                "limits": _controller().snapshot()["limits"],
-            },
-        )
+        try:
+            run_dir = rec.start(
+                req.name,
+                {
+                    "notes": req.notes,
+                    "backend": app.state.backend,
+                    "device": app.state.device_info,
+                    "limits": _controller().snapshot()["limits"],
+                },
+            )
+        except RuntimeError as exc:  # previous run still finalizing, or lost a start race
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        app.state.auto_run = None  # operator-chosen: a link drop / disconnect leaves it alone
         app.state.current_run = run_dir.name
         return {"run": run_dir.name}
 
@@ -1080,7 +1340,9 @@ def create_app(
         rec = _recorder()
         run = app.state.current_run
         rec.stop()
-        app.state.current_run = None
+        if app.state.current_run == run:  # a new run may already have started once we went IDLE
+            app.state.current_run = None
+            app.state.auto_run = None
         return {"run": run, "stopped": True}
 
     @app.get("/api/recording/status")
@@ -1094,28 +1356,77 @@ def create_app(
         runs: list[dict[str, Any]] = []
         if root.is_dir():
             for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
-                csv_file = d / "telemetry.csv"
-                if csv_file.is_file():
-                    runs.append(
-                        {
-                            "run": d.name,
-                            "path": str(d.resolve()),
-                            "complete": (d / "manifest.json").is_file(),
-                            "size_bytes": csv_file.stat().st_size,
-                        }
-                    )
+                csv_file = run_file(d, "telemetry.csv")
+                if csv_file is None:
+                    continue
+                try:
+                    size = csv_file.stat().st_size
+                except OSError:  # vanished or unreadable mid-listing: one bad run never breaks it
+                    continue
+                runs.append(
+                    {
+                        "run": d.name,
+                        "path": str(d.resolve()),
+                        "complete": (d / "manifest.json").is_file(),
+                        "size_bytes": size,
+                        "has_roi_data": has_roi_data(d),  # never raises
+                    }
+                )
         return {"runs": runs}
+
+    def _run_dir(run: str) -> Path:
+        """The run's directory directly under the experiments root: 400 on any path traversal or
+        nested path (incl. a symlink out of the root) or a null byte, 404 if it does not exist."""
+        if "\x00" in run:
+            raise HTTPException(status_code=400, detail="invalid run name")
+        try:
+            root = experiments_root.resolve()
+            target = (root / run).resolve()
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="invalid run name") from exc
+        if target.parent != root:  # reject path traversal / nested paths
+            raise HTTPException(status_code=400, detail="invalid run name")
+        if not target.is_dir():
+            raise HTTPException(status_code=404, detail="no such recording")
+        return target
 
     @app.get("/api/recordings/{run}/telemetry.csv")
     def download_recording(run: str) -> FileResponse:
-        root = experiments_root.resolve()
-        target = (root / run).resolve()
-        if target.parent != root:  # reject path traversal / nested paths
-            raise HTTPException(status_code=400, detail="invalid run name")
-        csv_file = target / "telemetry.csv"
-        if not csv_file.is_file():
+        csv_file = run_file(_run_dir(run), "telemetry.csv")  # None for a symlink out of the run
+        if csv_file is None:
             raise HTTPException(status_code=404, detail="no such recording")
         return FileResponse(csv_file, media_type="text/csv", filename=f"{run}_telemetry.csv")
+
+    @app.get("/api/recordings/{run}/rois")
+    def recording_rois(run: str) -> dict[str, Any]:
+        run_dir = _run_dir(run)
+        try:
+            return {"rois": recorded_rois(run_dir)}
+        except _DAMAGE as exc:
+            raise HTTPException(status_code=422, detail=f"damaged recording: {exc}") from exc
+
+    @app.get("/api/recordings/{run}/events.json")
+    def recording_events(run: str) -> FileResponse:
+        path = run_file(_run_dir(run), "events.json")
+        if path is None:  # written only on a clean stop; a symlink out of the run is absent
+            raise HTTPException(status_code=404, detail="no events for this recording")
+        return FileResponse(path, media_type="application/json")
+
+    @app.get("/api/recordings/{run}/shadow")
+    def recording_shadow(
+        run: str, roi: str, target: float, ceiling: float = 200.0
+    ) -> dict[str, Any]:
+        """Re-run the live shadow loop (same code) over the recording on ``roi``. Sync on purpose:
+        FastAPI runs it in the threadpool, so a long replay never blocks the event loop."""
+        if not (math.isfinite(target) and math.isfinite(ceiling)) or ceiling < 0:
+            raise HTTPException(status_code=422, detail="target and ceiling must be finite numbers")
+        run_dir = _run_dir(run)
+        try:
+            return replay_shadow(run_dir, roi=roi, target_c=target, ceiling_w=ceiling)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except _DAMAGE as exc:
+            raise HTTPException(status_code=422, detail=f"damaged recording: {exc}") from exc
 
     @app.get("/api/auto-log")
     def get_auto_log() -> dict[str, Any]:

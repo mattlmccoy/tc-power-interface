@@ -1,7 +1,7 @@
 {
   "name": "tc-power-interface-frontend",
   "private": true,
-  "version": "0.17.7",
+  "version": "0.18.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
