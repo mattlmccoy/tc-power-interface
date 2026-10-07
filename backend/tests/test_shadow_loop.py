@@ -144,8 +144,8 @@ def test_real_run_suggests_a_physical_hold_power():
         out = sl.step(e, temp_c=temp, power_w=p, target_c=55.0, ceiling_w=200)
     # Steady-state hold for 55 °C from T_amb 23.8 at K 0.526 is ~59 W; the PI may sit above it.
     assert 50.0 <= out.suggest_w <= 75.0
-    # regression pin (2026-10-07, DEAD_TIME_S=0); re-pin if DEAD_TIME_S changes
-    assert out.suggest_w == pytest.approx(72.3, abs=2.0)
+    # regression pin (2026-10-07, DEAD_TIME_S=5); re-pin if DEAD_TIME_S changes
+    assert out.suggest_w == pytest.approx(71.5, abs=2.0)
 
 
 def test_module_has_no_actuator_access():
