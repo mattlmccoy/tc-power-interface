@@ -7,6 +7,13 @@ first RF-on grid sample. Pure: no I/O and no actuators. Spec §3.2 of the cockpi
 
 Confidence is a heuristic score in [0, 1] (it ignores the a-b covariance and the autocorrelation
 of the residuals), not a probability.
+
+Known limits (code review 2026-10-07): a feed slower than one tick per 5 s never produces an
+estimate (missed grid steps become unknowns). During a long steady hold nothing new is learned
+and forgetting slowly erodes the estimate: on a synthetic plant confidence is 0.94 at 1 h and
+0.73 at 2 h (K and τ still within 10 %), and the estimate goes invalid by ~4 h. It reads as
+unsure, never as a wrong number. The trace cap only bounds dead-flat data. An excitation gate
+would fix long holds if runs ever get that long.
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ RESID_ALPHA = 0.05
 MIN_UPDATES = 6
 COV_INIT = 100.0
 MIN_POWER_W = 1.0
-COV_TRACE_MAX = 2 * COV_INIT  # cap on trace(P): stops windup while the plant is held steady
+COV_TRACE_MAX = 2 * COV_INIT  # cap on trace(P): bounds windup on dead-flat data (see Known limits)
 
 
 @dataclass(frozen=True)
