@@ -3,6 +3,9 @@
 import json
 import threading
 import time
+from pathlib import Path
+
+import pytest
 
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 
@@ -284,3 +287,74 @@ def test_record_does_not_block_on_slow_roi_write(tmp_path):
     assert time.monotonic() - t0 < 0.1
     rec.stop()  # drains the slow write
     assert "a,1.0" in (run / "roi_temps.csv").read_text()
+
+
+def test_junk_extras_never_cost_the_core_row(tmp_path):
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(3), "state": "connected", "cockpit": "x", "roi_temps": [
+        "junk", None, {"name": "", "mean_c": 1.0, "valid": True},
+        {"name": 5, "mean_c": 1.0, "valid": True},
+        {"name": "a", "mean_c": 30.0, "valid": True}]})
+    for bad in ("abc", {"a": 1}, [None], 7):
+        rec.record({"telemetry": _tel(4), "state": "connected", "roi_temps": bad, "cockpit": [1]})
+    rec.stop()
+    assert len(list(csv.DictReader((run / "telemetry.csv").open()))) == 5
+    assert json.loads((run / "manifest.json").read_text())["sample_count"] == 5
+    assert list(csv.DictReader((run / "roi_temps.csv").open())) == [
+        {"host_timestamp_ns": "3", "roi": "a", "mean_c": "30.0"}]
+
+
+def test_non_finite_setpoint_and_cockpit_values_are_blank(tmp_path):
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(1), "state": "connected", "commanded_setpoint_w": float("inf"),
+                "cockpit": {"part_roi": "nan", "part_temp_c": float("nan"),
+                            "shadow_k": float("inf"), "shadow_tau_s": float("-inf"),
+                            "temp_status": "ok", "run_mode": "ladder", "target_c": 55.0}})
+    rec.stop()
+    row = next(csv.DictReader((run / "telemetry.csv").open()))
+    for k in ("setpoint_w", "part_temp_c", "shadow_k", "shadow_tau_s"):
+        assert row[k] == "", k
+    assert row["part_roi"] == "nan"  # strings are passed through untouched
+    assert row["temp_status"] == "ok" and row["run_mode"] == "ladder" and row["target_c"] == "55.0"
+
+
+def test_numeric_check_is_type_agnostic_and_bool_is_not_a_temperature(tmp_path):
+    import csv
+    from decimal import Decimal
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(2), "state": "connected", "roi_temps": [
+        {"name": "dec", "mean_c": Decimal("31.5"), "valid": True},
+        {"name": "dnan", "mean_c": Decimal("NaN"), "valid": True},
+        {"name": "flag", "mean_c": True, "valid": True},
+        {"name": "text", "mean_c": "oops", "valid": True}]})
+    rec.stop()
+    got = {r["roi"]: r["mean_c"] for r in csv.DictReader((run / "roi_temps.csv").open())}
+    assert got == {"dec": "31.5", "dnan": "", "flag": "", "text": ""}
+
+
+def test_failed_start_leaks_no_handles_and_stays_idle(tmp_path):
+    rec = TelemetryRecorder(tmp_path)
+    real_open = Path.open
+
+    def flaky(self, *a, **kw):
+        if self.name == "roi_temps.csv":
+            raise OSError("disk says no")
+        return real_open(self, *a, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "open", flaky)
+        with pytest.raises(OSError):
+            rec.start("t", {})
+    assert rec.state is RecorderState.IDLE
+    assert rec._csv_file is None and rec._roi_file is None
+    assert rec._csv_writer is None and rec._roi_writer is None
+    rec.start("again", {})  # recorder is still usable
+    rec.stop()

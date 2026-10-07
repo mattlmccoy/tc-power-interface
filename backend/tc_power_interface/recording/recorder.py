@@ -69,11 +69,28 @@ _CSV_FIELDS = [
 _ROI_FIELDS = ["host_timestamp_ns", "roi", "mean_c"]
 
 
-def _finite_or_none(value: Any) -> Any:
-    """NaN/inf must never reach the csv as 'nan'/'inf' — unknown is blank."""
-    if isinstance(value, float) and not math.isfinite(value):
+def _clean_cell(value: Any) -> Any:
+    """Cockpit/setpoint cell: strings and bools pass through; any other value that is a
+    non-finite number (NaN/inf, any numeric type) becomes None (blank) — never 'nan'/'inf'."""
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return value
+    return value if math.isfinite(f) else None
+
+
+def _roi_mean(value: Any) -> float | None:
+    """ROI mean as a finite float, else None (blank). Bools and non-numeric text are not
+    temperatures."""
+    if value is None or isinstance(value, bool):
         return None
-    return value
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 class RecorderState(enum.Enum):
@@ -139,13 +156,21 @@ class TelemetryRecorder:
         }
         (run_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
-        self._csv_file = (run_dir / "telemetry.csv").open("w", newline="")
-        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=_CSV_FIELDS)
-        self._csv_writer.writeheader()
-        self._roi_file = (run_dir / "roi_temps.csv").open("w", newline="")
-        self._roi_writer = csv.DictWriter(self._roi_file, fieldnames=_ROI_FIELDS)
-        self._roi_writer.writeheader()
-        self._roi_file.flush()
+        try:
+            self._csv_file = (run_dir / "telemetry.csv").open("w", newline="")
+            self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=_CSV_FIELDS)
+            self._csv_writer.writeheader()
+            self._roi_file = (run_dir / "roi_temps.csv").open("w", newline="")
+            self._roi_writer = csv.DictWriter(self._roi_file, fieldnames=_ROI_FIELDS)
+            self._roi_writer.writeheader()
+            self._roi_file.flush()
+        except BaseException:
+            for fh in (self._csv_file, self._roi_file):
+                if fh is not None:
+                    fh.close()
+            self._csv_file = self._roi_file = None
+            self._csv_writer = self._roi_writer = None
+            raise
 
         self._dir = run_dir
         self._events = []
@@ -177,19 +202,22 @@ class TelemetryRecorder:
             row[col] = thermal.get(key)
         for key in _MATCH_FIELDS:
             row[key] = telemetry.get(key)
-        row["setpoint_w"] = snapshot.get("commanded_setpoint_w")
-        cockpit = snapshot.get("cockpit") or {}
+        # Optional extras: junk here must never cost the core telemetry row.
+        row["setpoint_w"] = _clean_cell(snapshot.get("commanded_setpoint_w"))
+        cockpit = snapshot.get("cockpit")
+        cockpit = cockpit if isinstance(cockpit, dict) else {}
         for key in _COCKPIT_FIELDS:
-            row[key] = cockpit.get(key)
+            row[key] = _clean_cell(cockpit.get(key))
         ts = telemetry.get("host_timestamp_ns")
+        rois = snapshot.get("roi_temps")
         roi_rows = [
             {
                 "host_timestamp_ns": ts,
-                "roi": r.get("name"),
-                "mean_c": _finite_or_none(r.get("mean_c")) if r.get("valid") else None,
+                "roi": r["name"],
+                "mean_c": _roi_mean(r.get("mean_c")) if r.get("valid") else None,
             }
-            for r in (snapshot.get("roi_temps") or [])
-            if r.get("name")
+            for r in (rois if isinstance(rois, list) else [])
+            if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"]
         ]
         self._queue.put(("telemetry", row))  # unbounded; rows are tiny, a stall lasts only seconds
         if roi_rows:
