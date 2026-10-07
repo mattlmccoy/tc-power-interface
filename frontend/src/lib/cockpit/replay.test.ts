@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { compareStats, parseTelemetryCsv, runEvents } from "./replay.ts";
+import { compareStats, parseTelemetry, parseTelemetryCsv, runEvents } from "./replay.ts";
 
 // CAPTURED, not typed: written by backend/tc_power_interface/recording/recorder.py TelemetryRecorder
 // (_CSV_FIELDS) driven with 5 snapshots, 2026-10-07. The recorder writes CRLF line endings
@@ -252,4 +252,11 @@ test("parseTelemetryCsv: load_w from the recorder's column; absent column or bla
   assert.equal(r[0].load_w, 0);
   const noLoad = parseTelemetryCsv(lines("host_timestamp_ns,forward_w,rf_on", "1791000000000000000,10,True", "1791000001000000000,10,True"));
   assert.equal(noLoad[0].load_w, null);
+});
+
+test("parseTelemetry: the same rows plus the first accepted row's timestamp (the t_s origin)", () => {
+  const p = parseTelemetry(CSV_REAL);
+  assert.equal(p.ns0, 1791000000000000000n);
+  assert.deepEqual(p.rows, parseTelemetryCsv(CSV_REAL));
+  assert.equal(parseTelemetry("").ns0, null);
 });

@@ -116,8 +116,14 @@ const num = (v: string | undefined): number | null => {
  * must agree within 3600 s with the row after it). `nowMs` is injectable for tests.
  */
 export function parseTelemetryCsv(text: string, nowMs: number = Date.now()): ReplayRow[] {
+  return parseTelemetry(text, nowMs).rows;
+}
+
+/** `parseTelemetryCsv` plus `ns0`, the first accepted row's host_timestamp_ns (the t_s origin), so
+ *  events.json can be placed on the same axis. Null when there are no rows. */
+export function parseTelemetry(text: string, nowMs: number = Date.now()): { rows: ReplayRow[]; ns0: bigint | null } {
   const recs = csvRecords(text);
-  if (recs.length === 0) return [];
+  if (recs.length === 0) return { rows: [], ns0: null };
   const header = recs[0].map((h) => h.trim());
   const col = (name: string) => header.indexOf(name);
   const iTs = col("host_timestamp_ns");
@@ -159,7 +165,7 @@ export function parseTelemetryCsv(text: string, nowMs: number = Date.now()): Rep
   if (prev === null && cand !== null) accepted.push(cand); // a one-row run
 
   const ns0 = accepted.length ? accepted[0].ns : 0n;
-  return accepted.map(({ ns, r }) => ({
+  const rows = accepted.map(({ ns, r }) => ({
     t_s: Number(ns - ns0) / 1e9,
     forward_w: num(get(r, idx.fwd)),
     reverse_w: num(get(r, idx.rev)),
@@ -170,6 +176,7 @@ export function parseTelemetryCsv(text: string, nowMs: number = Date.now()): Rep
     setpoint_w: num(get(r, idx.sp)),
     part_temp_c: num(get(r, idx.part)),
   }));
+  return { rows, ns0: accepted.length ? ns0 : null };
 }
 
 /** Reflected above 1 % of forward at >= 1 W forward with RF on, from real readings only; null when

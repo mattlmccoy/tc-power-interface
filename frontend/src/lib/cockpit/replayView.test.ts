@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { ReplayShadowPoint } from "../api.ts";
 import type { ReplayRow } from "./replay.ts";
-import { cursorIndex, replaySamples, shadowAt, shadowKey, valuesAt } from "./replayView.ts";
+import { cursorIndex, mergeEvents, recorderEvents, replaySamples, shadowAt, shadowKey, valuesAt } from "./replayView.ts";
 
 const row = (t: number, o: Partial<ReplayRow> = {}): ReplayRow => ({
   t_s: t, forward_w: 40, reverse_w: 0.2, load_w: 39.8, rf_on: true, tune: 20, load: 10, setpoint_w: 40, part_temp_c: 30, ...o,
@@ -72,4 +72,28 @@ test("shadowKey: one key per (run, ROI, target); nothing to fetch without a ROI 
   assert.equal(shadowKey("r1", "", 55), null);
   assert.equal(shadowKey(null, "SQ_SAMPLE", 55), null);
   assert.equal(shadowKey("r1", "SQ_SAMPLE", Number.NaN), null);
+});
+
+// Captured from a recorder events.json (scratch run 20261007_143845, recorder.py:275).
+const EVENTS = [
+  { host_timestamp_ns: 1791398325795739000, label: "recording_started", data: { name: "RF_20261007_143845" } },
+  { host_timestamp_ns: 1791398366724752000, label: "cap_command", data: { axis: "tune", source: "operator", requested: 62.0, readback_before: 0.0, rf_on: false } },
+  { host_timestamp_ns: 1791398388236892000, label: "rf_enabled", data: {} },
+];
+
+test("recorderEvents: events.json on the telemetry time axis; before the first row is clamped to 0", () => {
+  const ns0 = 1791398325789006000n + 10_000_000_000n; // first row 10 s after the recording started
+  const ev = recorderEvents(EVENTS, ns0);
+  assert.deepEqual(ev.map((e) => e.text), ["recording started", "tune cap → 62 % (operator, was 0 %)", "rf enabled"]);
+  assert.equal(ev[0].t_s, 0);
+  assert.ok(Math.abs(ev[1].t_s - 30.935746) < 1e-3);
+  assert.deepEqual(recorderEvents(EVENTS, null), []); // no origin, no placement
+});
+
+test("mergeEvents: time order; recorder RF events replace the ones derived from rows", () => {
+  const derived = [{ t_s: 5, text: "RF on" }, { t_s: 9, text: "retune: Tune 20→21 %, Load 10→10 %" }];
+  const rec = [{ t_s: 4.9, text: "rf enabled" }, { t_s: 1, text: "recording started" }];
+  assert.deepEqual(mergeEvents(derived, rec).map((e) => e.text), ["recording started", "rf enabled", "retune: Tune 20→21 %, Load 10→10 %"]);
+  assert.deepEqual(mergeEvents(derived, [{ t_s: 1, text: "recording started" }]).map((e) => e.text),
+    ["recording started", "RF on", "retune: Tune 20→21 %, Load 10→10 %"]);
 });

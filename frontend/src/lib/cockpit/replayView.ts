@@ -1,9 +1,9 @@
 // Pure helpers for the Runs (replay) view: the cursor, the values in force at it, the timeline
 // samples built from a recording and its shadow re-run, and the re-run's request key. No DOM/React.
 
-import type { ReplayShadowPoint } from "../api.ts";
+import type { RecordingEvent, ReplayShadowPoint } from "../api.ts";
 import type { CockpitSample } from "./history.ts";
-import type { ReplayRow } from "./replay.ts";
+import type { ReplayEvent, ReplayRow } from "./replay.ts";
 import { SHOW_CONFIDENCE, type Shadow } from "./shadowText.ts";
 
 /** A shadow point farther than this from a row is not "the same moment" (replay.ts MATCH_TOLERANCE_S). */
@@ -89,4 +89,34 @@ export function shadowAt(p: ReplayShadowPoint | null): Shadow | null {
 export function shadowKey(run: string | null, roi: string, target: number): string | null {
   if (!run || !roi || !Number.isFinite(target)) return null;
   return `${run}\u0000${roi}\u0000${target}`;
+}
+
+const pct = (x: unknown): string => (typeof x === "number" && Number.isFinite(x) ? `${Math.round(x * 10) / 10} %` : "?");
+
+/**
+ * The recorder's events.json on the telemetry t_s axis (`ns0` = the first accepted row's timestamp).
+ * Event stamps are time.time_ns() at the event (recorder.py:275), so they line up with rows only to
+ * poll-interval accuracy; an event before the first row is placed at 0. No origin → nothing placed.
+ */
+export function recorderEvents(events: RecordingEvent[], ns0: bigint | null): ReplayEvent[] {
+  if (ns0 === null) return [];
+  const out: ReplayEvent[] = [];
+  for (const e of events) {
+    if (!Number.isFinite(e.host_timestamp_ns)) continue;
+    const t = Number(BigInt(Math.round(e.host_timestamp_ns)) - ns0) / 1e9;
+    const d = e.data ?? {};
+    const text = e.label === "cap_command"
+      ? `${String(d.axis ?? "?")} cap → ${pct(d.requested)} (${String(d.source ?? "?")}, was ${pct(d.readback_before)})`
+      : e.label.replace(/_/g, " ");
+    out.push({ t_s: Math.max(0, t), text });
+  }
+  return out;
+}
+
+/** Derived (row) events and recorder events in time order. When the recorder logged RF on/off, its
+ *  events replace the RF edges derived from the rows (the same moments, said twice otherwise). */
+export function mergeEvents(derived: ReplayEvent[], recorder: ReplayEvent[]): ReplayEvent[] {
+  const recRf = recorder.some((e) => e.text === "rf enabled" || e.text === "rf disabled");
+  const keep = recRf ? derived.filter((e) => e.text !== "RF on" && e.text !== "RF off") : derived;
+  return [...recorder, ...keep].sort((a, b) => a.t_s - b.t_s);
 }
