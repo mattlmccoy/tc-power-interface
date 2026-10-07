@@ -32,6 +32,7 @@ import { settingsStorage } from "../lib/settings_store.ts";
 
 interface PanelEntry {
   title: string;
+  short?: string;
   el: ReactNode;
   summary?: Segment[];
 }
@@ -130,6 +131,7 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
     },
     matchnet: {
       title: "Matching network",
+      short: "Match net",
       el: (
         <MatchingNetworkPanel
           controllable={controllable}
@@ -188,6 +190,7 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
     },
     timer: {
       title: "Auto-shutoff timer",
+      short: "Shutoff timer",
       el: (
         <TimerPanel
           controllable={controllable}
@@ -225,6 +228,7 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
           key={id}
           id={id}
           title={panels[id].title}
+          shortTitle={panels[id].short}
           collapsed={layout.collapsed.includes(id)}
           summary={panels[id].summary}
           dragging={dragId === id}

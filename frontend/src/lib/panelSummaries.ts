@@ -99,7 +99,8 @@ export function senseLoopSummary(st: ScopeStatus | undefined): Segment[] {
 
 // ---- Matching network ---------------------------------------------------------------------
 export function matchNetSummary(t: Telemetry | null): Segment[] {
-  const cap = (v: number | undefined) => (v == null || !Number.isFinite(v) ? DASH : `${v.toFixed(1)} %`);
+  // "62.0%" like the panel's own readback (no space), so tune + load fit the 340px right column.
+  const cap = (v: number | undefined) => (v == null || !Number.isFinite(v) ? DASH : `${v.toFixed(1)}%`);
   const out: Segment[] = [
     { label: "tune", text: cap(t?.tune_cap_percent) },
     { label: "load", text: cap(t?.load_cap_percent) },

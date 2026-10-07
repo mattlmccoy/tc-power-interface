@@ -148,10 +148,10 @@ test("senseloop: stalled / no data / error never show numbers", () => {
 });
 
 // ---- matching network --------------------------------------------------------------------
-test("matchnet: readback caps + mode; unknown is dashes", () => {
-  assert.equal(summaryText(matchNetSummary(live.controller.telemetry)), "tune 62.0 % · load 40.0 % · manual");
+test("matchnet: readback caps (panel's own 62.0% format, fits the 340px column) + mode; unknown is dashes", () => {
+  assert.equal(summaryText(matchNetSummary(live.controller.telemetry)), "tune 62.0% · load 40.0% · manual");
   const auto = { ...live.controller.telemetry!, manual_mode: false };
-  assert.equal(summaryText(matchNetSummary(auto)), "tune 62.0 % · load 40.0 % · auto");
+  assert.equal(summaryText(matchNetSummary(auto)), "tune 62.0% · load 40.0% · auto");
   const old = { ...live.controller.telemetry!, tune_cap_percent: undefined, load_cap_percent: undefined, manual_mode: undefined };
   assert.equal(summaryText(matchNetSummary(old)), "tune — · load —");
   assert.equal(summaryText(matchNetSummary(null)), "tune — · load —");
