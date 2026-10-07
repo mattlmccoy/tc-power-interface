@@ -2,6 +2,7 @@
 
 TC-POWER cannot read the setpoint back (docs/protocol.md:67), so the level is the LAST setpoint
 TC-POWER commanded. Front-panel changes show up as OFF_SETPOINT, never as a forced level.
+A non-positive setpoint (E-stop, pulse off phase) is NO_SETPOINT, never a level.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ class LevelTracker:
         if not rf_on or forward_w is None:
             self._since = None
             return self._set(LevelAssignment(None, LevelState.RF_OFF))
-        if setpoint_w is None:
+        if setpoint_w is None or setpoint_w <= 0:
             self._since = None
             return self._set(LevelAssignment(None, LevelState.NO_SETPOINT))
         if abs(forward_w - setpoint_w) > self.tol_w:

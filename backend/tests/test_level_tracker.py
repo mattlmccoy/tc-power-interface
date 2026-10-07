@@ -61,3 +61,10 @@ def test_real_powersweep_offsets_fit_default_tolerance_not_half_watt():
 def test_rejects_bad_config():
     with pytest.raises(ValueError):
         LevelTracker(tol_w=0)
+
+
+def test_zero_or_negative_setpoint_is_no_setpoint():
+    lt = LevelTracker(settle_s=3.0)
+    for t_s, sp in [(0.0, 0), (5.0, 0), (6.0, -1)]:
+        a = lt.update(t_s, setpoint_w=sp, forward_w=0.0, rf_on=True)
+        assert a.state is LevelState.NO_SETPOINT and a.level_w is None
