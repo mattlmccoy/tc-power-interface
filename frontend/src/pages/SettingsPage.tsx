@@ -1,5 +1,6 @@
 import type { Operator } from "../hooks/useOperator.ts";
 import { SITE_MODE } from "../lib/api.ts";
+import { CockpitWarnPanel } from "../components/CockpitWarnPanel.tsx";
 import { FlirLinkPanel } from "../components/FlirLinkPanel.tsx";
 import { LoggingPanel } from "../components/LoggingPanel.tsx";
 import { OperatorPanel } from "../components/OperatorPanel.tsx";
@@ -25,6 +26,8 @@ export function SettingsPage({ op }: { op: Operator }) {
               setThermalForm={setThermalForm}
               saveThermalPlan={saveThermalPlan}
             />
+
+            <CockpitWarnPanel />
 
             <LoggingPanel autoLog={autoLog} setAutoLog={setAutoLog} />
 

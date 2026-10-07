@@ -8,8 +8,7 @@ import type { Shadow } from "./shadowText.ts";
 const NS = 1e9;
 const fin = (x: number | null | undefined): x is number => x != null && Number.isFinite(x);
 
-/** Core-watch warn thresholds. Provisional until set from run data (Task 22 moves them to Settings). */
-export const WATCH_DEFAULTS = { tempC: 45, ratePerMin: 3, provisional: true } as const;
+// Core-watch warn thresholds live in lib/settings_store.ts (`cockpitThresholds`), set on the Settings page.
 export const MAX_WATCH = 4; // backend api/app.py WatchBody max_length
 
 /**

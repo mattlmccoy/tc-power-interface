@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { CockpitSample } from "./history.ts";
-import { matchStatus, partRate, retuneNs, runStats, toggleWatch, tttText, WATCH_DEFAULTS } from "./live.ts";
+import { matchStatus, partRate, retuneNs, runStats, toggleWatch, tttText } from "./live.ts";
 import type { Shadow } from "./shadowText.ts";
 
 const S = 1e9; // ns per second
@@ -69,7 +69,6 @@ test("toggleWatch: adds/removes, never the control ROI, at most 4", () => {
   assert.deepEqual(toggleWatch(["a"], "ctl", true, "ctl"), ["a"]);
   assert.deepEqual(toggleWatch(["a", "b", "c", "d"], "e", true, null), ["a", "b", "c", "d"]);
   assert.deepEqual(toggleWatch(["a"], "a", true, null), ["a"]);
-  assert.deepEqual(WATCH_DEFAULTS, { tempC: 45, ratePerMin: 3, provisional: true });
 });
 
 const sh = (o: Partial<Shadow> = {}): Shadow => ({

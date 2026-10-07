@@ -6,7 +6,8 @@ import type { MatchAid } from "../../hooks/useMatchAid.ts";
 import { api, detail } from "../../lib/api.ts";
 import { f1 } from "../../lib/cockpit/format.ts";
 import { coreLevel } from "../../lib/cockpit/ladder.ts";
-import { MAX_WATCH, toggleWatch, WATCH_DEFAULTS } from "../../lib/cockpit/live.ts";
+import { MAX_WATCH, toggleWatch } from "../../lib/cockpit/live.ts";
+import { useCockpitThresholds } from "../../hooks/useCockpitThresholds.ts";
 import { DriftBlock } from "../MatchAidPanel.tsx";
 import { WATCH_COLORS } from "./drawTimeline.ts";
 
@@ -14,6 +15,7 @@ const STATUS_WORD: Record<string, string> = { not_in_feed: "not in feed", invali
 
 export function WatchColumn({ op, aid }: { op: Operator; aid: MatchAid }) {
   const th = op.thermal;
+  const warn = useCockpitThresholds();
   const watch = th?.watch ?? [];
   const names = watch.map((w) => w.name);
   const ctl = th?.control_roi ?? null;
@@ -37,7 +39,7 @@ export function WatchColumn({ op, aid }: { op: Operator; aid: MatchAid }) {
       <div className="ck-watchrows">
         {watch.length ? (
           watch.map((w, k) => {
-            const lvl = w.status === "ok" ? coreLevel(w.temp_c, w.rate_c_per_min, WATCH_DEFAULTS) : "unknown";
+            const lvl = w.status === "ok" ? coreLevel(w.temp_c, w.rate_c_per_min, warn) : "unknown";
             const cls = lvl === "warn" ? "ck-warnc" : lvl === "unknown" ? "ck-muted" : "";
             return (
               <div className="ck-coreRow" key={w.name}>
@@ -72,8 +74,8 @@ export function WatchColumn({ op, aid }: { op: Operator; aid: MatchAid }) {
         )}
       </div>
       <div className="ck-sub" style={{ marginTop: 4 }}>
-        Warn ≥ {WATCH_DEFAULTS.tempC} °C or ≥ {WATCH_DEFAULTS.ratePerMin} °C/min
-        {WATCH_DEFAULTS.provisional ? " — provisional, to be set from run data." : "."}
+        Warn ≥ {warn.tempC} °C or ≥ {warn.ratePerMin} °C/min
+        {warn.provisional ? " — provisional, set it in Settings." : "."}
       </div>
       <div className="ck-section">
         <DriftBlock d={aid.drift} fwd={op.t?.forward_w ?? 0} reset={aid.resetDrift} />
