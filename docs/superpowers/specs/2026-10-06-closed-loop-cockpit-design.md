@@ -189,7 +189,9 @@ Scope:
    `roi_temps.csv` sidecar. Uses captured FLIR payload fixtures.
 2. Backend: `plant_estimator`. Tests:
    - A synthetic first-order plant with power steps recovers K and τ within 10 %.
-   - Constant power keeps confidence < 0.3.
+   - No estimate in the first 120 s of steady power. (Revised 2026-10-07: a clean synthetic first-order plant IS
+     identifiable at steady power after ~240 s, conf 0.74; the real run's low early confidence is noise plus a
+     non-first-order plant, so that is tested on real data instead: confidence < 0.3 at 8.3 min of the 10-02 run.)
    - **Real data:** the 10-02 FLIR trace, captured as a fixture, converges to K 0.35–0.65 °C/W and τ 100–250 s,
      with confidence ≥ 0.5 by the end.
 3. Backend: `shadow_loop`. Tests: bounded and rate-limited output, never actuates, plateau and time-to-target
