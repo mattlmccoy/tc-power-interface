@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { ScopeReading, ScopeStatus } from "./scope.ts";
 import {
-  appendSample, autoOpenSettings, configSummary, flagBanners, heroModel, levelCard, levelTable,
+  advanceScopeHistory, appendSample, autoOpenSettings, configSummary, flagBanners, heroModel, levelCard, levelTable,
   recordingDownloads, scopePill, trendSeries,
 } from "./scopeView.ts";
 
@@ -180,6 +180,45 @@ test("appendSample: dedupes by host_timestamp_ns and blanks RF-off / invalid rea
   for (let i = 4; i < 20; i++) buf = appendSample(buf, { ...live, host_timestamp_ns: i * 1e9 }, 10);
   assert.equal(buf.length, 10);
   assert.equal(appendSample(buf, null, 10), buf);
+});
+
+// ---- lifted history (survives the Dashboard <-> Closed-loop tab switch) -----------------------
+const EMPTY = { samples: [], readings: [] };
+const CAPS = { samples: 10, readings: 3 };
+
+test("advanceScopeHistory: appends a new reading to both buffers, dedupes a repeat by timestamp", () => {
+  const h1 = advanceScopeHistory(EMPTY, st(), CAPS);
+  assert.equal(h1.samples.length, 1);
+  assert.equal(h1.readings.length, 1);
+  assert.equal(advanceScopeHistory(h1, st(), CAPS), h1); // same object back = no re-render
+});
+
+test("advanceScopeHistory: RF-off / invalid readings are kept but blanked in the trend samples", () => {
+  let h = advanceScopeHistory(EMPTY, st(), CAPS);
+  h = advanceScopeHistory(h, st({}, { ...live, host_timestamp_ns: 2e9, level_state: "rf_off" }), CAPS);
+  assert.deepEqual(h.samples.map((s) => [s.v, s.b]), [[40.42, 4.251], [null, null]]);
+  assert.equal(h.readings.length, 2);
+});
+
+test("advanceScopeHistory: a stale scope adds no trend sample (but the reading table still tracks latest)", () => {
+  const h0 = advanceScopeHistory(EMPTY, st(), CAPS);
+  const h = advanceScopeHistory(h0, st({ stale: true }, { ...live, host_timestamp_ns: 2e9 }), CAPS);
+  assert.equal(h.samples.length, 1);
+  assert.equal(h.readings.length, 2);
+});
+
+test("advanceScopeHistory: no scope / no latest reading leaves the history untouched", () => {
+  const h = advanceScopeHistory(EMPTY, st(), CAPS);
+  assert.equal(advanceScopeHistory(h, undefined, CAPS), h);
+  assert.equal(advanceScopeHistory(h, st({}, null), CAPS), h);
+});
+
+test("advanceScopeHistory: caps both buffers, dropping the oldest", () => {
+  let h = EMPTY as ReturnType<typeof advanceScopeHistory>;
+  for (let i = 1; i <= 20; i++) h = advanceScopeHistory(h, st({}, { ...live, host_timestamp_ns: i * 1e9 }), CAPS);
+  assert.equal(h.samples.length, 10);
+  assert.equal(h.readings.length, 3);
+  assert.deepEqual(h.readings.map((r) => r.host_timestamp_ns), [18e9, 19e9, 20e9]);
 });
 
 test("trendSeries: keeps the window, breaks lines at time gaps with nulls", () => {

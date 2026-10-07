@@ -21,6 +21,7 @@ import { useVna } from "./hooks/useVna.ts";
 import { useAudioAlerts } from "./hooks/useAudioAlerts.ts";
 import { useMatchAid } from "./hooks/useMatchAid.ts";
 import { useCockpitHistory } from "./hooks/useCockpitHistory.ts";
+import { useScopeHistory } from "./hooks/useScopeHistory.ts";
 import { useMapCapture } from "./hooks/useMapCapture.ts";
 import { VERSION_LABEL, BUILD_ID, VERSION_FULL } from "./version.ts";
 
@@ -37,6 +38,7 @@ export function App() {
   const aid = useMatchAid(op.t, op.status?.recording?.run ?? null); // App level: survives tab switches; drift is per run
   const mapCapture = useMapCapture(op, vna);
   const cockpitHistory = useCockpitHistory(op.status); // App level: the timeline survives tab switches
+  const scopeHistory = useScopeHistory(op.scope); // App level: the Dashboard Sense-loop trend survives tab switches
   const inVna = !!op.status?.vna_session?.active;
   const deviceText =
     (device?.id ? `${device.id} · ${device.serial ?? ""}` : "no device") +
@@ -171,7 +173,7 @@ export function App() {
               {inVna ? (
                 <VnaTuneView op={op} vna={vna} mapCapture={mapCapture} />
               ) : view === "dashboard" ? (
-                <DashboardPage op={op} aid={aid} />
+                <DashboardPage op={op} aid={aid} scopeHistory={scopeHistory} />
               ) : view === "settings" ? (
                 <SettingsPage op={op} />
               ) : (
