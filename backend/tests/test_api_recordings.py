@@ -84,6 +84,147 @@ def _wait_active(c, want=True, timeout=3.0):
     return False
 
 
+def _wait_idle(c, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if c.get("/api/recording/status").json() == {"active": False, "run": None}:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _slow_first_write(rec, delay_s=0.4):
+    """Make the writer thread's first row write slow (a Dropbox stall) so a stop() has a drain."""
+    real = rec._write_row
+    state = {"slow": True}
+
+    def _slow(row):
+        if state["slow"]:
+            state["slow"] = False
+            time.sleep(delay_s)
+        real(row)
+
+    rec._write_row = _slow
+
+
+def _wait_state(rec, want, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if rec.state is want:
+            return True
+        time.sleep(0.005)
+    return False
+
+
+_SNAP = {"state": "armed", "telemetry": {"host_timestamp_ns": 1, "forward_w": 1.0}}
+
+
+def test_start_during_a_stops_drain_is_refused_and_the_run_gets_its_manifest(tmp_path):
+    import pytest
+
+    from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
+
+    rec = TelemetryRecorder(tmp_path)
+    _slow_first_write(rec)
+    run_dir = rec.start("a", {})
+    rec.record(_SNAP)
+    stopper = threading.Thread(target=rec.stop)
+    stopper.start()
+    assert _wait_state(rec, RecorderState.STOPPING)
+    with pytest.raises(RuntimeError, match="busy"):
+        rec.start("b", {})  # must not clobber the files the drain is still writing
+    stopper.join()
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["complete"] is True and manifest["sample_count"] == 1
+    assert rec.state is RecorderState.IDLE
+    second = rec.start("c", {})  # after the stop completes a new run is fine
+    assert second != run_dir
+    rec.stop()
+    assert (second / "manifest.json").exists()
+
+
+def test_api_start_during_a_stops_drain_is_409(tmp_path):
+    from tc_power_interface.recording.recorder import RecorderState
+
+    with _client(tmp_path) as c:
+        rec = c.app.state.recorder
+        c.post("/api/recording/start", json={"name": "one", "notes": ""})
+        time.sleep(0.2)  # let a row be queued
+        _slow_first_write(rec, 0.6)
+        stopper = threading.Thread(target=lambda: c.post("/api/recording/stop"))
+        stopper.start()
+        assert _wait_state(rec, RecorderState.STOPPING)
+        assert c.get("/api/recording/status").json()["active"] is False  # stopping is not active
+        resp = c.post("/api/recording/start", json={"name": "two", "notes": ""})
+        assert resp.status_code == 409
+        stopper.join()
+
+
+def test_stop_if_current_only_stops_the_named_run(tmp_path):
+    from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
+
+    rec = TelemetryRecorder(tmp_path)
+    first = rec.start("a", {})
+    rec.stop()
+    second = rec.start("b", {})  # the operator's manual run, started after the first ended
+    assert rec.stop_if_current(first.name, "recording_stopped_link_lost") is None
+    assert rec.state is RecorderState.RECORDING  # the stale name never stops the newer run
+    assert rec.stop_if_current(second.name, "recording_stopped_link_lost") == second
+    labels = [e["label"] for e in json.loads((second / "events.json").read_text())]
+    assert labels.index("recording_stopped_link_lost") < labels.index("recording_stopped")
+    # the losing call must not have written its event into the manual run
+    rec2 = TelemetryRecorder(tmp_path)
+    third = rec2.start("c", {})
+    rec2.stop_if_current("not-this-run", "recording_stopped_link_lost")
+    rec2.stop()
+    labels3 = [e["label"] for e in json.loads((third / "events.json").read_text())]
+    assert "recording_stopped_link_lost" not in labels3
+
+
+def test_stale_auto_run_never_stops_a_later_manual_run(tmp_path):
+    with _client(tmp_path) as c:
+        c.post("/api/rf/enable")
+        assert _wait_active(c, True)
+        c.app.state.recorder.stop()  # the auto run ends behind the app's back (HTTP-stop race)
+        c.post("/api/recording/start", json={"name": "manual", "notes": ""})
+        c.app.state.controller.on_link_dropped()
+        time.sleep(0.3)
+        assert c.get("/api/recording/status").json()["active"] is True
+
+
+def test_link_drop_does_not_block_the_poll_thread(tmp_path):
+    with _client(tmp_path) as c:
+        c.post("/api/rf/enable")
+        assert _wait_active(c, True)
+        run = c.get("/api/recording/status").json()["run"]
+        _slow_first_write(c.app.state.recorder, 0.5)
+        time.sleep(0.2)  # a row is queued behind the slow write
+        t0 = time.monotonic()
+        c.app.state.controller.on_link_dropped()
+        assert time.monotonic() - t0 < 0.2
+        assert _wait_idle(c, timeout=6.0)
+        assert (tmp_path / run / "manifest.json").exists()
+
+
+def test_disconnect_stops_an_auto_started_recording(tmp_path):
+    with _client(tmp_path) as c:
+        c.post("/api/rf/enable")
+        assert _wait_active(c, True)
+        run = c.get("/api/recording/status").json()["run"]
+        assert c.post("/api/disconnect").status_code == 200
+        assert _wait_idle(c)
+        labels = [e["label"] for e in json.loads((tmp_path / run / "events.json").read_text())]
+        assert "recording_stopped_disconnected" in labels
+
+
+def test_disconnect_leaves_a_manual_recording_alone(tmp_path):
+    with _client(tmp_path) as c:
+        c.post("/api/recording/start", json={"name": "manual", "notes": ""})
+        c.post("/api/disconnect")
+        time.sleep(0.2)
+        assert c.get("/api/recording/status").json()["active"] is True
+
+
 def test_link_drop_stops_an_auto_started_recording(tmp_path):
     # 2026-10-06: run 20261006_164701 stayed open 14+ min with no rows after the generator died.
     with _client(tmp_path) as c:
@@ -91,7 +232,7 @@ def test_link_drop_stops_an_auto_started_recording(tmp_path):
         assert _wait_active(c, True)
         run = c.get("/api/recording/status").json()["run"]
         c.app.state.controller.on_link_dropped()
-        assert c.get("/api/recording/status").json() == {"active": False, "run": None}
+        assert _wait_idle(c)  # the stop runs off the poll thread, so it lands a moment later
         run_dir = tmp_path / run
         assert (run_dir / "manifest.json").exists()  # stopped cleanly: complete manifest
         labels = [e["label"] for e in json.loads((run_dir / "events.json").read_text())]

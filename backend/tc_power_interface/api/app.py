@@ -18,6 +18,7 @@ import json
 import logging
 import math
 import platform
+import threading
 import time
 from collections.abc import AsyncIterator
 from dataclasses import asdict
@@ -317,7 +318,7 @@ def create_app(
             experiments_root, max_forward_w=active_limits.max_forward_w
         )
         app.state.current_run = None  # set before the listeners can fire (the observer reads it)
-        app.state.current_run_auto = False  # True only for a run the auto-log started
+        app.state.auto_run = None  # name of the run the auto-log started (None: none / operator's)
         app.state.flir_roi_url = f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
         initial_source: Any = SimulatedThermalSource()
         app.state.thermal_source = "simulated"
@@ -347,14 +348,18 @@ def create_app(
                 app.state.auto_log
                 and rf
                 and not _auto_prev["rf"]
-                and recorder.state is not RecorderState.RECORDING
+                and recorder.state is RecorderState.IDLE  # not RECORDING, not mid-STOPPING
             ):
-                run_dir = recorder.start(
-                    f"RF_{datetime.now():%Y%m%d_%H%M%S}",
-                    {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
-                )
-                app.state.current_run = run_dir.name
-                app.state.current_run_auto = True
+                try:
+                    run_dir = recorder.start(
+                        f"RF_{datetime.now():%Y%m%d_%H%M%S}",
+                        {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
+                    )
+                except RuntimeError:  # a stop began since the state check: skip, never block/raise
+                    logger.warning("auto-log skipped: recorder busy")
+                else:
+                    app.state.auto_run = run_dir.name
+                    app.state.current_run = run_dir.name
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
@@ -522,8 +527,7 @@ def create_app(
         try:
             yield
         finally:
-            if recorder.state is RecorderState.RECORDING:
-                recorder.stop()
+            recorder.stop()  # no-op when idle; waits out a stop already draining
             controller.stop()
 
     app = FastAPI(title="T&C Power Interface", version=__version__, lifespan=lifespan)
@@ -606,13 +610,34 @@ def create_app(
         app.state.connected_port = None
         app.state.device_info = {}
         # The generator is gone: an auto-started run would sit open with no rows (2026-10-06, run
-        # 20261006_164701, 14+ min). A run the operator started by hand is theirs to stop.
-        rec = _recorder()
-        if rec.state is RecorderState.RECORDING and app.state.current_run_auto:
-            rec.event("recording_stopped_link_lost", {})
-            rec.stop()
-            app.state.current_run = None
-            app.state.current_run_auto = False
+        # 20261006_164701, 14+ min). A run the operator started by hand is theirs to stop. Off the
+        # poll thread: the stop joins the writer (up to 5 s under a Dropbox stall).
+        _stop_auto_run("recording_stopped_link_lost", background=True)
+
+    def _stop_auto_run(event: str, *, background: bool) -> None:
+        """Stop the auto-log-started run (never an operator-started one) because the generator is
+        gone. The run is named up front and stopped atomically by name, so a stale decision can
+        never stop a newer manual run."""
+        run = app.state.auto_run
+        if run is None:
+            return
+
+        def _do() -> None:
+            try:
+                if _recorder().stop_if_current(run, event) is not None:
+                    logger.info("stopped auto-started run %s (%s)", run, event)
+            except Exception:  # noqa: BLE001 - best-effort; the run is also finalized at shutdown
+                logger.exception("could not stop auto-started run %s", run)
+            finally:
+                if app.state.auto_run == run:
+                    app.state.auto_run = None
+                if app.state.current_run == run:
+                    app.state.current_run = None
+
+        if background:
+            threading.Thread(target=_do, name="tcp-stop-auto-run", daemon=True).start()
+        else:
+            _do()
 
     def _presets_payload() -> dict[str, Any]:
         return {
@@ -717,6 +742,7 @@ def create_app(
         """Detach the current generator (RF off, lease released, port closed) and go idle. Halts
         every driver first so nothing is left 'running' with no device attached."""
         _stop_all_features()
+        _stop_auto_run("recording_stopped_disconnected", background=False)
         _controller().detach_device()
         app.state.backend = "none"
         app.state.connected_port = None
@@ -1180,17 +1206,20 @@ def create_app(
         rec = _recorder()
         if rec.state is RecorderState.RECORDING:
             raise HTTPException(status_code=409, detail="already recording")
-        run_dir = rec.start(
-            req.name,
-            {
-                "notes": req.notes,
-                "backend": app.state.backend,
-                "device": app.state.device_info,
-                "limits": _controller().snapshot()["limits"],
-            },
-        )
+        try:
+            run_dir = rec.start(
+                req.name,
+                {
+                    "notes": req.notes,
+                    "backend": app.state.backend,
+                    "device": app.state.device_info,
+                    "limits": _controller().snapshot()["limits"],
+                },
+            )
+        except RuntimeError as exc:  # previous run still finalizing, or lost a start race
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        app.state.auto_run = None  # operator-chosen: a link drop / disconnect leaves it alone
         app.state.current_run = run_dir.name
-        app.state.current_run_auto = False  # operator-chosen: a link drop leaves it alone
         return {"run": run_dir.name}
 
     @app.post("/api/recording/stop")
@@ -1198,8 +1227,9 @@ def create_app(
         rec = _recorder()
         run = app.state.current_run
         rec.stop()
-        app.state.current_run = None
-        app.state.current_run_auto = False
+        if app.state.current_run == run:  # a new run may already have started once we went IDLE
+            app.state.current_run = None
+            app.state.auto_run = None
         return {"run": run, "stopped": True}
 
     @app.get("/api/recording/status")

@@ -96,6 +96,7 @@ def _roi_mean(value: Any) -> float | None:
 class RecorderState(enum.Enum):
     IDLE = "idle"
     RECORDING = "recording"
+    STOPPING = "stopping"  # a stop is draining/finalizing; start() is refused until IDLE
 
 
 def _slug(name: str) -> str:
@@ -128,11 +129,23 @@ class TelemetryRecorder:
         self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._writer_thread: threading.Thread | None = None
         self._writer_stop = threading.Event()
-        # stop() can be reached from the poll thread (link drop) and an HTTP thread (operator Stop)
-        # at once; the lock makes exactly one of them finalize the run (the other returns None).
+        # Serializes the run lifecycle. stop() can be reached from the poll thread (link drop) and
+        # an HTTP thread (operator Stop) at once; the lock lets exactly one finalize.
+        # start() only TRY-acquires it, so a start (e.g. the auto-logger on the poll thread) never
+        # waits behind a stop that is draining a stalled disk.
         self._stop_lock = threading.Lock()
 
     def start(self, name: str, metadata: dict[str, Any]) -> Path:
+        if not self._stop_lock.acquire(blocking=False):
+            raise RuntimeError("recorder busy (stopping)")
+        try:
+            return self._start_locked(name, metadata)
+        finally:
+            self._stop_lock.release()
+
+    def _start_locked(self, name: str, metadata: dict[str, Any]) -> Path:
+        if self.state is RecorderState.STOPPING:
+            raise RuntimeError("recorder busy (stopping)")
         if self.state is RecorderState.RECORDING:
             raise RuntimeError("recorder already recording")
         self.experiments_root.mkdir(parents=True, exist_ok=True)
@@ -269,6 +282,23 @@ class TelemetryRecorder:
         with self._stop_lock:
             return self._stop_locked()
 
+    def stop_if_current(self, run_name: str, event: str | None = None) -> Path | None:
+        """Atomically stop the run named ``run_name`` ONLY if it is still the one recording.
+
+        Returns None (and writes nothing, event included) when a different run is recording or
+        none is. ``event`` is recorded just before the stop, inside the same critical section, so a
+        stale caller can never label or stop a newer run."""
+        with self._stop_lock:
+            if (
+                self.state is not RecorderState.RECORDING
+                or self._dir is None
+                or self._dir.name != run_name
+            ):
+                return None
+            if event:
+                self.event(event, {})
+            return self._stop_locked()
+
     def _stop_locked(self) -> Path | None:
         if self.state is not RecorderState.RECORDING or self._dir is None:
             return None
@@ -277,7 +307,15 @@ class TelemetryRecorder:
 
         # Stop new rows enqueuing, then let the writer drain everything already queued before we
         # close the file and checksum it — so the manifest hashes the COMPLETE telemetry.csv.
-        self.state = RecorderState.IDLE
+        self.state = RecorderState.STOPPING  # record() no-ops; start() refused until IDLE
+        try:
+            self._finalize(run_dir)
+        finally:  # even if finalizing fails, never leave the recorder wedged in STOPPING
+            self.state = RecorderState.IDLE
+            self._dir = None
+        return run_dir
+
+    def _finalize(self, run_dir: Path) -> None:
         if self._writer_thread is not None:
             self._writer_stop.set()
             self._writer_thread.join(timeout=5.0)
@@ -306,7 +344,3 @@ class TelemetryRecorder:
             },
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-
-        self.state = RecorderState.IDLE
-        self._dir = None
-        return run_dir
