@@ -44,6 +44,8 @@ export interface Health {
   version: string;
   /** The frontend release version the operator was deployed with (drives the update banner). */
   app_version?: string | null;
+  /** The release the running backend process was started with (app_version is re-read from disk). */
+  running_app_version?: string | null;
   api_version?: string;
   backend?: string;
   platform?: string;

@@ -47,6 +47,33 @@ class TestHealth:
         with TestClient(app) as c:
             assert c.get("/api/health").json()["app_version"] == "9.9.9"
 
+    def test_health_app_version_is_fresh_but_running_version_is_startup(self, tmp_path):
+        # A frontend-only deploy (pull + build, no restart) rewrites package.json: app_version is
+        # the release now on disk, running_app_version stays what the process started with.
+        pkg = tmp_path / "package.json"
+        pkg.write_text(json.dumps({"version": "1.0.0"}))
+        app = create_app(backend="none", experiments_root=tmp_path, frontend_dist=tmp_path / "dist")
+        with TestClient(app) as c:
+            h = c.get("/api/health").json()
+            assert (h["app_version"], h["running_app_version"]) == ("1.0.0", "1.0.0")
+            pkg.write_text(json.dumps({"version": "1.0.1"}))
+            h = c.get("/api/health").json()
+            assert (h["app_version"], h["running_app_version"]) == ("1.0.1", "1.0.0")
+
+    def test_health_app_version_falls_back_to_startup_when_package_json_unreadable(self, tmp_path):
+        pkg = tmp_path / "package.json"
+        pkg.write_text(json.dumps({"version": "1.0.0"}))
+        app = create_app(backend="none", experiments_root=tmp_path, frontend_dist=tmp_path / "dist")
+        with TestClient(app) as c:
+            pkg.write_text("{ not json")
+            r = c.get("/api/health")
+            assert r.status_code == 200
+            assert r.json()["app_version"] == "1.0.0"
+            pkg.unlink()
+            r = c.get("/api/health")
+            assert r.status_code == 200
+            assert r.json()["app_version"] == "1.0.0"
+
     def test_health_app_version_null_when_package_json_missing(self, tmp_path):
         # No package.json -> app_version is null (never a stale/fabricated value); the banner treats
         # unknown as "not behind" and never nags.

@@ -116,6 +116,11 @@ class Controller:
         self._last_setpoint_w: int | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        #: Link generation, bumped (under _lock) whenever the link changes: attach, detach (at its
+        #: START, before it waits on _io_lock) and _drop_link. A _tick records it before its read
+        #: and DISCARDS the result if it changed meanwhile, so a tick still in flight on a hung read
+        #: can never publish, fault, or drop-link onto a detached or re-attached link.
+        self._link_gen = 0
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
 
     def add_listener(self, callback: Callable[[dict[str, Any]], None]) -> None:
@@ -168,8 +173,14 @@ class Controller:
             return dict(self.device.identify())
 
     def _start_polling(self) -> None:
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="tcp-controller", daemon=True)
+        # A FRESH stop event per poll thread, never clear() a shared one: if a previous
+        # _stop_polling join timed out (thread stalled in a read or a listener), clearing the shared
+        # event would wake that old thread and run TWO poll loops against the generator. The old
+        # thread keeps its own (set) event and exits when it unsticks.
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, args=(self._stop,), name="tcp-controller", daemon=True
+        )
         self._thread.start()
 
     def _stop_polling(self) -> None:
@@ -208,7 +219,9 @@ class Controller:
             self.detach_device()
         if backend is not None:
             self.backend = backend
-        self.device = device
+        with self._lock:
+            self.device = device
+            self._link_gen += 1
         try:
             self.connect()  # request control + force MANUAL (never ATUNE) -> CONNECTED
         except Exception:
@@ -271,6 +284,8 @@ class Controller:
     def detach_device(self) -> None:
         """Stop polling, force RF off, release the lease, close the transport, and go DISCONNECTED
         (re-attachable — unlike ``stop()`` which is terminal). Safe to call when already idle."""
+        with self._lock:
+            self._link_gen += 1  # first: a tick blocked on a hung read must discard its result
         self._stop_polling()
         self._safe_shutdown_device()
         try:
@@ -293,27 +308,34 @@ class Controller:
         if self.device is None:
             raise RuntimeError("no device connected")
 
-    def _loop(self) -> None:
-        while not self._stop.is_set():
+    def _loop(self, stop: threading.Event) -> None:
+        while not stop.is_set():
             self._tick()
-            self._stop.wait(self.poll_interval_s)
+            stop.wait(self.poll_interval_s)
 
     # --- core poll cycle -------------------------------------------------------------------
     def _tick(self) -> None:
         """One telemetry+protection cycle. Safe to call directly (tests) or from the thread."""
+        gen = self._link_gen
         read_start = self._clock()
         try:
             with self._io_lock:
                 telemetry = self.device.read_telemetry()
         except InvalidStatusWord as exc:
+            if self._link_gen != gen:
+                return  # the link changed during the read: this result belongs to no live link
             if self._on_invalid_status(exc):
                 return  # discarded glitch: no state change, no fake sample to listeners
             self._notify()
             return
         except Exception as exc:  # noqa: BLE001 - a read failure is a lost link, or (RF-on) a protection event
+            if self._link_gen != gen:
+                return
             self._record_read_outcome(invalid=False)
             self._on_read_failure(exc)
             self._notify()
+            return
+        if self._link_gen != gen:
             return
         self._record_read_outcome(invalid=False)
         self._read_failures = 0  # a good read clears the link-loss debounce
@@ -349,6 +371,8 @@ class Controller:
             trip=bool(reasons), reasons=tuple(reasons), warnings=base.warnings
         )
         with self._lock:
+            if self._link_gen != gen:
+                return
             self.latest_telemetry = telemetry
             self.latest_decision = decision
         if decision.trip:
@@ -480,6 +504,7 @@ class Controller:
                     pass
         with self._lock:
             self.device = None
+            self._link_gen += 1
             self.armed = False
             self.state = ControllerState.DISCONNECTED
             self.latest_telemetry = None
