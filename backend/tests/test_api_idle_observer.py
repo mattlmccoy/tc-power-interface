@@ -112,9 +112,18 @@ def test_idle_path_never_actuates_records_or_posts(tmp_path):
         c.app.state.control_telemetry = poster
         flir_posts = []
         c.app.state.flir_link.notify = lambda **k: flir_posts.append(k)
+        # The strongest case: a started, ARMED auto loop that WOULD drive if stepped. With backend
+        # "none" _may_drive is False anyway, so the controller reports "simulated" (where it drives
+        # without RF) — otherwise a mutation that steps the loop from the idle path passes unseen.
+        ctrl.backend = "simulated"
         thermal = c.app.state.thermal
-        thermal.mode = "auto"  # the strongest case: a started auto loop with no generator
+        thermal.mode = "auto"
         thermal.start()
+        thermal.arm()
+        steps = []
+        real_tick = thermal.tick
+        # No generator polls here, so any loop step would come from the idle path.
+        thermal.tick = lambda dt: steps.append(dt) or real_tick(dt)
         _configure(c)
         observed = []
         cockpit = c.app.state.cockpit
@@ -122,8 +131,22 @@ def test_idle_path_never_actuates_records_or_posts(tmp_path):
         cockpit.observe = lambda **kw: observed.append(kw) or real_observe(**kw)
         time.sleep(1.0)
     assert len(observed) >= 5  # non-vacuous: the idle path really ran
-    assert all(kw["telemetry"] == {} for kw in observed)  # no telemetry: RF off, 0 W
+    assert all(kw["telemetry"] == {} for kw in observed)  # no telemetry: RF off
+    assert all(kw.get("power_known") is False for kw in observed)  # ... and power UNKNOWN, not 0 W
+    assert steps == []  # the idle path never steps the loop
     assert calls == [] and poster.bodies == [] and flir_posts == []
+
+
+def test_idle_observer_reads_temperature_while_the_advisory_loop_runs(tmp_path):
+    """Reviewer repro: backend none + an advisory loop started -> running=True, temp_status "ok",
+    control_temp_c None forever. The idle observer must read the temperature regardless."""
+    with _client(tmp_path) as c:
+        _configure(c)
+        assert c.post("/api/thermal/start", json={"mode": "advisory"}).status_code == 200
+        assert c.app.state.thermal.running is True
+        c.app.state.thermal.control_temp_c = None
+        expected = round(_MEAN["freehand_sample"], 1)
+        assert _wait_for(lambda: _thermal(c)["control_temp_c"] == expected), _thermal(c)
 
 
 def test_idle_failure_is_logged_once_and_the_loop_keeps_going(tmp_path, caplog):

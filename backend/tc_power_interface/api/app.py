@@ -392,7 +392,9 @@ def create_app(
                 last_logged[kind] = now
                 logger.exception("cockpit %s failed; continuing without it (rate-limited)", kind)
 
-        def _observe(snap: dict[str, Any], roi_temps: list[dict[str, Any]]) -> None:
+        def _observe(
+            snap: dict[str, Any], roi_temps: list[dict[str, Any]], *, power_known: bool = True
+        ) -> None:
             src = thermal.source  # swappable at runtime by POST /api/thermal/source
             cockpit.observe(
                 t_s=time.monotonic(),
@@ -406,6 +408,7 @@ def create_app(
                 run_mode=app.state.run_mode,
                 target_c=thermal.plan.target_c,
                 ceiling_w=float(min(thermal.plan.loop_ceiling_w, controller.limits.max_forward_w)),
+                power_known=power_known,
             )
 
         # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
@@ -416,7 +419,9 @@ def create_app(
         observe_lock = threading.Lock()
         last_poll_tick = {"t": time.monotonic()}
 
-        def _observe_roster(snap: dict[str, Any]) -> list[dict[str, Any]]:
+        def _observe_roster(
+            snap: dict[str, Any], *, power_known: bool = True
+        ) -> list[dict[str, Any]]:
             """Copy the FLIR roster once and feed the cockpit observer; returns the roster ([] if
             it failed). A display-only observer must never stop the caller's loop."""
             try:
@@ -425,7 +430,7 @@ def create_app(
                 _log_cockpit_failure("observer")
                 return []
             try:
-                _observe(snap, roi_temps)
+                _observe(snap, roi_temps, power_known=power_known)
             except Exception:  # noqa: BLE001
                 _log_cockpit_failure("observer")
             return roi_temps
@@ -459,17 +464,19 @@ def create_app(
             """No generator polling (backend "none", disconnected, link dropped): observe the FLIR
             temperature + watched cores anyway, so the cockpit never shows "ok" with no number or
             "nothing watched" while cores are configured. OBSERVE-ONLY: the stopped-loop read (never
-            a loop step), the cockpit with empty telemetry (RF off, 0 W) — never the controller,
-            the device, the recorder or the FLIR poster. Silent while poll ticks are arriving."""
+            a loop step), the cockpit with RF off and power UNKNOWN (not 0 W). Never the
+            controller, the device, the recorder or the FLIR poster. Silent while poll ticks are
+            arriving."""
             with observe_lock:
                 # The generator path owns the observe while its poll loop is live (a real ~1 s read
                 # spaces ticks wider than the window) or a poll tick landed recently.
                 recent = time.monotonic() - last_poll_tick["t"] < 2 * poll_interval_s
                 if controller.polling or recent:
                     return
-                if not thermal.running:
-                    thermal.observe(poll_interval_s)
-                _observe_roster({"telemetry": {}})
+                # The read only (never a loop step), even with the loop started: with no generator
+                # the loop cannot step, and skipping the read left control_temp_c None for good.
+                thermal.observe(poll_interval_s)
+                _observe_roster({"telemetry": {}}, power_known=False)  # no generator: power unknown
 
         idle_stop = threading.Event()
 

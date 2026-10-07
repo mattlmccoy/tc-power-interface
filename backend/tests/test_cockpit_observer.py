@@ -230,3 +230,20 @@ def test_grid_samples_counts_the_estimators_real_grid_samples():
     assert obs.grid_samples == 1
     _feed(obs, 5.0, 1)
     assert obs.grid_samples == 2
+
+
+def test_unknown_power_is_none_not_zero_watts():
+    """The idle observer (no generator) does not know the power. It must not be shown as 0 W: no
+    plateau / settle / time-to-target / suggestion from it, while the fit itself is kept."""
+    obs, t, _, temp = _after_fixture()
+    before = obs.snapshot()["shadow"]
+    assert before["plateau_c"] is not None and before["settle_s"] is not None
+    obs.observe(
+        t_s=t + 0.5, telemetry={}, part_roi="freehand_sample", part_temp_c=temp,
+        temp_status="ok", roi_temps=[], watch=[], run_id="run1", run_mode=RunMode(mode="target"),
+        target_c=55.0, ceiling_w=200.0, power_known=False,
+    )  # fmt: skip
+    sh = obs.snapshot()["shadow"]
+    assert sh["plateau_c"] is None and sh["settle_s"] is None and sh["ttt_s"] is None
+    assert sh["suggest_w"] is None
+    assert sh["valid"] == before["valid"] and sh["why"] == before["why"]

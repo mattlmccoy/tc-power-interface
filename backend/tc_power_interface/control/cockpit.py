@@ -64,9 +64,12 @@ class CockpitObserver:
         run_mode: RunMode,
         target_c: float,
         ceiling_w: float,
+        power_known: bool = True,
     ) -> None:
         """Feed one telemetry tick. Only a NEW non-None run id resets; stopping a recording keeps
-        the estimate."""
+        the estimate. ``power_known=False`` (no generator attached: the idle observer) means the
+        power is UNKNOWN, not 0 W: the estimator sees RF off, and no plateau / settle /
+        time-to-target / suggestion is derived from it."""
         if run_id is not None and run_id != self._run_id:
             self._est.reset()
             self._shadow.reset()
@@ -82,10 +85,10 @@ class CockpitObserver:
             self._suggest = None
             self._mode = run_mode.mode
         before = self._est.grid_samples
-        self._estimate = self._est.add(t_s, power, part_temp_c, rf_on=rf_on)
-        if part_temp_c is None or not math.isfinite(part_temp_c):
-            self._suggest = None  # never leave a suggestion standing on an unknown temperature
-        if self._est.grid_samples != before:  # the shadow loop steps once per 5 s grid sample
+        self._estimate = self._est.add(t_s, power, part_temp_c, rf_on=rf_on and power_known)
+        if part_temp_c is None or not math.isfinite(part_temp_c) or not power_known:
+            self._suggest = None  # never leave a suggestion standing on an unknown temp / power
+        if self._est.grid_samples != before and power_known:  # once per 5 s grid sample
             if run_mode.mode == "target":  # only to-temperature mode has a target to track
                 out = self._shadow.step(
                     self._estimate,
@@ -102,7 +105,7 @@ class CockpitObserver:
             "part_roi": part_roi,
             "part_temp_c": part_temp_c,
             "temp_status": temp_status,
-            "power_w": power,
+            "power_w": power if power_known else None,
             "run_mode": run_mode.mode,
             "target_c": target_c,
         }
@@ -112,7 +115,7 @@ class CockpitObserver:
         temp, power = last.get("part_temp_c"), last.get("power_w", 0.0)
         plateau = settle = ttt = None
         if e.valid and e.t_amb_c is not None and e.k_c_per_w is not None and e.tau_s is not None:
-            if temp is not None:
+            if temp is not None and power is not None:  # unknown power: nothing to project
                 plateau = plateau_c(e.t_amb_c, e.k_c_per_w, power)
                 settle = settle_time_s(plateau, temp, e.tau_s)
                 if last.get("run_mode") == "target":
