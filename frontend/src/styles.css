@@ -21,6 +21,7 @@ button, input { font-family: inherit; font-size: inherit; color: inherit; }
   background: var(--bg-deep); border-bottom: 1px solid var(--line);
 }
 .topbar .brand { font-weight: 600; color: var(--fg-strong); letter-spacing: 0.02em; }
+.topbar .brand-abbr { display: none; }
 .topbar .brand .amp { color: var(--accent); }
 .topbar .device { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
 .topbar .build { color: var(--muted); opacity: 0.55; font-family: var(--font-mono); font-size: 11px; }
@@ -613,8 +614,36 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .hb-age { min-width: 4.5em; font-variant-numeric: tabular-nums; }
 @keyframes hb-blink { 0% { opacity: 1; box-shadow: var(--live-glow); } 100% { box-shadow: none; } }
 
-/* Phone width (not the lab screen): the top bar wraps instead of widening the page, and page
-   content can never push the grid column wider than the viewport. */
+/* ==========================================================================================
+   Top bar overflow guard (v0.17.5). The bar must never widen the page: the fixed-priority items
+   (brand, RF clock, heartbeat LEDs, view tabs, buttons, connection pill) never shrink; the device
+   text ellipsizes first, and below the breakpoints the lowest-priority text drops out in order:
+   build text -> device text (ellipsis, then hidden) -> heartbeat age + "Interface" -> "TCP", button labels, tab padding.
+   No overflow:hidden on the bar itself: the connect popover hangs below it.
+   ========================================================================================== */
+.topbar { min-width: 0; }
+.topbar > * { flex: 0 0 auto; white-space: nowrap; }
+.topbar > .device { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.topbar > .build { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.topbar > .spacer { flex: 1 1 0; min-width: 0; }
+.topbar > .rfclock, .topbar > .hb { margin-right: 0; }
+@media (max-width: 1200px) { .topbar .build { display: none; } }
+@media (max-width: 1140px) { .topbar { gap: calc(var(--space) * 2); padding: 0 calc(var(--space) * 3); }
+  .topbar .brand-rest { display: none; } }
+@media (max-width: 1080px) { .topbar .device { display: none; } }
+@media (max-width: 1000px) { .topbar .hb-age { display: none; } }
+@media (max-width: 960px) {
+  .topbar { gap: var(--space); padding: 0 calc(var(--space) * 2); }
+  .topbar .brand-name { display: none; }
+  .topbar .brand-abbr { display: inline; }
+  .topbar .btn-lbl { display: none; }
+  .viewtabs { margin-right: 0; }
+  .viewtabs button { padding: 5px 7px; }
+}
+
+/* Phone width (not the lab screen): below the v0.17.5 shrink breakpoints the top bar also wraps
+   (it cannot fit on one line at ~390 px), and page content can never push the grid column wider
+   than the viewport. Kept after the overflow guard so its padding/spacer rules win. */
 @media (max-width: 700px) {
   .app { grid-template-rows: auto auto 1fr; grid-template-columns: minmax(0, 1fr); }
   .topbar { flex-wrap: wrap; row-gap: 6px; padding-block: 6px; }
