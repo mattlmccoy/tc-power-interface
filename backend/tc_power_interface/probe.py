@@ -19,11 +19,19 @@ from typing import Any
 
 from tc_power_interface.device import create_transport
 from tc_power_interface.device.cxn import CxnDevice
-from tc_power_interface.protocol.codec import Status
+from tc_power_interface.protocol.codec import InvalidStatusWord, Status
 
 
 def _telemetry_dict(device: CxnDevice) -> dict[str, Any]:
-    t = device.read_telemetry()
+    try:
+        t = device.read_telemetry()
+    except InvalidStatusWord as exc:  # garbled status word: report it, don't crash the probe
+        return {
+            "invalid_status_word": f"0x{exc.raw_word:04X}",
+            "forward_w": exc.forward_w,
+            "reverse_w": exc.reverse_w,
+            "temperature_c": exc.temperature_c,
+        }
     d = asdict(t)
     d["status"] = int(t.status)
     d["status_flags"] = [f.name for f in Status if f in t.status]

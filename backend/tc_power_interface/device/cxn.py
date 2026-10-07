@@ -61,7 +61,14 @@ class CxnDevice:
     def read_telemetry(self) -> Telemetry:
         fwd, rev, load = codec.parse_power(self._query(codec.cmd_power()))
         gs = self._query(codec.cmd_status())
-        status = codec.parse_status(gs)
+        try:
+            status = codec.parse_status(gs)
+        except codec.InvalidStatusWord as exc:
+            # Garbled status word, but this cycle's power (GP) and the GS frame's temperature are
+            # still readings: attach them so the controller can enforce the absolute limits.
+            exc.forward_w, exc.reverse_w = fwd, rev
+            exc.temperature_c = codec.parse_temperature(gs)
+            raise
         gt = codec.parse_gt(self._query(codec.cmd_gt()))  # matching-network / generator readback
         return Telemetry(
             host_timestamp_ns=time.time_ns(),

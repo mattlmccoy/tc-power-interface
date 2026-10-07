@@ -146,3 +146,26 @@ def test_concurrent_stops_finalize_exactly_once(tmp_path):
     assert [r for r in results if r is not None] == [run_dir]  # exactly one finalizer
     events = json.loads((run_dir / "events.json").read_text())
     assert [e["label"] for e in events].count("recording_stopped") == 1
+def test_single_0xffff_status_frame_starts_no_phantom_recording(tmp_path):
+    """2026-10-07: one 0xFFFF GS word (RF_ENABLED + every alarm bit set) auto-started an RF_*
+    recording for a phantom RF-on and latched a FAULT. Injected through the real simulated
+    transport + CxnDevice + codec, it must start nothing and leave the controller CONNECTED."""
+    with _client(tmp_path) as c:
+        controller = c.app.state.controller
+        transport = controller.device.transport
+        real_word = transport._status_word
+        served = {"n": 0}
+
+        def one_garbled_word() -> int:
+            served["n"] += 1
+            return 0xFFFF if served["n"] == 1 else real_word()
+
+        transport._status_word = one_garbled_word
+        deadline = time.monotonic() + 3
+        while served["n"] < 6 and time.monotonic() < deadline:  # the glitch + several good polls
+            time.sleep(0.05)
+        assert served["n"] >= 6
+        status = c.get("/api/recording/status").json()
+        assert status["active"] is False
+        assert controller.state.value == "connected"
+        assert controller.fault_reasons == ()
