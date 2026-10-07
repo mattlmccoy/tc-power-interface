@@ -168,8 +168,14 @@ class Controller:
             return dict(self.device.identify())
 
     def _start_polling(self) -> None:
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="tcp-controller", daemon=True)
+        # A FRESH stop event per poll thread, never clear() a shared one: if a previous
+        # _stop_polling join timed out (thread stalled in a read or a listener), clearing the shared
+        # event would wake that old thread and run TWO poll loops against the generator. The old
+        # thread keeps its own (set) event and exits when it unsticks.
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, args=(self._stop,), name="tcp-controller", daemon=True
+        )
         self._thread.start()
 
     def _stop_polling(self) -> None:
@@ -293,10 +299,10 @@ class Controller:
         if self.device is None:
             raise RuntimeError("no device connected")
 
-    def _loop(self) -> None:
-        while not self._stop.is_set():
+    def _loop(self, stop: threading.Event) -> None:
+        while not stop.is_set():
             self._tick()
-            self._stop.wait(self.poll_interval_s)
+            stop.wait(self.poll_interval_s)
 
     # --- core poll cycle -------------------------------------------------------------------
     def _tick(self) -> None:
