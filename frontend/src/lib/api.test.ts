@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { api } from "./api.ts";
+import { api, replayShadowPath } from "./api.ts";
 
 interface Captured {
   url: string;
@@ -113,4 +113,81 @@ test("matchTunerStart/Arm/Disarm/Stop post to their routes", async () => {
   assert.match(calls[1].url, /\/api\/match-tuner\/arm$/);
   assert.match(calls[2].url, /\/api\/match-tuner\/disarm$/);
   assert.match(calls[3].url, /\/api\/match-tuner\/stop$/);
+});
+
+test("replayShadowPath encodes the run and ROI", () => {
+  assert.equal(
+    replayShadowPath("20261002_125227_RF", "SQ SAMPLE", 55),
+    "/api/recordings/20261002_125227_RF/shadow?roi=SQ%20SAMPLE&target=55",
+  );
+  assert.equal(replayShadowPath("r/1", "a&b", 55.5, 120), "/api/recordings/r%2F1/shadow?roi=a%26b&target=55.5&ceiling=120");
+});
+
+test("replayShadowPath refuses a non-finite target or ceiling instead of sending target=NaN", () => {
+  assert.throws(() => replayShadowPath("r", "x", NaN), /target/);
+  assert.throws(() => replayShadowPath("r", "x", Infinity), /target/);
+  assert.throws(() => replayShadowPath("r", "x", 55, NaN), /ceiling/);
+});
+
+test("replayShadow with a bad target rejects without touching the network", async () => {
+  const calls = stubFetch();
+  await assert.rejects(api.replayShadow("r", "x", NaN), /target/);
+  assert.equal(calls.length, 0);
+});
+
+test("cockpit writes: setWatch, setRunMode and engageLoop post to their routes with the body", async () => {
+  const calls = stubFetch();
+  await api.setWatch(["core_a", "core_b"]);
+  await api.setRunMode({ mode: "ladder", ladder_w: [20, 40], fixed_w: 0, fixed_min: 0 });
+  await api.engageLoop();
+  assert.deepEqual(calls.map((c) => c.method), ["POST", "POST", "POST"]);
+  assert.match(calls[0].url, /\/api\/thermal\/watch$/);
+  assert.deepEqual(calls[0].body, { names: ["core_a", "core_b"] });
+  assert.match(calls[1].url, /\/api\/run-mode$/);
+  assert.deepEqual(calls[1].body, { mode: "ladder", ladder_w: [20, 40], fixed_w: 0, fixed_min: 0 });
+  assert.match(calls[2].url, /\/api\/thermal\/engage$/);
+});
+
+/** A fetch stub that answers every request with one canned response (json and text). */
+function stubReply(status: number, body: unknown): Captured[] {
+  const calls: Captured[] = [];
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), method: init?.method ?? "GET", body: undefined });
+    const text = typeof body === "string" ? body : JSON.stringify(body);
+    return { ok: status < 400, status, json: async () => JSON.parse(text), text: async () => text } as unknown as Response;
+  }) as typeof fetch;
+  return calls;
+}
+
+test("recording reads hit the run's routes and return the parsed body", async () => {
+  const runs = { runs: [{ run: "20261007_141544_cap", complete: true, size_bytes: 1234, has_roi_data: true }] };
+  let calls = stubReply(200, runs);
+  assert.deepEqual(await api.recordings(), runs.runs);
+  assert.match(calls[0].url, /\/api\/recordings$/);
+
+  calls = stubReply(200, { rois: ["SQ SAMPLE", "core 1"] });
+  assert.deepEqual(await api.recordingRois("r 1"), ["SQ SAMPLE", "core 1"]);
+  assert.match(calls[0].url, /\/api\/recordings\/r%201\/rois$/);
+
+  const ev = [{ host_timestamp_ns: 1791396878208639000, label: "recording_started", data: { name: "x" } }];
+  calls = stubReply(200, ev);
+  assert.deepEqual(await api.recordingEvents("r"), ev);
+  assert.match(calls[0].url, /\/api\/recordings\/r\/events\.json$/);
+
+  calls = stubReply(200, "a,b\r\n1,2\r\n");
+  assert.equal(await api.recordingCsv("r"), "a,b\r\n1,2\r\n");
+  assert.match(calls[0].url, /\/api\/recordings\/r\/telemetry\.csv$/);
+
+  const shadow = { roi: "SQ SAMPLE", target_c: 55, points: [{ t_s: 0, temp_c: 30, k_c_per_w: null, tau_s: null, confidence: 0, suggest_w: null, plateau_c: null }] };
+  calls = stubReply(200, shadow);
+  assert.deepEqual(await api.replayShadow("r", "SQ SAMPLE", 55), shadow);
+  assert.match(calls[0].url, /\/api\/recordings\/r\/shadow\?roi=SQ%20SAMPLE&target=55$/);
+});
+
+test("recording reads throw the server's detail on an error status", async () => {
+  stubReply(404, { detail: "no events for this recording" });
+  await assert.rejects(api.recordingEvents("r"), /no events for this recording/);
+  stubReply(422, { detail: "damaged recording: x" });
+  await assert.rejects(api.replayShadow("r", "x", 55), /damaged recording/);
+  await assert.rejects(api.recordingCsv("r"), /damaged recording/);
 });
