@@ -13,6 +13,7 @@ import enum
 import hashlib
 import json
 import logging
+import math
 import platform
 import queue
 import re
@@ -53,7 +54,26 @@ _THERMAL_FIELDS = {
 #: pre-existing columns so readers keyed on the old layout are unaffected. Added 2026-09-24: an
 #: in-run Load retune preceded a transformer-core runaway and the log had no tune/load positions.
 _MATCH_FIELDS = ["tune_cap_percent", "load_cap_percent", "manual_mode", "dc_voltage", "preset_slot"]
-_CSV_FIELDS = [*_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS]
+#: Cockpit columns (2026-10-07, spec §3.4), APPENDED after all pre-existing columns.
+#: Unknown = blank.
+_COCKPIT_FIELDS = [
+    "part_roi", "part_temp_c", "temp_status", "shadow_k", "shadow_tau_s", "shadow_conf",
+    "shadow_suggest_w", "shadow_plateau_c", "shadow_ttt_s", "run_mode", "target_c",
+]
+_CSV_FIELDS = [
+    *_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS,
+    "setpoint_w", *_COCKPIT_FIELDS,
+]
+#: Long-format sidecar (roi_temps.csv): the telemetry header is fixed at run start but FLIR ROI
+#: names change between sessions, so every ROI is one row per sample here. Unknown mean = blank.
+_ROI_FIELDS = ["host_timestamp_ns", "roi", "mean_c"]
+
+
+def _finite_or_none(value: Any) -> Any:
+    """NaN/inf must never reach the csv as 'nan'/'inf' — unknown is blank."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 class RecorderState(enum.Enum):
@@ -80,13 +100,15 @@ class TelemetryRecorder:
         self._dir: Path | None = None
         self._csv_file: TextIO | None = None
         self._csv_writer: Any = None
+        self._roi_file: TextIO | None = None
+        self._roi_writer: Any = None
         self._events: list[dict[str, Any]] = []
         self._sample_count = 0
         self._started_monotonic = 0.0
         # Disk writes run on a background thread so a slow flush (e.g. Dropbox syncing the csv) can
         # NEVER block the caller — the controller poll loop records from its own thread, and a
         # stalled write there would trip the staleness watchdog. record() only enqueues.
-        self._queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._writer_thread: threading.Thread | None = None
         self._writer_stop = threading.Event()
 
@@ -120,6 +142,10 @@ class TelemetryRecorder:
         self._csv_file = (run_dir / "telemetry.csv").open("w", newline="")
         self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=_CSV_FIELDS)
         self._csv_writer.writeheader()
+        self._roi_file = (run_dir / "roi_temps.csv").open("w", newline="")
+        self._roi_writer = csv.DictWriter(self._roi_file, fieldnames=_ROI_FIELDS)
+        self._roi_writer.writeheader()
+        self._roi_file.flush()
 
         self._dir = run_dir
         self._events = []
@@ -151,7 +177,23 @@ class TelemetryRecorder:
             row[col] = thermal.get(key)
         for key in _MATCH_FIELDS:
             row[key] = telemetry.get(key)
-        self._queue.put(row)  # unbounded; rows are tiny and a stall lasts only seconds
+        row["setpoint_w"] = snapshot.get("commanded_setpoint_w")
+        cockpit = snapshot.get("cockpit") or {}
+        for key in _COCKPIT_FIELDS:
+            row[key] = cockpit.get(key)
+        ts = telemetry.get("host_timestamp_ns")
+        roi_rows = [
+            {
+                "host_timestamp_ns": ts,
+                "roi": r.get("name"),
+                "mean_c": _finite_or_none(r.get("mean_c")) if r.get("valid") else None,
+            }
+            for r in (snapshot.get("roi_temps") or [])
+            if r.get("name")
+        ]
+        self._queue.put(("telemetry", row))  # unbounded; rows are tiny, a stall lasts only seconds
+        if roi_rows:
+            self._queue.put(("roi", roi_rows))
         self._sample_count += 1
 
     def _write_row(self, row: dict[str, Any]) -> None:
@@ -161,15 +203,25 @@ class TelemetryRecorder:
             if self._csv_file is not None:
                 self._csv_file.flush()
 
+    def _write_roi_rows(self, rows: list[dict[str, Any]]) -> None:
+        """Write+flush one sample's ROI rows. Runs ONLY on the writer thread (seam for tests)."""
+        if self._roi_writer is not None:
+            self._roi_writer.writerows(rows)
+            if self._roi_file is not None:
+                self._roi_file.flush()
+
     def _writer_loop(self) -> None:
         """Drain the row queue to disk until stopped AND empty, so no queued row is lost on stop."""
         while not self._writer_stop.is_set() or not self._queue.empty():
             try:
-                row = self._queue.get(timeout=0.1)
+                kind, payload = self._queue.get(timeout=0.1)
             except queue.Empty:
                 continue
             try:
-                self._write_row(row)
+                if kind == "roi":
+                    self._write_roi_rows(payload)
+                else:
+                    self._write_row(payload)
             except Exception:  # noqa: BLE001 - a failed write must not kill the writer thread
                 logger.exception("telemetry recorder write failed")
 
@@ -200,6 +252,10 @@ class TelemetryRecorder:
             self._csv_file.close()
             self._csv_file = None
         self._csv_writer = None
+        if self._roi_file is not None:
+            self._roi_file.close()
+            self._roi_file = None
+        self._roi_writer = None
 
         (run_dir / "events.json").write_text(json.dumps(self._events, indent=2))
 
@@ -211,6 +267,7 @@ class TelemetryRecorder:
                 "metadata.json": _sha256(run_dir / "metadata.json"),
                 "events.json": _sha256(run_dir / "events.json"),
                 "telemetry.csv": _sha256(run_dir / "telemetry.csv"),
+                "roi_temps.csv": _sha256(run_dir / "roi_temps.csv"),
             },
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
