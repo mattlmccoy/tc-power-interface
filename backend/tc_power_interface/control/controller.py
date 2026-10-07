@@ -164,6 +164,12 @@ class Controller:
         self._thread = threading.Thread(target=self._loop, name="tcp-controller", daemon=True)
         self._thread.start()
 
+    @property
+    def polling(self) -> bool:
+        """True while the generator poll loop is live (started, not told to stop). Read-only."""
+        t = self._thread
+        return t is not None and t.is_alive() and not self._stop.is_set()
+
     def _stop_polling(self) -> None:
         self._stop.set()
         if self._thread is not None:

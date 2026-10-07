@@ -1086,3 +1086,27 @@ class TestInvalidStatusWordEndToEnd:
         assert transport.rf_on is True  # protection did not need to drop RF
         c._tick()
         assert c.state is ControllerState.CONNECTED
+
+
+class TestPolling:
+    """``polling``: is the generator poll loop live? The app's idle observer stays silent exactly
+    while it is (a slow ~1 s real read leaves long gaps between ticks; the loop is still live)."""
+
+    def test_polling_tracks_start_detach_and_link_drop(self):
+        c = make_controller()
+        assert c.polling is False  # never started (e.g. a boot whose connect failed)
+        c.start()
+        assert c.polling is True
+        c.detach_device()
+        assert c.polling is False
+        dev = _FlakyDevice(rf_on=False)
+        c2 = Controller(dev, poll_interval_s=0.01, link_loss_reads=1)
+        c2.connect()
+        c2._start_polling()
+        assert c2.polling is True
+        dev.fail = True
+        deadline = time.monotonic() + 1.0
+        while c2.polling and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert c2.polling is False  # an idle link drop ends polling (no device any more)
+        c2.stop()

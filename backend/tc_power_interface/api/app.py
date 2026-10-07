@@ -392,7 +392,7 @@ def create_app(
                 last_logged[kind] = now
                 logger.exception("cockpit %s failed; continuing without it (rate-limited)", kind)
 
-        def _observe(snap: dict[str, Any]) -> None:
+        def _observe(snap: dict[str, Any], roi_temps: list[dict[str, Any]]) -> None:
             src = thermal.source  # swappable at runtime by POST /api/thermal/source
             cockpit.observe(
                 t_s=time.monotonic(),
@@ -400,7 +400,7 @@ def create_app(
                 part_roi=app.state.control_roi,
                 part_temp_c=thermal.control_temp_c,
                 temp_status=getattr(src, "status", "simulated"),
-                roi_temps=tick_cache["roi_temps"],
+                roi_temps=roi_temps,
                 watch=app.state.watch_rois,
                 run_id=app.state.current_run,
                 run_mode=app.state.run_mode,
@@ -410,14 +410,32 @@ def create_app(
 
         # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
         # POST the control-telemetry row to the FLIR logger (best-effort; never blocks the tick).
-        def _thermal_tick(snap: dict[str, Any]) -> None:
-            tick_cache["roi_temps"] = []  # never let a stale roster outlive a failed read
-            thermal.tick(poll_interval_s)
+        # The observe path is shared by the generator's poll tick and the idle observer below. The
+        # lock serialises them (the thermal loop and the cockpit are not thread-safe); the stamp of
+        # the last poll tick (with controller.polling) keeps the idle observer silent while polling.
+        observe_lock = threading.Lock()
+        last_poll_tick = {"t": time.monotonic()}
+
+        def _observe_roster(snap: dict[str, Any]) -> list[dict[str, Any]]:
+            """Copy the FLIR roster once and feed the cockpit observer; returns the roster ([] if
+            it failed). A display-only observer must never stop the caller's loop."""
             try:
-                tick_cache["roi_temps"] = thermal_extra(thermal.source)["roi_temps"]
-                _observe(snap)
-            except Exception:  # noqa: BLE001 - a display-only observer must never stop the poll loop
+                roi_temps: list[dict[str, Any]] = thermal_extra(thermal.source)["roi_temps"]
+            except Exception:  # noqa: BLE001
                 _log_cockpit_failure("observer")
+                return []
+            try:
+                _observe(snap, roi_temps)
+            except Exception:  # noqa: BLE001
+                _log_cockpit_failure("observer")
+            return roi_temps
+
+        def _thermal_tick(snap: dict[str, Any]) -> None:
+            with observe_lock:
+                last_poll_tick["t"] = time.monotonic()
+                tick_cache["roi_temps"] = []  # never let a stale roster outlive a failed read
+                thermal.tick(poll_interval_s)
+                tick_cache["roi_temps"] = _observe_roster(snap)
             poster = app.state.control_telemetry
             if thermal.running and poster.enabled:
                 body = build_control_telemetry(
@@ -436,6 +454,33 @@ def create_app(
                 ))
 
         controller.add_listener(_thermal_tick)
+
+        def _idle_observe() -> None:
+            """No generator polling (backend "none", disconnected, link dropped): observe the FLIR
+            temperature + watched cores anyway, so the cockpit never shows "ok" with no number or
+            "nothing watched" while cores are configured. OBSERVE-ONLY: the stopped-loop read (never
+            a loop step), the cockpit with empty telemetry (RF off, 0 W) — never the controller,
+            the device, the recorder or the FLIR poster. Silent while poll ticks are arriving."""
+            with observe_lock:
+                # The generator path owns the observe while its poll loop is live (a real ~1 s read
+                # spaces ticks wider than the window) or a poll tick landed recently.
+                recent = time.monotonic() - last_poll_tick["t"] < 2 * poll_interval_s
+                if controller.polling or recent:
+                    return
+                if not thermal.running:
+                    thermal.observe(poll_interval_s)
+                _observe_roster({"telemetry": {}})
+
+        idle_stop = threading.Event()
+
+        def _idle_loop() -> None:
+            while not idle_stop.wait(poll_interval_s):
+                try:
+                    _idle_observe()
+                except Exception:  # noqa: BLE001 - the idle observer must never die silently
+                    _log_cockpit_failure("idle observer")
+
+        idle_thread = threading.Thread(target=_idle_loop, name="tcp-idle-observer", daemon=True)
 
         def _cockpit_fields() -> dict[str, Any]:
             """The cockpit's CSV columns, or {} (blank cells) if the observer fails: a cockpit bug
@@ -533,9 +578,12 @@ def create_app(
         app.state.backend = backend
         app.state.connected_port = None
         app.state.flir_link = flir_link
+        idle_thread.start()
         try:
             yield
         finally:
+            idle_stop.set()
+            idle_thread.join(timeout=2.0)
             recorder.stop()  # no-op when idle; waits out a stop already draining
             controller.stop()
 
