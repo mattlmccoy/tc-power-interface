@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  needleAngle,
   approachFromBelow,
   capSettled,
   capVolts,
@@ -136,4 +137,12 @@ test("statusLeds derives LED states from the CXN status bits", () => {
   const rev = revLimit.find((l) => l.label === "Reverse limit");
   assert.equal(rev?.on, true);
   assert.equal(rev?.tone, "warn");
+});
+
+test("needleAngle: an unknown reading has no needle (never parked at 0)", () => {
+  assert.equal(needleAngle(null, 600, 30), null);
+  assert.equal(needleAngle(Number.NaN, 600, 30), null);
+  assert.equal(needleAngle(0, 600, 30), -30);
+  assert.equal(needleAngle(300, 600, 30), 0);
+  assert.equal(needleAngle(900, 600, 30), 30); // clamped to full scale
 });

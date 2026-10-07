@@ -131,7 +131,7 @@ export function DialNote({ powerCeil, fwdCaution, fwdDanger, maxRefl }: {
 }) {
   return (
     <div className="ck-sub ck-dialnote">
-      Requested = the setpoint last sent. Same dials as the Dashboard: 0–{powerCeil} W (generator limit), caution{" "}
+      Requested = the last value written to the generator. Same dials as the Dashboard: 0–{powerCeil} W (generator limit), caution{" "}
       {fwdCaution ?? "—"} W, danger {fwdDanger ?? "—"} W · Reverse 0–{maxRefl} W, caution {maxRefl * 0.5}, danger {maxRefl * 0.8}.
     </div>
   );

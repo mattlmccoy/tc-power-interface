@@ -1,4 +1,4 @@
-import { gaugeAngle } from "../lib/instrument.ts";
+import { gaugeAngle, needleAngle } from "../lib/instrument.ts";
 
 interface Props {
   label: string;
@@ -39,8 +39,8 @@ function polar(deg: number, r: number): [number, number] {
 
 /** Faithful vacuum-gauge-style dial: off-screen pivot, flat arc, picket-fence ticks, long needle. */
 export function Gauge({ label, value, max, unit = "W", caution = null, danger = null }: Props) {
-  const v = value ?? 0;
-  const ang = gaugeAngle(v, 0, max, -THETA, THETA);
+  const known = value != null && Number.isFinite(value);
+  const ang = needleAngle(value, max, THETA); // null = unknown reading: no needle, not one parked at 0
   // Floating pointer: a short thick tapered needle just inside the arc (bottom truncated — it does
   // not reach the off-screen pivot), with a small hub at its base. It is drawn ONCE at the straight-
   // up reference (ang = 0) and rotated to `ang` with a CSS transform around the virtual pivot
@@ -111,7 +111,7 @@ export function Gauge({ label, value, max, unit = "W", caution = null, danger = 
   return (
     <div className="gauge-card">
       <div className="gauge-label">{label}</div>
-      <svg viewBox={`0 0 ${VBW} ${VBH}`} className="gauge-svg" role="img" aria-label={`${label} ${v}`}>
+      <svg viewBox={`0 0 ${VBW} ${VBH}`} className="gauge-svg" role="img" aria-label={`${label} ${known ? value : "unknown"}`}>
         {showYellow ? (
           <path
             d={arcAt(angW(yellowStart as number), angW(yellowEnd as number), zoneR)}
@@ -124,6 +124,7 @@ export function Gauge({ label, value, max, unit = "W", caution = null, danger = 
           <path d={arcAt(angW(dangerW as number), THETA, zoneR)} fill="none" stroke={RED} strokeWidth="5" />
         ) : null}
         {ticks}
+        {ang !== null && (
         <g
           className="gauge-needle"
           style={{
@@ -135,11 +136,12 @@ export function Gauge({ label, value, max, unit = "W", caution = null, danger = 
           <polygon points={needlePts} fill={NEEDLE} />
           <circle cx={CX} cy={baseY} r="4" fill={NEEDLE} />
         </g>
+        )}
       </svg>
       <div className="gauge-readout">
         {/* 1 decimal = the real value the generator reports (it delivers e.g. 120.5 W at a 120 W
             setpoint); rounding to a whole number showed a phantom +1 W vs the front panel. */}
-        {value === null ? "—" : v.toFixed(1)} <span className="gauge-unit">{unit}</span>
+        {known ? value.toFixed(1) : "—"} <span className="gauge-unit">{unit}</span>
       </div>
     </div>
   );
