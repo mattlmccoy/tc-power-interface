@@ -9,6 +9,7 @@ import {
   loadLayout,
   movePanel,
   normalizeLayout,
+  resetLayout,
   saveLayout,
   toggleCollapsed,
 } from "./layout.ts";
@@ -89,4 +90,12 @@ test("generatorSummary: temp text + tempBar color; unknown is never 0 °C", () =
   assert.match(s.color ?? "", /^hsl\(/);
   assert.deepEqual(generatorSummary(null, { temperature_c_trip: 60 }), { text: "internal temp —", color: null });
   assert.deepEqual(generatorSummary({ temperature_c: 30 }, undefined), { text: "internal temp 30.0 °C", color: null });
+});
+
+test("resetLayout returns a fresh copy of the default", () => {
+  const r = resetLayout();
+  assert.deepEqual(r, DEFAULT_LAYOUT);
+  assert.notEqual(r, DEFAULT_LAYOUT);
+  r.left.push("timer"); // mutable, and mutating it never touches the default
+  assert.equal(DEFAULT_LAYOUT.left.length, 5);
 });

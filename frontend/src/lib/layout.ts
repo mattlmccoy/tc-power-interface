@@ -72,6 +72,11 @@ export function toggleCollapsed(layout: Layout, id: PanelId): Layout {
   return { left: [...layout.left], right: [...layout.right], collapsed };
 }
 
+/** The default arrangement, as a fresh mutable copy. */
+export function resetLayout(): Layout {
+  return normalizeLayout(DEFAULT_LAYOUT);
+}
+
 export function loadLayout(storage: Storage | null): Layout {
   return normalizeLayout(loadSettings<Layout>(storage, LAYOUT_KEY)?.v ?? null);
 }
