@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from tc_power_interface.control.plant_estimator import GRID_S, PlantEstimate
 
-DEAD_TIME_S = 10.0  # provisional; Task 4 measures it on real runs
+DEAD_TIME_S = 0.0  # measured 2026-10-07: 0 s / 0 s on the 10-02 run (tools/flir/dead_time.py); 5 s grid, so really <= ~5 s
 MIN_TC_S = 30.0
 MAX_STEP_W = 10.0
 SETTLE_BAND_C = 1.0
