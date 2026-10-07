@@ -2,7 +2,7 @@
 
 Scaling per the SDS1000X-E programming guide:
 volts = code * VDIV/25 - OFST; time = -TDIV*14/2 + i/SARA.
-Unverified on FW 1.3.27 until real replies are captured (see tests/fixtures/scope/README.md).
+Verified against real SDS1202X-E FW 1.3.27 replies 2026-10-07 (see tests/fixtures/scope/README.md).
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ def parse_wf_block(raw: bytes) -> NDArray[np.int8]:
     i = raw.find(b"#9")
     if i < 0:
         raise ScopeCodecError("no #9 block header in waveform reply")
-    try:
-        n = int(raw[i + 2 : i + 11])
-    except ValueError as exc:
-        raise ScopeCodecError("bad #9 block length") from exc
+    digits = raw[i + 2 : i + 11]
+    if len(digits) != 9 or not digits.isdigit():
+        raise ScopeCodecError("bad #9 block length")
+    n = int(digits)
     data = raw[i + 11 : i + 11 + n]
     if len(data) != n:
         raise ScopeCodecError(f"short waveform block: {len(data)} of {n} bytes")

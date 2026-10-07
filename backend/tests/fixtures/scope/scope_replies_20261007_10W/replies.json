@@ -1,0 +1,9 @@
+{
+  "*IDN?": "Siglent Technologies,SDS1202X-E,SDS1EEFC902067,1.3.27\n",
+  "C1:ATTN?": "500\n",
+  "C1:VDIV?": "5.00E+01\n",
+  "C1:OFST?": "-6.00E+00\n",
+  "TDIV?": "1.00E-07\n",
+  "SARA?": "1.00E+09\n",
+  "TRMD?": "AUTO\n"
+}
