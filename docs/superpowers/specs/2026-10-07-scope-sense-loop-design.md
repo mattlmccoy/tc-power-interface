@@ -61,8 +61,10 @@ and expose it in `snapshot()` (needed by the level tracker; also useful in `tele
 ## Level assignment (decided: commanded setpoint, settled only)
 
 A reading gets `level_w = S` when: a setpoint S was commanded by TC-POWER this session, RF is on, and
-`|forward_w − S| ≤ tol_w` has held continuously for `≥ settle_s`. Defaults `tol_w = 0.5`, `settle_s = 3`,
-both settings. Otherwise `level_w` is blank and `level_state` says why: `no_setpoint`, `settling`,
+`|forward_w − S| ≤ tol_w` has held continuously for `≥ settle_s`. Defaults `tol_w = 1.0`, `settle_s = 3`,
+both settings. (Changed from 0.5 W during planning: real 10-06 telemetry reads +0.4…+0.6 W above the
+nominal step — 5.5, 10.5 … 90.4–90.6 W in `POWERSWEEP_core2_probe_..._telemetry.csv` — so 0.5 W would
+reject most 80/90 W rows.) Otherwise `level_w` is blank and `level_state` says why: `no_setpoint`, `settling`,
 `off_setpoint` (e.g. front-panel change), `rf_off`. Unassigned readings are still logged, never forced
 into a level.
 
