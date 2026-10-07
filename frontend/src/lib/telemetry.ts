@@ -52,6 +52,8 @@ export interface Snapshot {
   limits: Limits;
   /** Operator<->generator link heartbeat (absent on older backends). */
   link?: LinkBlock;
+  /** Last setpoint the server applied (controller.py); null until one is sent. Absent on older operators. */
+  last_setpoint_w?: number | null;
 }
 
 export interface DeviceInfo {

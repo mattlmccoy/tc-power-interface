@@ -5,6 +5,8 @@
 import type { DragEvent, ReactNode } from "react";
 
 import type { PanelId } from "../lib/layout.ts";
+import { summaryText } from "../lib/panelSummaries.ts";
+import type { Segment } from "../lib/panelSummaries.ts";
 
 export type DropWhere = "before" | "after";
 
@@ -12,7 +14,8 @@ interface DashPanelProps {
   id: PanelId;
   title: string;
   collapsed: boolean;
-  summary?: { text: string; color: string | null };
+  /** Key live numbers shown on the collapsed bar, most important first. */
+  summary?: Segment[];
   dragging: boolean;
   dropMark: DropWhere | null;
   onToggle: (id: PanelId) => void;
@@ -79,12 +82,16 @@ export function DashPanel(p: DashPanelProps) {
       {p.collapsed ? (
         <section className="panel panel-collapsed">
           <h2>{p.title}</h2>
-          {p.summary ? (
-            <span
-              className="panel-summary mono"
-              style={p.summary.color ? { color: p.summary.color } : undefined}
-            >
-              · {p.summary.text}
+          {p.summary?.length ? (
+            <span className="panel-summary" title={summaryText(p.summary)}>
+              {p.summary.map((seg, i) => (
+                <span key={i} className={`seg${seg.tone ? ` tone-${seg.tone}` : ""}`}>
+                  {seg.label ? <span className="seg-label">{seg.label} </span> : null}
+                  <span className="seg-val" style={seg.color ? { color: seg.color } : undefined}>
+                    {seg.text}
+                  </span>
+                </span>
+              ))}
             </span>
           ) : null}
         </section>
