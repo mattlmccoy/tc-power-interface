@@ -36,6 +36,9 @@ export function App() {
   const aid = useMatchAid(op.t, op.status?.recording?.run ?? null); // App level: survives tab switches; drift is per run
   const mapCapture = useMapCapture(op, vna);
   const inVna = !!op.status?.vna_session?.active;
+  const deviceText =
+    (device?.id ? `${device.id} · ${device.serial ?? ""}` : "no device") +
+    (device?.frequency_hz ? ` · ${(device.frequency_hz / 1e6).toFixed(2)} MHz` : "");
   // Site mode only: when the local operator can't be reached after repeated WS-connect failures (e.g.
   // the PC rebooted and nothing restarted it), replace the tab views with a panel that shows the
   // command to start it.
@@ -54,12 +57,14 @@ export function App() {
     <div className={`app ${showHelp ? "" : "help-off"}`}>
       <UpdateBanner />
       <header className="topbar">
-        <span className="brand">
-          T<span className="amp">&amp;</span>C Power Interface
+        <span className="brand" title="T&C Power Interface">
+          <span className="brand-name">
+            T<span className="amp">&amp;</span>C Power<span className="brand-rest"> Interface</span>
+          </span>
+          <span className="brand-abbr" aria-hidden="true">TCP</span>
         </span>
-        <span className="device">
-          {device?.id ? `${device.id} · ${device.serial ?? ""}` : "no device"}
-          {device?.frequency_hz ? ` · ${(device.frequency_hz / 1e6).toFixed(2)} MHz` : ""}
+        <span className="device" title={deviceText}>
+          {deviceText}
         </span>
         <span className="build" title={`${VERSION_FULL} — matches the 'build' field in saved logs`}>
           <span className="ver">{VERSION_LABEL}</span> · {BUILD_ID.split(" · ")[0]}
@@ -97,14 +102,14 @@ export function App() {
               : "Turn on audible alerts (alarm on faults, chime on reflected-power warnings)"
           }
         >
-          {alerts.enabled ? "🔔" : "🔕"} Alerts
+          {alerts.enabled ? "🔔" : "🔕"}<span className="btn-lbl"> Alerts</span>
         </button>
         <button
           className={`help-toggle ${showHelp ? "on" : ""}`}
           onClick={toggleHelp}
           title={showHelp ? "Hide explanatory text" : "Show explanatory text"}
         >
-          ? Help
+          ?<span className="btn-lbl"> Help</span>
         </button>
         <ConnectBar
           pillState={pillState}
