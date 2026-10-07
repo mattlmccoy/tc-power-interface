@@ -24,28 +24,6 @@ export interface ScopeStatus {
   stale?: boolean;
 }
 
-const DASH = "—";
-
-export function scopeHeadline(st: ScopeStatus | undefined) {
-  const r = st?.latest;
-  if (!st || !st.status.connected || !r) {
-    const why = st?.status.error ? ` · ${st.status.error}` : "";
-    return { state: `scope: no data${why}`, vrms: DASH, b: DASH, f0: DASH, pkpk: DASH, h2: DASH, level: DASH };
-  }
-  if (st.stale) {
-    return { state: "scope: stalled — no fresh data", vrms: DASH, b: DASH, f0: DASH, pkpk: DASH, h2: DASH, level: DASH };
-  }
-  return {
-    state: `scope: live${st.status.rate_hz ? ` · ${st.status.rate_hz} Hz` : ""}`,
-    vrms: r.vrms_v == null ? DASH : `${r.vrms_v.toFixed(1)} V`,
-    b: r.b_pk_mt == null ? DASH : `${r.b_pk_mt.toFixed(2)} mT`,
-    f0: r.f0_hz == null ? DASH : `${(r.f0_hz / 1e6).toFixed(3)} MHz`,
-    pkpk: `${(r.vmax_v - r.vmin_v).toFixed(0)} V`,
-    h2: r.h2_pct == null ? DASH : `${r.h2_pct.toFixed(2)} %`,
-    level: r.level_w == null ? r.level_state.replaceAll("_", " ") : `${r.level_w} W`,
-  };
-}
-
 const FLAGS: Record<string, { text: string; severity: "danger" | "caution" }> = {
   flux_stop: { text: "Flux at/above stop limit", severity: "danger" },
   probe_hard: { text: "Probe at/above hard voltage limit", severity: "danger" },
@@ -60,7 +38,11 @@ export function flagLabel(f: string) {
   return FLAGS[f] ?? { text: f, severity: "caution" as const };
 }
 
-export interface LevelRow { level_w: number; n: number; vrms_median_v: number; b_median_mt: number | null }
+export interface LevelRow {
+  level_w: number; n: number; vrms_median_v: number; b_median_mt: number | null;
+  /** median Vrms / sqrt(level), as backend analysis/scope_summary.py summarize_levels(). */
+  v_per_sqrtw: number; h2_median_pct: number | null;
+}
 
 const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
@@ -71,12 +53,14 @@ const median = (xs: number[]) => {
 export function levelRows(readings: ScopeReading[]): LevelRow[] {
   const by = new Map<number, ScopeReading[]>();
   for (const r of readings) {
-    if (!r.valid || r.level_w == null || r.vrms_v == null) continue;
+    if (!r.valid || r.level_w == null || r.level_w <= 0 || r.vrms_v == null) continue;
     by.set(r.level_w, [...(by.get(r.level_w) ?? []), r]);
   }
   return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([level_w, rs]) => {
     const bs = rs.map((r) => r.b_pk_mt).filter((b): b is number => b != null);
-    return { level_w, n: rs.length, vrms_median_v: median(rs.map((r) => r.vrms_v as number)),
-      b_median_mt: bs.length ? median(bs) : null };
+    const h2s = rs.map((r) => r.h2_pct).filter((h): h is number => h != null);
+    const vmed = median(rs.map((r) => r.vrms_v as number));
+    return { level_w, n: rs.length, vrms_median_v: vmed, b_median_mt: bs.length ? median(bs) : null,
+      v_per_sqrtw: vmed / Math.sqrt(level_w), h2_median_pct: h2s.length ? median(h2s) : null };
   });
 }

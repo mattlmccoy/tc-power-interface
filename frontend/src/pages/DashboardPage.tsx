@@ -60,6 +60,8 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
             <GeneratorPanel t={t} limits={limits} device={device} />
 
             <HistoryPanel plot={plot} powerCeil={powerCeil} />
+
+            <SenseLoopPanel scope={op.scope} />
           </div>
 
           <div className="col">
@@ -114,8 +116,6 @@ export function DashboardPage({ op, aid }: { op: Operator; aid: MatchAid }) {
               startTimer={startTimer}
               stopTimer={stopTimer}
             />
-
-            <SenseLoopPanel scope={op.scope} />
 
             <RecordingPanel
               controllable={controllable}

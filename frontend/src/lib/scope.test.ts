@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { flagLabel, levelRows, scopeHeadline } from "./scope.ts";
+import { flagLabel, levelRows } from "./scope.ts";
+import { heroModel, levelCard, scopePill } from "./scopeView.ts";
 import type { ScopeReading, ScopeStatus } from "./scope.ts";
 
 const base: ScopeReading = {
@@ -10,25 +11,25 @@ const base: ScopeReading = {
   b_pk_mt: 5.27, attn: 50, flags: "", valid: true,
 };
 
-test("scopeHeadline: no data is never shown as zeros", () => {
+test("scope view: no data is never shown as zeros", () => {
   const st = { status: { connected: false, error: "OSError: usb stall" }, latest: null } as unknown as ScopeStatus;
-  assert.equal(scopeHeadline(st).vrms, "—");
-  assert.match(scopeHeadline(st).state, /no data/);
-  assert.match(scopeHeadline(st).state, /usb stall/);
+  assert.equal(heroModel(st).vrms.value, null);
+  assert.equal(scopePill(st).kind, "error"); // design: an error is its own state, not "no data"
+  assert.match(scopePill(st).detail ?? "", /usb stall/);
 });
 
-test("scopeHeadline: undefined scope (old backend) is no data", () => {
-  assert.equal(scopeHeadline(undefined).vrms, "—");
-  assert.match(scopeHeadline(undefined).state, /no data/);
+test("scope view: undefined scope (old backend) is no data", () => {
+  assert.equal(heroModel(undefined).vrms.value, null);
+  assert.match(scopePill(undefined).text, /no data/);
 });
 
-test("scopeHeadline: formats a live reading", () => {
+test("scope view: formats a live reading", () => {
   const st = { status: { connected: true, error: null, rate_hz: 2.1 }, latest: base } as unknown as ScopeStatus;
-  const h = scopeHeadline(st);
-  assert.equal(h.vrms, "50.1 V");
-  assert.equal(h.b, "5.27 mT");
-  assert.equal(h.f0, "13.560 MHz");
-  assert.equal(h.level, "50 W");
+  const h = heroModel(st);
+  assert.equal(h.vrms.value, "50.1"); // unit now rendered separately by the hero card
+  assert.equal(h.b.value, "5.27");
+  assert.equal(h.f0, "13.560");
+  assert.equal(levelCard(st).big, "50 W");
 });
 
 test("flagLabel: hard flags are loud", () => {
@@ -44,14 +45,14 @@ test("levelRows: accumulates per level from readings, ignores invalid/unassigned
   assert.equal(rows[0].level_w, 50);
 });
 
-test("scopeHeadline: stale snapshot is stalled, never live values", () => {
+test("scope view: stale snapshot is stalled, never live values", () => {
   const st = { status: { connected: true, error: null, rate_hz: 2.1 }, latest: base, stale: true } as unknown as ScopeStatus;
-  const h = scopeHeadline(st);
-  assert.equal(h.state, "scope: stalled — no fresh data");
-  assert.equal(h.vrms, "—");
-  assert.equal(h.b, "—");
+  const h = heroModel(st);
+  assert.equal(scopePill(st).text, "stalled");
+  assert.equal(h.vrms.value, null);
+  assert.equal(h.b.value, null);
   assert.equal(h.f0, "—");
   assert.equal(h.pkpk, "—");
   assert.equal(h.h2, "—");
-  assert.equal(h.level, "—");
+  assert.equal(levelCard(st).big, "—");
 });
