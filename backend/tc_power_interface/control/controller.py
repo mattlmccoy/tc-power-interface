@@ -22,6 +22,7 @@ from typing import Any
 
 from tc_power_interface.control.safety import SafetyDecision, SafetyLimits, evaluate
 from tc_power_interface.device.base import Telemetry
+from tc_power_interface.protocol.codec import InvalidStatusWord
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,11 @@ class Controller:
         #: RF-ON case never waits for this: it faults on the first failure (protection).
         self.link_loss_reads = link_loss_reads
         self._read_failures = 0
+        #: Consecutive reads whose status word had undefined bits (codec.InvalidStatusWord, e.g.
+        #: the real 0xFFFF of 2026-10-07). The FIRST in a row is a glitch and is discarded; a SECOND
+        #: is a persisting garbled link and goes through _on_read_failure (fail safe). Only a good
+        #: read resets it (and a detach / link drop, so a new link starts clean).
+        self._invalid_status_reads = 0
         #: Consecutive LATE-but-successful reads (idle gap > telemetry_timeout_s) needed before the
         #: staleness watchdog faults. Debounces a single stalled poll cycle (e.g. a disk/flush
         #: hiccup) so it never faults a healthy run; 1 restores the original trip-on-first behavior.
@@ -253,6 +259,7 @@ class Controller:
             self.latest_decision = None
             self.fault_reasons = ()
         self._last_sample_monotonic = None
+        self._invalid_status_reads = 0  # the next link starts with a clean glitch streak
 
     def _require_device(self) -> None:
         if self.device is None:
@@ -270,11 +277,17 @@ class Controller:
         try:
             with self._io_lock:
                 telemetry = self.device.read_telemetry()
+        except InvalidStatusWord as exc:
+            if self._on_invalid_status(exc):
+                return  # discarded glitch: no state change, no fake sample to listeners
+            self._notify()
+            return
         except Exception as exc:  # noqa: BLE001 - a read failure is a lost link, or (RF-on) a protection event
             self._on_read_failure(exc)
             self._notify()
             return
         self._read_failures = 0  # a good read clears the link-loss debounce
+        self._invalid_status_reads = 0
 
         # Staleness = the IDLE GAP between reads (a stalled/starved poll loop), NOT the duration of
         # the read itself. A single real read is three sequential CXN round-trips over a slow, flaky
@@ -334,6 +347,27 @@ class Controller:
                 return True
             return False
 
+    def _on_invalid_status(self, exc: InvalidStatusWord) -> bool:
+        """Handle a status word with undefined bits. Returns True if the read was DISCARDED.
+
+        The first in a row is discarded (the 2026-10-07 0xFFFF: one garbled word in a frame whose
+        power and temperature were sane): no fault, latest_telemetry/decision untouched, listeners
+        not notified (so the auto-logger never sees a phantom RF-on edge), and it does not count
+        toward link loss. A second consecutive one means the link is persistently garbled, so it is
+        treated exactly like a read failure (RF on -> loud FAULT now; RF off -> link-loss debounce).
+        """
+        self._invalid_status_reads += 1
+        if self._invalid_status_reads == 1:
+            logger.warning("discarded invalid status read (first in a row): %s", exc)
+            return True
+        logger.warning(
+            "invalid status read #%d in a row, treating as a read failure: %s",
+            self._invalid_status_reads,
+            exc,
+        )
+        self._on_read_failure(exc)
+        return False
+
     def _on_read_failure(self, exc: Exception) -> None:
         """Classify a telemetry read failure — the fix for a turned-off generator latching a stuck
         FAULT. If the last known sample had RF ON, the generator may still be delivering power with
@@ -382,6 +416,7 @@ class Controller:
             self.fault_reasons = ()
         self._last_sample_monotonic = None
         self._read_failures = 0
+        self._invalid_status_reads = 0
         hook = self.on_link_dropped
         if hook is not None:
             try:

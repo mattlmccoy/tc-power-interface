@@ -20,6 +20,8 @@ RF safety: this module only *builds bytes*. Nothing here opens a port or enables
 from __future__ import annotations
 
 import enum
+import functools
+import operator
 import struct
 from dataclasses import dataclass
 
@@ -51,6 +53,21 @@ class Status(enum.IntFlag):
     OVER_TEMPERATURE = 1024  # bit 10
     INTERLOCK_OPEN = 2048  # bit 11
     ANALOG_INTERFACE = 16384  # bit 14
+
+
+#: OR of every DEFINED status bit (0,4,5,6,8,9,10,11,14 = 0x4F71), per the reference bit map
+#: (PyMeasure tccxn.py:238-261; plan/notes.md:71-74). A word with any bit OUTSIDE this mask is not
+#: a real status report. Evidence: on 2026-10-07 13:25:06 the real AG 0613 returned one
+#: checksum-valid GS frame whose status word was 0xFFFF (undefined bits 1,2,3,7,12,13,15 set) while
+#: the same frame's temperature was a sane 23.0 C and forward power 0 W; the next read 0.6 s later
+#: was 0. Believing it latched a false OVER_TEMPERATURE + INTERLOCK_OPEN FAULT and a phantom RF-on.
+#: Across all 54 recorded runs on this unit it is the only word ever seen with an undefined bit.
+STATUS_DEFINED_MASK: int = functools.reduce(operator.or_, (int(f) for f in Status), 0)
+
+
+class InvalidStatusWord(ValueError):  # noqa: N818 - name fixed by the hotfix design
+    """A ``GS`` status word with bits outside :data:`STATUS_DEFINED_MASK` — an invalid read, never
+    real alarms. The controller decides how to treat it (discard once, fail safe if it persists)."""
 
 
 #: Operation-mode word (GS bytes [4:6]) -> name. 2 is documented as invalid.
@@ -118,8 +135,17 @@ def parse_power(data: bytes) -> tuple[float, float, float]:
 
 
 def parse_status(data: bytes) -> Status:
-    """Parse the status word (bytes [0:2] of a ``GS`` response)."""
-    return Status(struct.unpack(">H", data[:2])[0])
+    """Parse the status word (bytes [0:2] of a ``GS`` response).
+
+    :raises InvalidStatusWord: if any bit outside :data:`STATUS_DEFINED_MASK` is set (e.g. 0xFFFF).
+    """
+    word: int = struct.unpack(">H", data[:2])[0]
+    if word & ~STATUS_DEFINED_MASK:
+        raise InvalidStatusWord(
+            f"status word 0x{word:04X} has undefined bits 0x{word & ~STATUS_DEFINED_MASK:04X} "
+            f"set (defined mask 0x{STATUS_DEFINED_MASK:04X}) — invalid read, not real alarms"
+        )
+    return Status(word)
 
 
 def parse_temperature(data: bytes) -> float:

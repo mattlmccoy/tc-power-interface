@@ -145,3 +145,13 @@ class TestProtocolErrors:
     def test_device_raises_on_nack(self, device: CxnDevice):
         with pytest.raises(ValueError):
             device._query(b"ZZ\x00\x00\x00\x00")  # unsupported command
+
+
+class TestInvalidStatusWordPropagates:
+    def test_read_telemetry_propagates_invalid_status_word(self, device: CxnDevice):
+        """The device layer must not swallow (or 'repair') a garbage status word: the controller
+        owns the discard-once / fail-safe-on-repeat policy, so the exception must reach it."""
+        device.request_control()
+        device.transport._status_word = lambda: 0xFFFF  # type: ignore[method-assign]
+        with pytest.raises(codec.InvalidStatusWord):
+            device.read_telemetry()
