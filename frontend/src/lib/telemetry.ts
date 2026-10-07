@@ -1,5 +1,6 @@
 // Telemetry types (mirror of the backend snapshot JSON) + a small ring buffer for plots.
 
+import type { LinkBlock, RfClockBlock } from "./heartbeat.ts";
 import type { ScopeStatus } from "./scope.ts";
 
 export interface Telemetry {
@@ -49,6 +50,8 @@ export interface Snapshot {
   warnings: string[];
   telemetry: Telemetry | null;
   limits: Limits;
+  /** Operator<->generator link heartbeat (absent on older backends). */
+  link?: LinkBlock;
 }
 
 export interface DeviceInfo {
@@ -203,6 +206,8 @@ export interface Status {
   /** VNA pre-run auto-tune interlock: while `active`, RF-enable is refused (409). `stale` marks a
    * lost heartbeat (reported, but only an explicit End clears the session). */
   vna_session?: { active: boolean; stale: boolean; age_s: number | null };
+  /** RF on-time clock: current burn, last burn, RF-on total in the run (absent on older backends). */
+  rf_clock?: RfClockBlock;
 }
 
 export interface Point {

@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import platform
+import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +38,7 @@ from tc_power_interface.control.match_tuner import (
 from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, RampPlan
 from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
 from tc_power_interface.control.pulse import PULSE_BOUNDS, PulseController, PulsePlan
+from tc_power_interface.control.rf_clock import RfClock
 from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
@@ -58,6 +60,8 @@ from tc_power_interface.integration.scope_hub import ScopeHub
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
 
 API_VERSION = "0.1"
+#: The RF clock is marked stale when the last good generator read is older than this (s).
+_RF_CLOCK_STALE_S = 5.0
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2].parent / "frontend" / "dist"
 
 
@@ -336,6 +340,15 @@ def create_app(
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
+        # RF on-time clock (display-only). After _auto_log so an auto-started run is seen on the
+        # same tick; getattr because polling starts before app.state.current_run is first set.
+        rf_clock = RfClock()
+        app.state.rf_clock = rf_clock
+        controller.add_listener(lambda snap: rf_clock.update(
+            time.monotonic(),
+            (snap.get("telemetry") or {}).get("rf_on"),
+            getattr(app.state, "current_run", None),
+        ))
         controller.add_listener(lambda snap: recorder.record(
             {**snap, "thermal": thermal.snapshot(), "scope": scope_hub.recording_fields()}))
         controller.add_listener(scope_hub.on_snapshot)
@@ -508,6 +521,7 @@ def create_app(
         drivers AND clear the device metadata, so the UI shows a clean 'no device / disconnected'
         instead of the pill going grey while the top bar still names the (now absent) generator."""
         _stop_all_features()
+        app.state.rf_clock.reset_link()  # the next generator starts with an unknown RF state
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
@@ -532,6 +546,12 @@ def create_app(
     def _status_payload() -> dict[str, Any]:
         rec = _recorder()
         ctrl_snap = _controller().snapshot()
+        link_age = ctrl_snap["link"]["last_ok_age_s"]
+        rf_clock_snap = app.state.rf_clock.snapshot(
+            time.monotonic(),
+            link_ok=link_age is not None and link_age <= _RF_CLOCK_STALE_S,
+            attached=ctrl_snap["state"] in ("connected", "fault"),
+        )
         return {
             "device": app.state.device_info,
             "controller": ctrl_snap,
@@ -560,6 +580,7 @@ def create_app(
             # Surface the VNA-session interlock at the top level too (mirrors `match_tuner`), so the
             # frontend banner/panel read `status.vna_session`; the same block stays in `controller`.
             "vna_session": ctrl_snap["vna_session"],
+            "rf_clock": rf_clock_snap,
         }
 
     @app.get("/api/status")
@@ -600,6 +621,7 @@ def create_app(
                 device = CxnDevice(create_transport("simulated"))
             else:
                 raise HTTPException(400, f"unknown backend {req.backend!r}")
+            app.state.rf_clock.reset_link()  # a new link starts with an unknown RF state
             _controller().attach_device(device, backend=req.backend)
         except HTTPException:
             raise
@@ -616,6 +638,7 @@ def create_app(
         every driver first so nothing is left 'running' with no device attached."""
         _stop_all_features()
         _controller().detach_device()
+        app.state.rf_clock.reset_link()
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}

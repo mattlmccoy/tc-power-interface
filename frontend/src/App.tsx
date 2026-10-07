@@ -2,12 +2,15 @@ import { useEffect, useRef } from "react";
 import { Banners } from "./components/Banners.tsx";
 import { ConnectBar } from "./components/ConnectBar.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
+import { LinkHeartbeat } from "./components/LinkHeartbeat.tsx";
+import { RfClock } from "./components/RfClock.tsx";
 import { SetupHelp } from "./components/SetupHelp.tsx";
 import { StartupModal } from "./components/StartupModal.tsx";
 import { SafetyRail } from "./components/SafetyRail.tsx";
 import { Toast } from "./components/Toast.tsx";
 import { UpdateBanner } from "./components/UpdateBanner.tsx";
 import { useOperator } from "./hooks/useOperator.ts";
+import { appHealth } from "./lib/heartbeat.ts";
 import { SITE_MODE } from "./lib/api.ts";
 import { shouldShowSetupHelp } from "./lib/setupHelp.ts";
 import { ClosedLoopPage } from "./pages/ClosedLoopPage.tsx";
@@ -62,6 +65,13 @@ export function App() {
           <span className="ver">{VERSION_LABEL}</span> · {BUILD_ID.split(" · ")[0]}
         </span>
         <span className="spacer" />
+        <RfClock clock={op.status?.rf_clock} appAlive={appHealth(op.msSinceMsg).tone === "ok"} />
+        <LinkHeartbeat
+          link={op.status?.controller.link}
+          connected={connected}
+          msgSeq={op.msgSeq}
+          msSinceMsg={op.msSinceMsg}
+        />
         {!inVna && (
           <span className="viewtabs">
             <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>

@@ -620,3 +620,25 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .layout-reset button { background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer;
   text-decoration: underline; }
 .layout-reset button:hover { color: var(--fg); }
+
+/* ==========================================================================================
+   Top bar: RF on-time clock + GEN/APP link heartbeat (feat/heartbeat-clock, v0.17.3).
+   Self-contained block appended at the end of the file.
+   ========================================================================================== */
+.rfclock { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; margin-right: 12px; }
+.rfclock-live { color: var(--live); font-weight: 600; }
+.rfclock-muted { color: var(--muted); }
+.rfclock-warn { color: var(--warn); opacity: 0.8; }
+.hb { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; cursor: help;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--muted); }
+.hb-item { display: inline-flex; align-items: center; gap: 4px; }
+.hb-led { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: 0.45;
+  animation: hb-blink 150ms ease-out; }
+.hb-ok .hb-led { background: var(--live); opacity: 0.55; }
+.hb-slow .hb-led { background: var(--warn); opacity: 0.8; }
+.hb-dead .hb-led { background: var(--err); opacity: 1; animation: none; }
+.hb-unknown .hb-led { animation: none; }
+.hb-dead .hb-name { color: var(--err); }
+.hb-age { min-width: 4.5em; font-variant-numeric: tabular-nums; }
+@keyframes hb-blink { 0% { opacity: 1; box-shadow: var(--live-glow); } 100% { box-shadow: none; } }
