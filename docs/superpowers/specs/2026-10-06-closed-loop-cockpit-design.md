@@ -23,6 +23,7 @@ Data findings this builds on: `docs/superpowers/notes/2026-10-06-closed-loop-dat
 | D10 | (2026-10-07) Power is read on the **Dashboard's analog dials** (Requested, Forward, Load, Reverse), not digital cards. Power is set with the Dashboard's setpoint entry. Tune/Load −/+ are large and always visible. Tuning stays **manual**: no auto-retune until the transformer-temperature interlock exists. |
 | D11 | (2026-10-07) The control ROI is **picked from the live FLIR ROIs**, or from the ROIs recorded in a run when replaying. Replay can re-run the shadow loop on a different ROI, so every ROI's temperature is recorded. |
 | D12 | (2026-10-07) Temperature-loop control comes in **two steps**. This build (v0.17) shows the loop's slot and gates with Engage locked. The next build (v0.18) adds the core interlock; Engage then unlocks once the shadow loop has proven itself on a few real runs at power. |
+| D13 | (2026-10-07) The **legacy auto thermal loop is refused** by the API until v0.18 (`POST /api/thermal/start {"mode":"auto"}` → 409; advisory still works). A review found it could still drive power (25 → 50 W on the simulator) while the cockpit said "engage locked". |
 
 ## 2. Data contracts (evidence)
 
