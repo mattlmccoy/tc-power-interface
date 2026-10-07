@@ -54,7 +54,8 @@ SOURCE_NAME = ".thermal_source.json"
 def load_source(root: Path, *, default_type: str) -> dict[str, str | None]:
     """The operator's temperature-source choice: ``{"type": "flir"|"simulated", "roi": name|None}``.
 
-    No ROI name is ever invented: FLIR ROIs are redrawn between prints (``circle_medium_small`` existed
+    No ROI name is ever invented: FLIR ROIs are redrawn between prints (``circle_medium_small``
+    existed
     on 09-08 and not after), so until the operator picks one the ROI is None and the loop says so.
     """
     try:
@@ -68,4 +69,6 @@ def load_source(root: Path, *, default_type: str) -> dict[str, str | None]:
 
 def save_source(root: Path, source: dict[str, str | None]) -> None:
     Path(root).mkdir(parents=True, exist_ok=True)
-    (Path(root) / SOURCE_NAME).write_text(json.dumps({"type": source.get("type"), "roi": source.get("roi")}))
+    (Path(root) / SOURCE_NAME).write_text(
+        json.dumps({"type": source.get("type"), "roi": source.get("roi")})
+    )

@@ -39,8 +39,10 @@ def test_ramp_start_drives_the_setpoint(tmp_path):
         c.post("/api/rf/enable")  # ramp only advances while RF is energised
         c.post("/api/ramp/start")
         # It drives the setpoint up off init while RF is on. We assert a modest level reached in the
-        # first ticks (robust: the sim's protection can later trip RF on the imperfect default match,
-        # after which the ramp holds — that hold is covered by test_ramp_holds_while_rf_off; the full
+        # first ticks (robust: the sim's protection can later trip RF on the imperfect default
+        # match,
+        # after which the ramp holds — that hold is covered by test_ramp_holds_while_rf_off; the
+        # full
         # climb to target is covered by the RampController unit test).
         reached = False
         deadline = time.monotonic() + 3

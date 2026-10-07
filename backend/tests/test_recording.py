@@ -181,7 +181,10 @@ def test_unknown_control_temperature_is_recorded_blank_not_zero(tmp_path):
     path = rec.start("unknown_temp", {})
     s = snap(fwd=40.0, rf=True, ts=1)
     s["thermal"] = {"running": False, "phase": "ramp", "mode": "advisory", "armed": False,
-                    "control_temp_c": None, "target_c": 185.0, "recommended_w": 0.0, "applied_w": None}
+                    "control_temp_c": None,
+                    "target_c": 185.0,
+                    "recommended_w": 0.0,
+                    "applied_w": None}
     rec.record(s)
     rec.stop()
     rows = (path / "telemetry.csv").read_text().strip().splitlines()
