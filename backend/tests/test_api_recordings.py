@@ -1,5 +1,7 @@
 """Tests for recording export (list + CSV download) and auto-log-on-RF-on."""
 
+import json
+import threading
 import time
 
 from fastapi.testclient import TestClient
@@ -71,3 +73,76 @@ def test_auto_log_off_does_not_start(tmp_path):
         c.post("/api/rf/enable")
         time.sleep(0.4)
         assert c.get("/api/recording/status").json()["active"] is False
+
+
+def _wait_active(c, want=True, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if c.get("/api/recording/status").json()["active"] is want:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_link_drop_stops_an_auto_started_recording(tmp_path):
+    # 2026-10-06: run 20261006_164701 stayed open 14+ min with no rows after the generator died.
+    with _client(tmp_path) as c:
+        c.post("/api/rf/enable")
+        assert _wait_active(c, True)
+        run = c.get("/api/recording/status").json()["run"]
+        c.app.state.controller.on_link_dropped()
+        assert c.get("/api/recording/status").json() == {"active": False, "run": None}
+        run_dir = tmp_path / run
+        assert (run_dir / "manifest.json").exists()  # stopped cleanly: complete manifest
+        labels = [e["label"] for e in json.loads((run_dir / "events.json").read_text())]
+        assert "recording_stopped_link_lost" in labels
+        assert labels.index("recording_stopped_link_lost") < labels.index("recording_stopped")
+
+
+def test_link_drop_leaves_a_manual_recording_alone(tmp_path):
+    with _client(tmp_path) as c:
+        c.post("/api/recording/start", json={"name": "manual", "notes": ""})
+        c.app.state.controller.on_link_dropped()
+        assert c.get("/api/recording/status").json()["active"] is True
+
+
+def test_manual_recording_after_an_auto_run_is_left_alone(tmp_path):
+    with _client(tmp_path) as c:
+        c.post("/api/rf/enable")
+        assert _wait_active(c, True)
+        c.post("/api/recording/stop")
+        assert _wait_active(c, False)
+        c.post("/api/recording/start", json={"name": "manual", "notes": ""})
+        c.app.state.controller.on_link_dropped()
+        assert c.get("/api/recording/status").json()["active"] is True
+
+
+def test_concurrent_stops_finalize_exactly_once(tmp_path):
+    # The poll thread (link drop) and an HTTP thread (operator Stop) can stop at the same moment.
+    from tc_power_interface.recording.recorder import TelemetryRecorder
+
+    rec = TelemetryRecorder(tmp_path)
+    run_dir = rec.start("race", {})
+    real_event = rec.event
+
+    def _slow_event(label, data=None):  # widen the check-then-act window: reproducible race
+        real_event(label, data)
+        if label == "recording_stopped":
+            time.sleep(0.05)
+
+    rec.event = _slow_event
+    barrier = threading.Barrier(8)
+    results = []
+
+    def _stop():
+        barrier.wait()
+        results.append(rec.stop())
+
+    threads = [threading.Thread(target=_stop) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert [r for r in results if r is not None] == [run_dir]  # exactly one finalizer
+    events = json.loads((run_dir / "events.json").read_text())
+    assert [e["label"] for e in events].count("recording_stopped") == 1

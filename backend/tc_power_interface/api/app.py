@@ -311,6 +311,7 @@ def create_app(
             experiments_root, max_forward_w=active_limits.max_forward_w
         )
         app.state.current_run = None  # set before the listeners can fire (the observer reads it)
+        app.state.current_run_auto = False  # True only for a run the auto-log started
         app.state.flir_roi_url = f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
         initial_source: Any = SimulatedThermalSource()
         app.state.thermal_source = "simulated"
@@ -347,6 +348,7 @@ def create_app(
                     {"notes": "auto-logged on RF-on", "backend": backend, "auto": True},
                 )
                 app.state.current_run = run_dir.name
+                app.state.current_run_auto = True
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
@@ -597,6 +599,14 @@ def create_app(
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
+        # The generator is gone: an auto-started run would sit open with no rows (2026-10-06, run
+        # 20261006_164701, 14+ min). A run the operator started by hand is theirs to stop.
+        rec = _recorder()
+        if rec.state is RecorderState.RECORDING and app.state.current_run_auto:
+            rec.event("recording_stopped_link_lost", {})
+            rec.stop()
+            app.state.current_run = None
+            app.state.current_run_auto = False
 
     def _presets_payload() -> dict[str, Any]:
         return {
@@ -1174,6 +1184,7 @@ def create_app(
             },
         )
         app.state.current_run = run_dir.name
+        app.state.current_run_auto = False  # operator-chosen: a link drop leaves it alone
         return {"run": run_dir.name}
 
     @app.post("/api/recording/stop")
@@ -1182,6 +1193,7 @@ def create_app(
         run = app.state.current_run
         rec.stop()
         app.state.current_run = None
+        app.state.current_run_auto = False
         return {"run": run, "stopped": True}
 
     @app.get("/api/recording/status")

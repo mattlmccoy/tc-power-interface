@@ -128,6 +128,9 @@ class TelemetryRecorder:
         self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._writer_thread: threading.Thread | None = None
         self._writer_stop = threading.Event()
+        # stop() can be reached from the poll thread (link drop) and an HTTP thread (operator Stop)
+        # at once; the lock makes exactly one of them finalize the run (the other returns None).
+        self._stop_lock = threading.Lock()
 
     def start(self, name: str, metadata: dict[str, Any]) -> Path:
         if self.state is RecorderState.RECORDING:
@@ -263,6 +266,10 @@ class TelemetryRecorder:
         )
 
     def stop(self) -> Path | None:
+        with self._stop_lock:
+            return self._stop_locked()
+
+    def _stop_locked(self) -> Path | None:
         if self.state is not RecorderState.RECORDING or self._dir is None:
             return None
         run_dir = self._dir
