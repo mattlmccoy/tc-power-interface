@@ -424,6 +424,7 @@ export function useOperator() {
   const thermal = status?.thermal;
   const ramp = status?.ramp;
   const timer = status?.timer;
+  const scope = status?.scope;
   const presets = status?.presets;
   const presetEntries = presets
     ? Object.entries(presets.slots)
@@ -789,7 +790,7 @@ export function useOperator() {
     flirUrlInput, setFlirUrlInput, flirEnabled, flirLast, applyFlirUrl, toggleFlirEnabled,
     thermalMode, setThermalMode, thermalFlirUrl, setThermalFlirUrl, startThermal, stopThermal,
     armThermal, disarmThermal, applyThermalSource, applyControlRoi, pulseForm, setPulseForm,
-    startPulse, stopPulse, plot, ctrl, t, limits, device, recording, thermal, ramp, timer, presets,
+    startPulse, stopPulse, plot, ctrl, t, limits, device, recording, thermal, ramp, timer, scope, presets,
     pulse, mt, presetEntries, connected, armed, controllable, faulted, pillState, handshake,
     maxRefl, reflW, zone, reflFillPct, powerCeil, fwdCaution, fwdDanger, requested, textInputStyle,
     base, baseInput, setBaseInput, applyBase, showConnect, setShowConnect, ports, connectBusy,

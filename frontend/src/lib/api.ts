@@ -137,6 +137,11 @@ export const api = {
   saveRamp: (v: RampForm) => put("/api/ramp", v),
   rampStart: () => post("/api/ramp/start"),
   rampStop: () => post("/api/ramp/stop"),
+  /** Raw Response so the caller can show the 503 "VISA unavailable" detail. */
+  scopeResources: (): Promise<Response> => fetch(apiUrl(BASE, "/api/scope/resources")),
+  scopeSettings: (body: Record<string, unknown>) => post("/api/scope/settings", body),
+  scopeConnect: () => post("/api/scope/connect"),
+  scopeDisconnect: () => post("/api/scope/disconnect"),
   timer: async (): Promise<TimerConfig> => (await fetch(apiUrl(BASE, "/api/timer"))).json(),
   saveTimer: (minutes: number) => put("/api/timer", { minutes }),
   timerStart: () => post("/api/timer/start"),

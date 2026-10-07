@@ -1,5 +1,7 @@
 // Telemetry types (mirror of the backend snapshot JSON) + a small ring buffer for plots.
 
+import type { ScopeStatus } from "./scope.ts";
+
 export interface Telemetry {
   host_timestamp_ns: number;
   forward_w: number;
@@ -193,6 +195,8 @@ export interface Status {
   thermal: ThermalStatus;
   ramp: RampStatus;
   timer: TimerStatus;
+  /** Read-only sense-loop scope (absent on older backends). */
+  scope?: ScopeStatus;
   presets: PresetsStatus;
   pulse: PulseStatus;
   match_tuner: MatchTunerStatus;
