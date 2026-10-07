@@ -99,24 +99,51 @@ const pct = (x: unknown): string => (typeof x === "number" && Number.isFinite(x)
  * poll-interval accuracy; an event before the first row is placed at 0. No origin → nothing placed.
  */
 export function recorderEvents(events: RecordingEvent[], ns0: bigint | null): ReplayEvent[] {
-  if (ns0 === null) return [];
+  if (ns0 === null || !Array.isArray(events)) return [];
   const out: ReplayEvent[] = [];
-  for (const e of events) {
-    if (!Number.isFinite(e.host_timestamp_ns)) continue;
-    const t = Number(BigInt(Math.round(e.host_timestamp_ns)) - ns0) / 1e9;
-    const d = e.data ?? {};
-    const text = e.label === "cap_command"
-      ? `${String(d.axis ?? "?")} cap → ${pct(d.requested)} (${String(d.source ?? "?")}, was ${pct(d.readback_before)})`
-      : e.label.replace(/_/g, " ");
+  for (const e of events as unknown[]) {
+    // events.json is a file on disk: skip anything that is not {label: string, host_timestamp_ns: number}.
+    if (typeof e !== "object" || e === null) continue;
+    const { label, host_timestamp_ns: ns, data } = e as { label?: unknown; host_timestamp_ns?: unknown; data?: unknown };
+    if (typeof label !== "string" || typeof ns !== "number" || !Number.isFinite(ns)) continue;
+    const t = Number(BigInt(Math.round(ns)) - ns0) / 1e9;
+    const d = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
+    const text = label === "cap_command"
+      ? `${typeof d.axis === "string" ? d.axis : "?"} cap → ${pct(d.requested)} (${typeof d.source === "string" ? d.source : "?"}, was ${pct(d.readback_before)})`
+      : label.replace(/_/g, " ");
     out.push({ t_s: Math.max(0, t), text });
   }
   return out;
 }
 
-/** Derived (row) events and recorder events in time order. When the recorder logged RF on/off, its
- *  events replace the RF edges derived from the rows (the same moments, said twice otherwise). */
+/** A recorder RF event and a row-derived edge within this many seconds are the same moment. */
+const SAME_EDGE_S = 3;
+
+/**
+ * Derived (row) events and recorder events in time order. A derived RF edge is dropped only when a
+ * recorder event of the SAME direction lies within 3 s: the recorder logs RF only for the operator's
+ * /api/rf/enable|disable, so an RF-off from a reflected trip, a fault, a link loss or the timer has no
+ * recorder event and must stay in the list.
+ */
 export function mergeEvents(derived: ReplayEvent[], recorder: ReplayEvent[]): ReplayEvent[] {
-  const recRf = recorder.some((e) => e.text === "rf enabled" || e.text === "rf disabled");
-  const keep = recRf ? derived.filter((e) => e.text !== "RF on" && e.text !== "RF off") : derived;
+  const logged = (dir: "rf enabled" | "rf disabled", t: number) =>
+    recorder.some((r) => r.text === dir && Math.abs(r.t_s - t) <= SAME_EDGE_S);
+  const keep = derived.filter((e) =>
+    e.text === "RF on" ? !logged("rf enabled", e.t_s) : e.text === "RF off" ? !logged("rf disabled", e.t_s) : true);
   return [...recorder, ...keep].sort((a, b) => a.t_s - b.t_s);
+}
+
+/** The replay's line about events.json: null when it loaded; a missing file (404: the run is still
+ *  recording or did not stop cleanly) and a broken one are said, never silently empty. */
+export function eventsStatus(state: "ok" | "missing" | "error", err = ""): string | null {
+  if (state === "ok") return null;
+  if (state === "missing") return "no events.json (run not stopped cleanly)";
+  return `events.json: ${err}`;
+}
+
+/** Shadow numbers on screen (`shownKey`) no longer answer the current request (`currentKey`: null
+ *  when the target is cleared), or the re-run for it failed: show them muted and labelled stale. */
+export function shadowStale(shownKey: string | null, currentKey: string | null, failed: boolean): boolean {
+  if (shownKey === null) return false;
+  return failed || shownKey !== currentKey;
 }

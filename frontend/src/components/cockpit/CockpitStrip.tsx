@@ -9,6 +9,7 @@ import { api, detail } from "../../lib/api.ts";
 import { engageAllowed, loopGates } from "../../lib/cockpit/gates.ts";
 import { matchStatus } from "../../lib/cockpit/live.ts";
 import { requestedW } from "../../lib/cockpit/power.ts";
+import { DialNote } from "./DialNote.tsx";
 import { PowerDials } from "./PowerDials.tsx";
 import { SetpointEntry } from "./SetpointEntry.tsx";
 
@@ -122,18 +123,6 @@ function MatchPanel({ op }: { op: Operator }) {
       <CapRow name="Load" value={op.t?.load_cap_percent} busy={op.capBusy === "load"} op={op} bump={op.bumpLoad} />
       <div className={`ck-matchline ck-${m.tone}`}>{m.text}</div>
     </section>
-  );
-}
-
-/** Scales and zones of the dials, in words. Values only (shared with the read-only replay strip). */
-export function DialNote({ powerCeil, fwdCaution, fwdDanger, maxRefl }: {
-  powerCeil: number; fwdCaution: number | null; fwdDanger: number | null; maxRefl: number;
-}) {
-  return (
-    <div className="ck-sub ck-dialnote">
-      Requested = the last value written to the generator. Same dials as the Dashboard: 0–{powerCeil} W (generator limit), caution{" "}
-      {fwdCaution ?? "—"} W, danger {fwdDanger ?? "—"} W · Reverse 0–{maxRefl} W, caution {maxRefl * 0.5}, danger {maxRefl * 0.8}.
-    </div>
   );
 }
 

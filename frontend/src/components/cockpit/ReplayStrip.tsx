@@ -4,7 +4,7 @@
 
 import type { ReplayRow } from "../../lib/cockpit/replay.ts";
 import { matchStatus } from "../../lib/cockpit/live.ts";
-import { DialNote } from "./CockpitStrip.tsx";
+import { DialNote } from "./DialNote.tsx";
 import { PowerDials } from "./PowerDials.tsx";
 
 export interface ReplayScales {

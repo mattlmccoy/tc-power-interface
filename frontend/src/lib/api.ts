@@ -230,6 +230,14 @@ export const api = {
   /** 404 for a run that never stopped cleanly (events.json is written on a clean stop only). */
   recordingEvents: async (run: string): Promise<RecordingEvent[]> =>
     (await getOk(`/api/recordings/${encodeURIComponent(run)}/events.json`)).json(),
+  /** Like recordingEvents, but a 404 (the run is still recording or never stopped cleanly) is null.
+   *  Any other error still throws with the server's detail. The body is unchecked JSON. */
+  recordingEventsOrNull: async (run: string): Promise<unknown> => {
+    const res = await fetch(apiUrl(BASE, `/api/recordings/${encodeURIComponent(run)}/events.json`));
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(await detail(res));
+    return res.json();
+  },
   replayShadow: async (run: string, roi: string, target: number, ceiling?: number): Promise<ReplayShadow> =>
     (await getOk(replayShadowPath(run, roi, target, ceiling))).json(),
   autoLog: async (): Promise<{ enabled: boolean }> =>

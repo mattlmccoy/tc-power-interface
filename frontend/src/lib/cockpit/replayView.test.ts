@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { ReplayShadowPoint } from "../api.ts";
+import type { RecordingEvent, ReplayShadowPoint } from "../api.ts";
 import type { ReplayRow } from "./replay.ts";
-import { cursorIndex, mergeEvents, recorderEvents, replaySamples, shadowAt, shadowKey, valuesAt } from "./replayView.ts";
+import { cursorIndex, eventsStatus, mergeEvents, recorderEvents, replaySamples, shadowAt, shadowKey, shadowStale, valuesAt } from "./replayView.ts";
 
 const row = (t: number, o: Partial<ReplayRow> = {}): ReplayRow => ({
   t_s: t, forward_w: 40, reverse_w: 0.2, load_w: 39.8, rf_on: true, tune: 20, load: 10, setpoint_w: 40, part_temp_c: 30, ...o,
@@ -90,10 +90,51 @@ test("recorderEvents: events.json on the telemetry time axis; before the first r
   assert.deepEqual(recorderEvents(EVENTS, null), []); // no origin, no placement
 });
 
-test("mergeEvents: time order; recorder RF events replace the ones derived from rows", () => {
+test("mergeEvents: time order; a recorder RF event replaces only the derived edge it describes", () => {
   const derived = [{ t_s: 5, text: "RF on" }, { t_s: 9, text: "retune: Tune 20→21 %, Load 10→10 %" }];
   const rec = [{ t_s: 4.9, text: "rf enabled" }, { t_s: 1, text: "recording started" }];
   assert.deepEqual(mergeEvents(derived, rec).map((e) => e.text), ["recording started", "rf enabled", "retune: Tune 20→21 %, Load 10→10 %"]);
   assert.deepEqual(mergeEvents(derived, [{ t_s: 1, text: "recording started" }]).map((e) => e.text),
     ["recording started", "RF on", "retune: Tune 20→21 %, Load 10→10 %"]);
+});
+
+test("mergeEvents: an RF-off nobody logged (trip, fault, link loss, timer) stays; the operator's is shown once", () => {
+  // The recorder logs RF only for /api/rf/enable|disable (recorder events), so a trip has no event.
+  const derived = [
+    { t_s: 10, text: "RF on" }, { t_s: 60.4, text: "RF off" }, // operator's RF off (logged at 60)
+    { t_s: 70, text: "RF on" }, { t_s: 130, text: "RF off" }, // reflected trip: not logged
+  ];
+  const rec = [{ t_s: 9.8, text: "rf enabled" }, { t_s: 60, text: "rf disabled" }, { t_s: 69.9, text: "rf enabled" }];
+  assert.deepEqual(mergeEvents(derived, rec).map((e) => `${e.t_s} ${e.text}`),
+    ["9.8 rf enabled", "60 rf disabled", "69.9 rf enabled", "130 RF off"]);
+  // Same direction only: an rf_enabled near a derived RF off does not hide it.
+  assert.deepEqual(mergeEvents([{ t_s: 5, text: "RF off" }], [{ t_s: 5.5, text: "rf enabled" }]).map((e) => e.text),
+    ["RF off", "rf enabled"]);
+  // Beyond 3 s apart they are different edges.
+  assert.equal(mergeEvents([{ t_s: 20, text: "RF off" }], [{ t_s: 16.5, text: "rf disabled" }]).length, 2);
+});
+
+test("recorderEvents: malformed entries are skipped, never thrown on", () => {
+  const bad = [null, 7, "x", { label: 3, host_timestamp_ns: 1 }, { label: "rf_enabled" },
+    { label: "rf_disabled", host_timestamp_ns: "soon" }, { label: "cap_command", host_timestamp_ns: 1791398366724752000, data: null },
+    EVENTS[2]] as unknown as RecordingEvent[];
+  const ns0 = 1791398325789006000n;
+  const ev = recorderEvents(bad, ns0);
+  assert.deepEqual(ev.map((e) => e.text), ["? cap → ? (?, was ?)", "rf enabled"]);
+  assert.deepEqual(recorderEvents({ not: "an array" } as unknown as RecordingEvent[], ns0), []);
+});
+
+test("eventsStatus: what the replay says about events.json", () => {
+  assert.equal(eventsStatus("ok"), null);
+  assert.equal(eventsStatus("missing"), "no events.json (run not stopped cleanly)");
+  assert.equal(eventsStatus("error", "Unexpected token < in JSON"), "events.json: Unexpected token < in JSON");
+});
+
+test("shadowStale: shown numbers are stale once the request changed, the target was cleared, or the re-run failed", () => {
+  const k = shadowKey("r1", "SQ_SAMPLE", 55);
+  assert.equal(shadowStale(k, k, false), false);
+  assert.equal(shadowStale(k, shadowKey("r1", "SQ_SAMPLE", 60), false), true); // re-running for a new target
+  assert.equal(shadowStale(k, null, false), true); // target cleared
+  assert.equal(shadowStale(k, k, true), true); // the re-run for this key failed
+  assert.equal(shadowStale(null, k, true), false); // nothing shown, nothing stale
 });

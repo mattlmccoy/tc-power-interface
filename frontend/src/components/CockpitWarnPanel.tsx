@@ -16,7 +16,10 @@ export function CockpitWarnPanel() {
   function save() {
     if (!valid) { setMsg("Enter a number in both fields."); return; }
     const c = { tempC: Math.min(hi, Math.max(lo, t)), ratePerMin: Math.min(rhi, Math.max(rlo, r)) };
-    saveCockpitThresholds(settingsStorage(), c);
+    if (!saveCockpitThresholds(settingsStorage(), c)) {
+      setMsg("Not saved: browser storage unavailable. The cockpit keeps its current thresholds.");
+      return;
+    }
     setTemp(String(c.tempC));
     setRate(String(c.ratePerMin));
     setMsg(`Saved: warn ≥ ${c.tempC} °C or ≥ ${c.ratePerMin} °C/min.`);

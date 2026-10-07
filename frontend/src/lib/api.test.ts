@@ -198,3 +198,12 @@ test("recording reads throw the server's detail on an error status (shape-only e
   await assert.rejects(api.replayShadow("r", "x", 55), /damaged recording/);
   await assert.rejects(api.recordingCsv("r"), /damaged recording/);
 });
+
+test("recordingEventsOrNull: a 404 (run not stopped cleanly) is null; other errors still throw", async () => {
+  stubReply(404, { detail: "events.json not found" });
+  assert.equal(await api.recordingEventsOrNull("r1"), null);
+  stubReply(200, [{ host_timestamp_ns: 1, label: "recording_started", data: {} }]);
+  assert.deepEqual(await api.recordingEventsOrNull("r1"), [{ host_timestamp_ns: 1, label: "recording_started", data: {} }]);
+  stubReply(500, { detail: "boom" });
+  await assert.rejects(api.recordingEventsOrNull("r1"), /boom/);
+});

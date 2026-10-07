@@ -17,11 +17,14 @@ export interface Stored<T> {
   pending: boolean;
 }
 
-export function storeSettings<T>(storage: Storage | null, key: string, value: Stored<T>): void {
+/** Store a value; true only if it was actually written (false: no storage, private mode, quota). */
+export function storeSettings<T>(storage: Storage | null, key: string, value: Stored<T>): boolean {
+  if (!storage) return false;
   try {
-    storage?.setItem(key, JSON.stringify(value));
+    storage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
-    /* storage unavailable — keep in-memory only */
+    return false; // storage unavailable — the caller says so
   }
 }
 
@@ -70,7 +73,8 @@ export function cockpitThresholds(v: { tempC?: number; ratePerMin?: number } | n
 }
 
 /** Save the operator's thresholds (per browser) and tell this tab's cockpit. */
-export function saveCockpitThresholds(storage: Storage | null, v: { tempC: number; ratePerMin: number }): void {
-  storeSettings(storage, COCKPIT_KEY, { v, pending: false });
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(COCKPIT_EVENT));
+export function saveCockpitThresholds(storage: Storage | null, v: { tempC: number; ratePerMin: number }): boolean {
+  const ok = storeSettings(storage, COCKPIT_KEY, { v, pending: false });
+  if (ok && typeof window !== "undefined") window.dispatchEvent(new Event(COCKPIT_EVENT));
+  return ok;
 }

@@ -226,3 +226,6 @@
    at half a column must not grow the card. */
 .ck-card .ck-sub.ck-clamp2 { height: 2.8em; min-height: 0; display: -webkit-box; -webkit-line-clamp: 2;
   -webkit-box-orient: vertical; overflow: hidden; }
+/* Stale replay numbers (from an older request or a failed re-run): visibly not current. */
+.ck-stale { opacity: 0.6; border-style: dashed; }
+.ck-evnote { text-transform: none; letter-spacing: 0; color: var(--muted); }

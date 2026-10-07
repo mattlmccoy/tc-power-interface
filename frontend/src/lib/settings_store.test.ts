@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { COCKPIT_KEY, cockpitThresholds, loadSettings, storeSettings } from "./settings_store.ts";
+import { COCKPIT_KEY, cockpitThresholds, loadSettings, saveCockpitThresholds, storeSettings } from "./settings_store.ts";
 
 function fakeStorage(): Storage {
   const m = new Map<string, string>();
@@ -56,4 +56,13 @@ test("core warn thresholds: bad fields fall back to their default; provisional o
   assert.deepEqual(cockpitThresholds({ tempC: 60 }), { tempC: 60, ratePerMin: 3, provisional: false });
   assert.deepEqual(cockpitThresholds({ tempC: NaN, ratePerMin: 5 }), { tempC: 45, ratePerMin: 5, provisional: false });
   assert.deepEqual(cockpitThresholds({ tempC: 10, ratePerMin: 99 }), { tempC: 25, ratePerMin: 30, provisional: false });
+});
+
+test("storeSettings and saveCockpitThresholds report whether the value was actually stored", () => {
+  assert.equal(storeSettings(fakeStorage(), "k", { v: { a: 1 }, pending: false }), true);
+  assert.equal(storeSettings(null, "k", { v: { a: 1 }, pending: false }), false); // private mode / no storage
+  const full = { ...fakeStorage(), setItem: () => { throw new Error("QuotaExceededError"); } } as Storage;
+  assert.equal(storeSettings(full, "k", { v: { a: 1 }, pending: false }), false);
+  assert.equal(saveCockpitThresholds(full, { tempC: 50, ratePerMin: 2 }), false);
+  assert.equal(saveCockpitThresholds(fakeStorage(), { tempC: 50, ratePerMin: 2 }), true);
 });
