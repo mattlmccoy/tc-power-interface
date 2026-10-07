@@ -10,6 +10,7 @@ Display-only: nothing here commands the generator or feeds protection.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 
@@ -25,9 +26,32 @@ class RfClock:
         self._run: str | None = None  # the current update's run id (None = not recording)
         self._run_id: str | None = None  # the run the total belongs to (kept after it stops)
         self._run_rf_on_s = 0.0
+        #: The finished run's RF-on total, shown after its recording stops until RF turns on again
+        #: or a new run starts (None = nothing to show).
+        self._last_run_s: float | None = None
+        # update() runs on the poll thread, snapshot()/reset_link() on API threads. Never held
+        # while calling out, so it cannot nest with the controller's locks.
+        self._mutex = threading.Lock()
+
+    def reset_link(self) -> None:
+        """Forget the RF state (device detached / link dropped): the next device starts unknown.
+        Burn history (last burn) and run totals are kept."""
+        with self._mutex:
+            self._rf_on = None
+            self._prev_rf = None
+            self._prev_now = None
+            self._since = None
 
     def update(self, now_s: float, rf_on: bool | None, run: str | None) -> None:
         """Advance the clock by one controller poll."""
+        with self._mutex:
+            self._update(now_s, rf_on, run)
+
+    def _update(self, now_s: float, rf_on: bool | None, run: str | None) -> None:
+        if self._run is not None and run is None:
+            self._last_run_s = self._run_rf_on_s  # the recording just stopped
+        if run is not None:
+            self._last_run_s = None
         if run is not None and run != self._run_id:
             self._run_id = run
             self._run_rf_on_s = 0.0
@@ -44,6 +68,7 @@ class RfClock:
         if rf_on is not None:
             if rf_on and not self._rf_on:
                 self._since = now_s
+                self._last_run_s = None
             elif not rf_on and self._rf_on and self._since is not None:
                 self._last_burn_s = now_s - self._since
                 self._since = None
@@ -53,8 +78,14 @@ class RfClock:
         self._prev_now = now_s
         self._run = run
 
-    def snapshot(self, now_s: float, link_ok: bool) -> dict[str, Any]:
-        """The clock as of ``now_s``; ``link_ok`` False marks it stale (no fresh telemetry)."""
+    def snapshot(self, now_s: float, link_ok: bool, attached: bool = True) -> dict[str, Any]:
+        """The clock as of ``now_s``. ``link_ok`` False marks it stale (no fresh telemetry);
+        ``known`` is True only while a device is ``attached`` and its RF state has been observed,
+        so "stale and known" means a LOST link, and "not known" means no generator (neutral)."""
+        with self._mutex:
+            return self._snapshot(now_s, link_ok, attached)
+
+    def _snapshot(self, now_s: float, link_ok: bool, attached: bool) -> dict[str, Any]:
         burn_s = None
         if self._rf_on and self._since is not None:
             burn_s = max(0.0, now_s - self._since)
@@ -68,4 +99,6 @@ class RfClock:
             "run_rf_on_s": run_total,
             "run": self._run,
             "stale": not link_ok,
+            "known": attached and self._rf_on is not None,
+            "last_run_rf_on_s": self._last_run_s,
         }

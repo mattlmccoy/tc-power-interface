@@ -521,6 +521,7 @@ def create_app(
         drivers AND clear the device metadata, so the UI shows a clean 'no device / disconnected'
         instead of the pill going grey while the top bar still names the (now absent) generator."""
         _stop_all_features()
+        app.state.rf_clock.reset_link()  # the next generator starts with an unknown RF state
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
@@ -547,7 +548,9 @@ def create_app(
         ctrl_snap = _controller().snapshot()
         link_age = ctrl_snap["link"]["last_ok_age_s"]
         rf_clock_snap = app.state.rf_clock.snapshot(
-            time.monotonic(), link_ok=link_age is not None and link_age <= _RF_CLOCK_STALE_S
+            time.monotonic(),
+            link_ok=link_age is not None and link_age <= _RF_CLOCK_STALE_S,
+            attached=ctrl_snap["state"] in ("connected", "fault"),
         )
         return {
             "device": app.state.device_info,
@@ -618,6 +621,7 @@ def create_app(
                 device = CxnDevice(create_transport("simulated"))
             else:
                 raise HTTPException(400, f"unknown backend {req.backend!r}")
+            app.state.rf_clock.reset_link()  # a new link starts with an unknown RF state
             _controller().attach_device(device, backend=req.backend)
         except HTTPException:
             raise
@@ -634,6 +638,7 @@ def create_app(
         every driver first so nothing is left 'running' with no device attached."""
         _stop_all_features()
         _controller().detach_device()
+        app.state.rf_clock.reset_link()
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}

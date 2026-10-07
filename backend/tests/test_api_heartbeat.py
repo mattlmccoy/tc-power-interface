@@ -44,8 +44,11 @@ def test_status_has_controller_link_block(client: TestClient) -> None:
 def test_status_has_rf_clock_block_idle(client: TestClient) -> None:
     body = _wait_for(client, lambda b: b["rf_clock"]["rf_on"] is not None)
     clock = body["rf_clock"]
-    assert set(clock) == {"rf_on", "burn_s", "last_burn_s", "run_rf_on_s", "run", "stale"}
+    assert set(clock) == {
+        "rf_on", "burn_s", "last_burn_s", "run_rf_on_s", "run", "stale", "known", "last_run_rf_on_s"
+    }
     assert clock["rf_on"] is False
+    assert clock["known"] is True
     assert clock["burn_s"] is None
     assert clock["stale"] is False
 
@@ -75,3 +78,29 @@ def test_rf_clock_stale_when_no_device(tmp_path: Path) -> None:
     assert body["controller"]["link"]["last_ok_age_s"] is None
     assert body["rf_clock"]["stale"] is True
     assert body["rf_clock"]["rf_on"] is None
+    assert body["rf_clock"]["known"] is False  # never connected: neutral, not a lost link
+
+
+def test_rf_clock_not_known_after_disconnect(client: TestClient) -> None:
+    _wait_for(client, lambda b: b["rf_clock"]["known"] is True)
+    body = client.post("/api/disconnect").json()
+    assert body["rf_clock"]["known"] is False
+    assert client.get("/api/status").json()["rf_clock"]["known"] is False
+
+
+def test_rf_clock_known_again_after_reconnect(client: TestClient) -> None:
+    client.post("/api/disconnect")
+    assert client.post("/api/connect", json={"backend": "simulated"}).status_code == 200
+    body = _wait_for(client, lambda b: b["rf_clock"]["known"] is True)
+    assert body["rf_clock"]["known"] is True
+    assert body["rf_clock"]["stale"] is False
+
+
+def test_rf_clock_shows_last_run_after_recording_stops(client: TestClient) -> None:
+    r = client.post("/api/recording/start", json={"name": "lr", "notes": ""})
+    assert r.status_code == 200
+    _wait_for(client, lambda b: b["rf_clock"]["run"] is not None)
+    assert client.post("/api/recording/stop").status_code == 200
+    body = _wait_for(client, lambda b: b["rf_clock"]["last_run_rf_on_s"] is not None)
+    assert body["rf_clock"]["run"] is None
+    assert body["rf_clock"]["last_run_rf_on_s"] == 0.0  # RF never on in that run

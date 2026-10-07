@@ -16,6 +16,8 @@ def test_fresh_clock_has_no_data() -> None:
         "run_rf_on_s": 0.0,
         "run": None,
         "stale": False,
+        "known": False,
+        "last_run_rf_on_s": None,
     }
 
 
@@ -120,3 +122,80 @@ def test_stale_flag_follows_link_ok() -> None:
     c.update(0.0, True, None)
     assert c.snapshot(1.0, link_ok=False)["stale"] is True
     assert c.snapshot(1.0, link_ok=True)["stale"] is False
+
+
+# --- known: RF state observed on the CURRENT device link ------------------------------------------
+
+
+def test_known_after_first_sample_while_attached() -> None:
+    c = RfClock()
+    c.update(0.0, None, None)  # no telemetry yet
+    assert c.snapshot(0.1, link_ok=False)["known"] is False
+    c.update(0.5, False, None)
+    assert c.snapshot(0.6, link_ok=True)["known"] is True
+
+
+def test_not_known_when_no_device_attached() -> None:
+    c = RfClock()
+    c.update(0.0, True, None)
+    assert c.snapshot(1.0, link_ok=False, attached=False)["known"] is False
+
+
+def test_lost_link_while_known_stays_known_and_stale() -> None:
+    c = RfClock()
+    c.update(0.0, True, None)
+    c.update(1.0, None, None)  # reads failing (e.g. faulted with RF on): device still attached
+    s = c.snapshot(7.0, link_ok=False, attached=True)
+    assert s["known"] is True
+    assert s["stale"] is True
+
+
+def test_reset_link_forgets_rf_state_but_keeps_history() -> None:
+    c = RfClock()
+    c.update(0.0, True, "runA")
+    c.update(2.0, False, "runA")
+    c.update(3.0, True, "runA")
+    c.reset_link()  # detach / link drop: the next device starts unknown
+    s = c.snapshot(4.0, link_ok=False)
+    assert s["known"] is False
+    assert s["rf_on"] is None
+    assert s["burn_s"] is None
+    assert s["last_burn_s"] == pytest.approx(2.0)
+    c.update(5.0, True, "runA")  # first sample on the new link is a fresh rising edge
+    assert c.snapshot(6.0, link_ok=True)["burn_s"] == pytest.approx(1.0)
+
+
+# --- last run total after the recording stops -----------------------------------------------------
+
+
+def test_last_run_total_shown_after_recording_stops() -> None:
+    c = RfClock()
+    c.update(0.0, True, "runA")
+    c.update(2.0, False, "runA")  # 2 s on
+    assert c.snapshot(2.5, link_ok=True)["last_run_rf_on_s"] is None  # still recording
+    c.update(3.0, False, None)  # recording stopped
+    s = c.snapshot(4.0, link_ok=True)
+    assert s["run"] is None
+    assert s["last_run_rf_on_s"] == pytest.approx(2.0)
+    c.update(5.0, False, None)
+    assert c.snapshot(5.0, link_ok=True)["last_run_rf_on_s"] == pytest.approx(2.0)
+
+
+def test_last_run_total_cleared_when_rf_turns_on_again() -> None:
+    c = RfClock()
+    c.update(0.0, True, "runA")
+    c.update(2.0, False, "runA")
+    c.update(3.0, False, None)
+    c.update(4.0, True, None)  # rising edge
+    assert c.snapshot(4.5, link_ok=True)["last_run_rf_on_s"] is None
+
+
+def test_last_run_total_cleared_when_new_run_starts() -> None:
+    c = RfClock()
+    c.update(0.0, True, "runA")
+    c.update(2.0, False, "runA")
+    c.update(3.0, False, None)
+    c.update(4.0, False, "runB")
+    s = c.snapshot(4.5, link_ok=True)
+    assert s["last_run_rf_on_s"] is None
+    assert s["run"] == "runB"
