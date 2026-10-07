@@ -70,10 +70,14 @@ export interface RfClockView {
   tone: "live" | "muted" | "warn";
 }
 
-/** The top-bar RF clock text, or null when the backend has no clock (render nothing). */
-export function rfClockView(rc: RfClockBlock | null | undefined): RfClockView | null {
+/** The top-bar RF clock text, or null when the backend has no clock (render nothing). `appAlive`
+ * false (no recent WebSocket message) means the block is a frozen copy, so it reads as no data. */
+export function rfClockView(
+  rc: RfClockBlock | null | undefined,
+  appAlive = true,
+): RfClockView | null {
   if (!rc) return null;
-  if (rc.stale) return { text: "RF ? · no data", tone: "warn" };
+  if (rc.stale || !appAlive) return { text: "RF ? · no data", tone: "warn" };
   const run = rc.run != null ? ` · run ${fmtDuration(rc.run_rf_on_s)}` : "";
   if (rc.rf_on) return { text: `RF ON ${fmtDuration(rc.burn_s)}${run}`, tone: "live" };
   const last = rc.last_burn_s != null ? ` · last ${fmtDuration(rc.last_burn_s)}` : "";

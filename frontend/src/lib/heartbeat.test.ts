@@ -97,3 +97,14 @@ test("rfClockView: stale wins over any value", () => {
     tone: "warn",
   });
 });
+
+test("rfClockView: a dead browser link shows no data (the last status is frozen, not live)", () => {
+  assert.deepEqual(rfClockView(clock({ rf_on: true, burn_s: 9 }), false), {
+    text: "RF ? · no data",
+    tone: "warn",
+  });
+  assert.deepEqual(rfClockView(clock({ rf_on: true, burn_s: 9 }), true), {
+    text: "RF ON 0:09",
+    tone: "live",
+  });
+});
