@@ -15,11 +15,13 @@ export interface TimelineInput {
   buf: CockpitSample[];
   win: WindowMode;
   watch: string[];
-  /** Dashed temperature line: the target (to-temperature) or the levels-off plateau; null = none. */
-  hline: { c: number; kind: "target" | "plateau" } | null;
+  /** Dashed temperature lines: the target and/or the levels-off plateau. */
+  hlines: { c: number; kind: "target" | "plateau" }[];
   /** Draw the shadow suggestion (to-temperature mode with shadow.show). */
   showSuggest: boolean;
   retunes: number[];
+  /** Replay: the cursor (ns from the run start). The whole run is shown, the future greyed. */
+  cursorNs?: number | null;
 }
 
 function css(el: Element, v: string): string {
@@ -51,7 +53,7 @@ export function drawTimeline(cv: HTMLCanvasElement, inp: TimelineInput): void {
   }
   const t0 = buf[0].ns;
   const ts = (s: CockpitSample) => (s.ns - t0) / 1e9;
-  const range = timeWindow(ts(buf[buf.length - 1]), inp.win, 0);
+  const range = timeWindow(ts(buf[buf.length - 1]), inp.cursorNs != null ? "all" : inp.win, 0);
   if (!range) return;
   const [tStart, tEnd] = range;
   const L = 44, R = 46, top = 8, split = Math.round(H * 0.6), bot = H - 18;
@@ -65,7 +67,7 @@ export function drawTimeline(cv: HTMLCanvasElement, inp: TimelineInput): void {
     temps.push(s.part);
     for (const w of inp.watch) temps.push(s.watch[w] ?? null);
   }
-  const [tLo, tHi] = tempRange(temps, inp.hline ? [inp.hline.c] : []);
+  const [tLo, tHi] = tempRange(temps, inp.hlines.map((h) => h.c));
   const Yt = (c: number) => top + (1 - (c - tLo) / (tHi - tLo)) * (split - 14 - top);
   let pMax = 40;
   for (const s of vis) {
@@ -104,7 +106,7 @@ export function drawTimeline(cv: HTMLCanvasElement, inp: TimelineInput): void {
     ctx.setLineDash([5, 4]); ctx.strokeStyle = color; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke(); ctx.setLineDash([]);
   };
-  if (inp.hline) hline(Yt(inp.hline.c), col(inp.hline.kind === "target" ? "var(--live)" : "var(--ck-shadow)"));
+  for (const h of inp.hlines) hline(Yt(h.c), col(h.kind === "target" ? "var(--live)" : "var(--ck-shadow)"));
 
   const line = (val: (s: CockpitSample) => number | null, Y: (v: number) => number, color: string, dash: number[], alpha: number) => {
     ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(dash); ctx.beginPath();
@@ -141,6 +143,22 @@ export function drawTimeline(cv: HTMLCanvasElement, inp: TimelineInput): void {
     if (t >= tStart && t <= tEnd) ctx.fillRect(X(t) - 1, split - 10, 2, 8);
   }
 
+  // Replay: grey the future, draw the cursor, and mark the part reading at it.
+  if (inp.cursorNs != null) {
+    const ct = inp.cursorNs / 1e9;
+    const cx = Math.max(L, Math.min(W - R, X(ct)));
+    ctx.fillStyle = col("var(--bg)"); ctx.globalAlpha = 0.72;
+    ctx.fillRect(cx + 1, 0, W - R - cx, H - 16); ctx.globalAlpha = 1;
+    ctx.strokeStyle = col("var(--fg-strong)"); ctx.lineWidth = 1; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H - 16); ctx.stroke();
+    let at: CockpitSample | undefined;
+    for (const s of vis) { if ((s.ns - t0) / 1e9 <= ct) at = s; else break; }
+    if (at && at.part != null && Number.isFinite(at.part)) {
+      ctx.fillStyle = col("var(--accent)");
+      ctx.beginPath(); ctx.arc(cx, Yt(at.part), 4, 0, 7); ctx.fill();
+    }
+    return;
+  }
   // "Now": the latest part reading.
   const last = vis[vis.length - 1];
   if (last && last.part != null && Number.isFinite(last.part)) {

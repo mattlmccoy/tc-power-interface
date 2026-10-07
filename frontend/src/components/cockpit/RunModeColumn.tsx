@@ -8,6 +8,7 @@ import type { Operator } from "../../hooks/useOperator.ts";
 import { api, detail } from "../../lib/api.ts";
 import { f1, mmss } from "../../lib/cockpit/format.ts";
 import { ladderStep, nextPlateau, parseLadder } from "../../lib/cockpit/ladder.ts";
+import { ladderBase, requestedW } from "../../lib/cockpit/power.ts";
 import type { RunModeName } from "../../lib/cockpit/shadowText.ts";
 import type { RunMode } from "../../lib/telemetry.ts";
 
@@ -53,8 +54,8 @@ function LadderPanel({ op, rm }: { op: Operator; rm: RunMode }) {
   const [dirty, setDirty] = useState(false);
   useEffect(() => { if (!dirty) setText(saved); }, [saved, dirty]);
   const parsed = parseLadder(text);
-  const fwd = op.t?.forward_w ?? Number.NaN;
-  const { index, next } = ladderStep(rm.ladder_w, fwd);
+  // The step is read from the commanded setpoint (forward lags a ramp and wobbles), else forward.
+  const { index, next } = ladderStep(rm.ladder_w, ladderBase(requestedW(op.ctrl), op.t?.forward_w ?? Number.NaN));
   const sh = op.thermal?.shadow;
   const plat = next != null && sh ? nextPlateau(sh, next) : null;
   const save = () => { setDirty(false); void saveRunMode(op, { ...rm, ladder_w: parsed.steps }); };
@@ -90,6 +91,8 @@ function LadderPanel({ op, rm }: { op: Operator; rm: RunMode }) {
         <button
           className="btn accent"
           disabled={!op.controllable || next == null}
+          // nudgeSetpoint(d) sends setpointRef + d (clamped), so d = N − setpointRef sends exactly N.
+          // A commanded/forward base would send setpointRef + N − base: wrong whenever they differ.
           onClick={() => next != null && op.nudgeSetpoint(next - op.setpointRef.current)}
         >
           {next != null ? `Next step → ${next} W` : rm.ladder_w.length ? "Ladder done" : "Set steps first"}

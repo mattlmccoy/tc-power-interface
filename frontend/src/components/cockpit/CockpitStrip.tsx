@@ -8,6 +8,7 @@ import type { Operator } from "../../hooks/useOperator.ts";
 import { api, detail } from "../../lib/api.ts";
 import { engageAllowed, loopGates } from "../../lib/cockpit/gates.ts";
 import { matchStatus } from "../../lib/cockpit/live.ts";
+import { requestedW } from "../../lib/cockpit/power.ts";
 import { PowerDials } from "./PowerDials.tsx";
 import { SetpointEntry } from "./SetpointEntry.tsx";
 
@@ -124,6 +125,18 @@ function MatchPanel({ op }: { op: Operator }) {
   );
 }
 
+/** Scales and zones of the dials, in words. Values only (shared with the read-only replay strip). */
+export function DialNote({ powerCeil, fwdCaution, fwdDanger, maxRefl }: {
+  powerCeil: number; fwdCaution: number | null; fwdDanger: number | null; maxRefl: number;
+}) {
+  return (
+    <div className="ck-sub ck-dialnote">
+      Requested = the setpoint last sent. Same dials as the Dashboard: 0–{powerCeil} W (generator limit), caution{" "}
+      {fwdCaution ?? "—"} W, danger {fwdDanger ?? "—"} W · Reverse 0–{maxRefl} W, caution {maxRefl * 0.5}, danger {maxRefl * 0.8}.
+    </div>
+  );
+}
+
 export function CockpitStrip({ op }: { op: Operator }) {
   const rf = op.t?.rf_on;
   return (
@@ -133,11 +146,19 @@ export function CockpitStrip({ op }: { op: Operator }) {
           <span>Power</span>
           <span className={rf == null ? "ck-muted" : rf ? "ck-ok" : "ck-muted"}>{rf == null ? "RF —" : rf ? "RF ON" : "RF OFF"}</span>
         </h2>
-        <PowerDials op={op} />
-        <div className="ck-sub ck-dialnote">
-          Same dials as the Dashboard: 0–{op.powerCeil} W (generator limit), caution {op.fwdCaution ?? "—"} W, danger{" "}
-          {op.fwdDanger ?? "—"} W · Reverse 0–{op.maxRefl} W, caution {op.maxRefl * 0.5}, danger {op.maxRefl * 0.8}.
-        </div>
+        <PowerDials
+          v={{
+            requested: requestedW(op.ctrl),
+            forward: op.t ? op.t.forward_w : null,
+            load: op.t ? op.t.load_w : null,
+            reverse: op.t ? op.t.reverse_w : null,
+            powerCeil: op.powerCeil,
+            fwdCaution: op.fwdCaution,
+            fwdDanger: op.fwdDanger,
+            maxRefl: op.maxRefl,
+          }}
+        />
+        <DialNote powerCeil={op.powerCeil} fwdCaution={op.fwdCaution} fwdDanger={op.fwdDanger} maxRefl={op.maxRefl} />
       </section>
       <SetpointPanel op={op} />
       <MatchPanel op={op} />

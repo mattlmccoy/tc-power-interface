@@ -2,9 +2,12 @@
 // timeline, then Thermal · Run mode · Watched ROIs. It never actuates on its own: every power, RF
 // and cap action is an operator click on an existing op.* handler, and Engage stays locked (D12).
 
+import { useState } from "react";
+
 import { CockpitStrip } from "../components/cockpit/CockpitStrip.tsx";
 import { CockpitTimeline } from "../components/cockpit/CockpitTimeline.tsx";
 import { ModeChips, RunModeColumn } from "../components/cockpit/RunModeColumn.tsx";
+import { RunsView } from "../components/cockpit/RunsView.tsx";
 import { ThermalColumn } from "../components/cockpit/ThermalColumn.tsx";
 import { WatchColumn } from "../components/cockpit/WatchColumn.tsx";
 import type { MatchAid } from "../hooks/useMatchAid.ts";
@@ -18,13 +21,35 @@ export function CockpitPage({ op, aid, history }: { op: Operator; aid: MatchAid;
   const run = op.recording?.run ?? null;
   const stats = runStats(history, run);
   const target = op.thermalPlanStatus?.target_c ?? th?.target_c ?? null;
+  const [view, setView] = useState<"live" | "runs">("live");
+  const viewSwitch = (
+    <div className="ck-viewswitch" role="tablist" aria-label="Closed-loop view">
+      <button className={view === "live" ? "on" : ""} role="tab" aria-selected={view === "live"} onClick={() => setView("live")}>Cockpit</button>
+      <button className={view === "runs" ? "on" : ""} role="tab" aria-selected={view === "runs"} onClick={() => setView("runs")}>Runs</button>
+    </div>
+  );
+  if (view === "runs") {
+    // Replay gets plain data only (no operator object, no handlers): it cannot send a command.
+    return (
+      <div className="cockpit">
+        <div className="ck-head">
+          {viewSwitch}
+          <span className="ck-livepill replay">replay · read-only</span>
+        </div>
+        <RunsView
+          defaults={{
+            targetC: target,
+            controlRoi: th?.control_roi ?? null,
+            scales: { powerCeil: op.powerCeil, fwdCaution: op.fwdCaution, fwdDanger: op.fwdDanger, maxRefl: op.maxRefl },
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="cockpit">
       <div className="ck-head">
-        <div className="ck-viewswitch" role="tablist" aria-label="Closed-loop view">
-          <button className="on" role="tab" aria-selected>Cockpit</button>
-          <button role="tab" aria-selected={false} disabled title="Runs (replay) lands in Task 21">Runs</button>
-        </div>
+        {viewSwitch}
         <ModeChips op={op} />
         <div className="ck-runinfo">
           <span className="ck-ri-run" title={run ?? "not recording"}>Run <b className="mono">{run ?? "not recording"}</b></span>

@@ -153,3 +153,66 @@
   .ck-timeline .seg { flex-shrink: 1; min-width: 0; }
   .ck-timeline .seg-btn { white-space: normal; }
 }
+
+/* ---- Runs (replay) view. Every box below has a fixed size so picking a run, a ROI or scrubbing
+   never moves the page (D9 within Runs). ---- */
+.ck-runsview { display: flex; flex-direction: column; gap: 12px; }
+.ck-runsview > * { flex-shrink: 0; }
+.ck-livepill { font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px;
+  border-radius: 999px; border: 1px solid var(--live); color: var(--live); }
+.ck-livepill.replay { border-color: var(--trace-refl); color: var(--trace-refl); }
+.ck-runs { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 12px; }
+.ck-runlistpanel, .ck-replaypanel { height: 380px; overflow: hidden; display: flex; flex-direction: column; }
+.ck-runlist { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.ck-runitem { text-align: left; background: var(--bg-deep); color: var(--fg); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 7px 10px; cursor: pointer; flex-shrink: 0; }
+.ck-runitem.on { border-color: var(--accent); }
+.ck-runname { font-size: 12px; color: var(--fg-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ck-runmeta { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
+.ck-tag { font: 10px var(--font-mono); padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line-strong); }
+.ck-tag.yes { border-color: var(--live); color: var(--live); }
+.ck-tag.no { color: var(--muted); }
+.ck-smallbtn { padding: 2px 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+.ck-replayname { max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; }
+.ck-lbl-short { margin-left: 8px; }
+.cockpit .ck-replaypanel .ck-inline .ck-lbl { min-width: 0; }
+.ck-rpstatus { font-size: 12px; height: 1.6em; line-height: 1.6em; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ck-compare { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.ck-compare .ck-sub { height: 4.2em; min-height: 0; overflow: hidden; }
+.ck-mid { font: 20px/1.2 var(--font-mono); color: var(--fg-strong); font-variant-numeric: tabular-nums; }
+.ck-events { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 4px; border-top: 1px solid var(--line); font-size: 11px; }
+.ck-events button { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; width: 100%; text-align: left;
+  background: transparent; border: 0; border-bottom: 1px solid var(--line); color: var(--fg); padding: 3px 2px; cursor: pointer; }
+.ck-events button span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ck-events button:hover { color: var(--fg-strong); }
+.ck-events button.on { color: var(--accent); }
+.ck-cursortxt { text-transform: none; letter-spacing: 0; min-height: 24px; line-height: 24px; }
+.ck-scrub { display: flex; gap: 10px; align-items: center; }
+.ck-scrub input[type="range"] { flex: 1 1 auto; min-width: 0; }
+.ck-playbtn { width: 120px; flex-shrink: 0; }
+.ck-scrubtime { width: 13ch; text-align: right; flex-shrink: 0; font-size: 12px; }
+.ck-cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+
+/* Read-only replay strip: visibly not controls, and unclickable. */
+.ck-strip.ro { pointer-events: none; }
+.ck-strip.ro .panel { border-style: dashed; border-color: var(--line-strong); }
+.ck-robadge { font: 10px var(--font-mono); padding: 1px 8px; border-radius: 999px; border: 1px solid var(--trace-refl);
+  color: var(--trace-refl); text-transform: uppercase; }
+.ck-rovalue { font: 26px var(--font-mono); color: var(--fg-strong); margin: 4px 0 6px; }
+.ck-rovalue small { font-size: 14px; color: var(--muted); }
+.ck-ronote { margin-top: 14px; }
+.ck-cap-ph { height: 44px; }
+
+@media (max-width: 980px) {
+  .ck-runs, .ck-cols2 { grid-template-columns: minmax(0, 1fr); }
+  .ck-compare { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ck-compare .ck-sub { height: auto; }
+  .ck-runlistpanel { height: 260px; }
+  .ck-replaypanel { height: 540px; }
+}
+/* The replay controls row keeps one line whatever ROI name is chosen (a wider name must not wrap it). */
+.ck-replaypanel .ck-inline { flex-wrap: nowrap; }
+.ck-replaypanel .ck-select { width: 220px; flex: 0 1 220px; min-width: 0; }
+/* Inside the fixed-height panels only the scrolling lists flex; nothing else may shrink. */
+.ck-runlistpanel > *, .ck-replaypanel > * { flex-shrink: 0; }
+.ck-runlistpanel > .ck-runlist, .ck-replaypanel > .ck-events { flex: 1 1 0; min-height: 0; }

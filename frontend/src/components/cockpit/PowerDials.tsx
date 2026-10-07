@@ -1,15 +1,26 @@
-import type { Operator } from "../../hooks/useOperator.ts";
 import { Gauge } from "../Gauge.tsx";
 
-/** The Dashboard's four analog dials with exactly its props (TelemetryPanel.tsx gauge branch). */
-export function PowerDials({ op }: { op: Operator }) {
-  const t = op.t;
+/** Plain readings for the four dials: values only, never handlers, so the replay can reuse it. */
+export interface DialValues {
+  /** The setpoint we last wrote (live: controller.commanded_setpoint_w; replay: recorded setpoint_w). */
+  requested: number | null;
+  forward: number | null;
+  load: number | null;
+  reverse: number | null;
+  powerCeil: number;
+  fwdCaution: number | null;
+  fwdDanger: number | null;
+  maxRefl: number;
+}
+
+/** The Dashboard's four analog dials with its scales and zones (TelemetryPanel.tsx gauge branch). */
+export function PowerDials({ v }: { v: DialValues }) {
   return (
     <div className="gauge-grid">
-      <Gauge label="Requested" value={op.requested} max={op.powerCeil} caution={op.fwdCaution} danger={op.fwdDanger} />
-      <Gauge label="Forward" value={t ? t.forward_w : null} max={op.powerCeil} caution={op.fwdCaution} danger={op.fwdDanger} />
-      <Gauge label="Load" value={t ? t.load_w : null} max={op.powerCeil} caution={op.fwdCaution} danger={op.fwdDanger} />
-      <Gauge label="Reverse" value={t ? t.reverse_w : null} max={op.maxRefl} caution={op.maxRefl * 0.5} danger={op.maxRefl * 0.8} />
+      <Gauge label="Requested" value={v.requested} max={v.powerCeil} caution={v.fwdCaution} danger={v.fwdDanger} />
+      <Gauge label="Forward" value={v.forward} max={v.powerCeil} caution={v.fwdCaution} danger={v.fwdDanger} />
+      <Gauge label="Load" value={v.load} max={v.powerCeil} caution={v.fwdCaution} danger={v.fwdDanger} />
+      <Gauge label="Reverse" value={v.reverse} max={v.maxRefl} caution={v.maxRefl * 0.5} danger={v.maxRefl * 0.8} />
     </div>
   );
 }
