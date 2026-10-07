@@ -10,7 +10,18 @@ export interface Shadow {
   why: string | null;
   k_c_per_w: number | null;
   tau_s: number | null;
+  /** Honest confidence: the fit confidence capped by how far K/τ moved in the last 2 min. */
   confidence: number;
+  /** The raw RLS fit confidence (absent on operators older than v0.18.4). */
+  confidence_fit?: number | null;
+  /** Largest relative move of K or τ over the last 2 min, in %; null = not known yet. */
+  drift_pct?: number | null;
+  /** drift_pct > 5 %. */
+  drifting?: boolean;
+  /** To-temperature mode: steady power that holds the target, (target − T_amb)/K; else null. */
+  needed_w?: number | null;
+  /** The power ceiling the shadow loop was clamped to. */
+  ceiling_w?: number | null;
   t_amb_c: number | null;
   updates: number;
   suggest_w: number | null;
@@ -32,6 +43,10 @@ const fin = (x: number | null | undefined): x is number => x != null && Number.i
 export function confidenceSentence(s: Shadow): string {
   if (!s.valid) return "No estimate yet, so no suggestion.";
   if (!fin(s.confidence)) return "Confidence unknown.";
+  if (s.drifting) {
+    const moved = fin(s.drift_pct) ? `moved ${round(s.drift_pct)} % in the last 2 min` : "still moving";
+    return `Still drifting: gain or time constant ${moved}. A power step would pin it down.`;
+  }
   if (s.confidence < SHOW_CONFIDENCE) return "Low: at steady power the gain and time constant can't be told apart. A power step sharpens it.";
   if (s.confidence < ENGAGE_CONFIDENCE) return "Firming up: treat the numbers as indicative.";
   return "Good enough to compare with what you're doing.";
@@ -64,6 +79,10 @@ export function shadowCard(mode: RunModeName, s: Shadow, yourW: number, targetC:
     if (!s.valid) return { label, value: "—", sub: why, muted };
     if (!fin(s.suggest_w)) return { label, value: "—", sub: fin(s.plateau_c) ? WAIT_STEP : WAIT_TEMP, muted: true };
     const shown = round(s.suggest_w);
+    if (fin(s.ceiling_w) && fin(s.needed_w) && s.suggest_w >= s.ceiling_w - 0.5 && s.needed_w > s.ceiling_w) {
+      const hold = fin(targetC) ? `holding ${targetC} °C` : "holding the target";
+      return { label, value: `${shown} W`, sub: `At the ${round(s.ceiling_w)} W ceiling — ${hold} needs ≈ ${round(s.needed_w)} W`, muted };
+    }
     const d = fin(yourW) ? shown - round(yourW) : null;
     const target = fin(targetC) ? `toward ${targetC} °C` : "target unknown";
     let sub: string;

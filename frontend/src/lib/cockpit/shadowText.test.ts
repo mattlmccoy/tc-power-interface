@@ -94,3 +94,45 @@ test("the difference comes from the rounded numbers shown, and zero reads as the
   assert.equal(shadowCard("target", { ...base, suggest_w: 71.4 }, 71, 55).sub, "same as your 71 W, toward 55 °C");
   assert.equal(shadowCard("target", { ...base, suggest_w: 80.2 }, 71, 55).sub, "+9 W vs your 71 W, toward 55 °C");
 });
+
+// Fix 1: honest confidence (backend control/cockpit.py): drifting = K or tau moved > 5 % in 2 min.
+test("drifting: say the estimate is still moving and how much, whatever the band", () => {
+  const msg = "Still drifting: gain or time constant moved 10 % in the last 2 min. A power step would pin it down.";
+  assert.equal(confidenceSentence({ ...base, confidence: 0.48, drifting: true, drift_pct: 10.4 }), msg);
+  // a drift-driven low confidence is not the steady-power "can't be told apart" case
+  assert.equal(confidenceSentence({ ...base, confidence: 0.0, drifting: true, drift_pct: 62.1 }),
+    "Still drifting: gain or time constant moved 62 % in the last 2 min. A power step would pin it down.");
+  // not drifting, or an older backend without the fields: the bands as before
+  assert.match(confidenceSentence({ ...base, drifting: false, drift_pct: 1.2 }), /Good enough/);
+  assert.match(confidenceSentence({ ...base, confidence: 0.45 }), /indicative/);
+  // drifting but no number (should not happen): still says drifting, without a made-up figure
+  assert.equal(confidenceSentence({ ...base, confidence: 0.4, drifting: true, drift_pct: null }),
+    "Still drifting: gain or time constant still moving. A power step would pin it down.");
+  // no estimate wins over everything
+  assert.match(confidenceSentence({ ...base, valid: false, drifting: true, drift_pct: 10 }), /No estimate yet/);
+});
+
+// Fix 2: suggestion pinned at the ceiling because the target needs more than the ceiling.
+test("at the ceiling: say what holding the target would need (10-07 run numbers)", () => {
+  const today = { ...base, k_c_per_w: 0.53, t_amb_c: 22.8, suggest_w: 200, ceiling_w: 200, needed_w: 305.7 };
+  const c = shadowCard("target", today, 30.5, 185);
+  assert.equal(c.value, "200 W");
+  assert.equal(c.sub, "At the 200 W ceiling — holding 185 °C needs ≈ 306 W");
+  // within 0.5 W of the ceiling still counts
+  assert.equal(shadowCard("target", { ...today, suggest_w: 199.6 }, 30.5, 185).sub,
+    "At the 200 W ceiling — holding 185 °C needs ≈ 306 W");
+});
+
+test("not ceiling-limited: the usual difference text", () => {
+  const s = { ...base, suggest_w: 200, ceiling_w: 200, needed_w: 180 }; // ceiling only from the rate limit
+  assert.equal(shadowCard("target", s, 190, 55).sub, "+10 W vs your 190 W, toward 55 °C");
+  const below = { ...base, suggest_w: 150, ceiling_w: 200, needed_w: 306 }; // still ramping up
+  assert.equal(shadowCard("target", below, 140, 55).sub, "+10 W vs your 140 W, toward 55 °C");
+  const old = { ...base, suggest_w: 200 }; // older backend: no needed_w / ceiling_w
+  assert.equal(shadowCard("target", old, 190, 55).sub, "+10 W vs your 190 W, toward 55 °C");
+});
+
+test("at the ceiling with the target unknown: names the target as unknown, never NaN", () => {
+  const s = { ...base, suggest_w: 200, ceiling_w: 200, needed_w: 306 };
+  assert.equal(shadowCard("target", s, 30, Number.NaN).sub, "At the 200 W ceiling — holding the target needs ≈ 306 W");
+});

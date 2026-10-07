@@ -101,6 +101,12 @@ export interface ReplayShadowPoint {
   confidence: number;
   suggest_w: number | null;
   plateau_c: number | null;
+  /** Honest-confidence and ceiling fields (operators from v0.18.4; see `Shadow`). */
+  confidence_fit?: number | null;
+  drift_pct?: number | null;
+  drifting?: boolean;
+  needed_w?: number | null;
+  ceiling_w?: number | null;
 }
 
 /** GET /api/recordings/{run}/shadow. */
