@@ -140,3 +140,9 @@ test("runEvents: RF off edge and slow retune drift accumulate against the last r
     ["RF on", "setpoint → 40 W", "retune: Tune 20→19.4 %, Load 10→10 %", "RF off"],
   );
 });
+
+test("an implausible timestamp (before 2020, e.g. a corrupt \"0\") is skipped, as the backend replay skips it, so t_s origins agree", () => {
+  const zero = "0," + R0.split(",").slice(1).join(",");
+  const r = parseTelemetryCsv([HEADER, zero, R0, R1].join("\n"));
+  assert.deepEqual(r.map((x) => x.t_s), [0, 5]); // origin is R0, not the corrupt row
+});

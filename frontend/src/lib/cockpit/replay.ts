@@ -35,6 +35,9 @@ export interface ReplayEvent {
   text: string;
 }
 
+/** Timestamps before 2020-01-01 UTC cannot be from this tool (a corrupt "0"); the backend replay
+ * (recording/replay_shadow.py MIN_PLAUSIBLE_NS) skips them too, keeping t_s origins identical. */
+const MIN_PLAUSIBLE_NS = 1_577_836_800n * 1_000_000_000n;
 const REFLECTED_HIGH = 0.01;
 const RETUNE_MIN_PCT = 0.5;
 /** A shadow point farther than this from a row is not "the same moment" (the replay's own ROI join
@@ -81,7 +84,7 @@ const num = (v: string | undefined): number | null => {
 
 /**
  * Parse telemetry.csv text. Rows whose timestamp is missing/non-numeric, that are shorter than the
- * header (cut mid-write), or whose time goes BACKWARDS are skipped, so the result is time-sorted.
+ * header (cut mid-write), whose timestamp is implausible (< 2020), or whose time goes BACKWARDS are skipped, so the result is time-sorted.
  * Throws if the text has records but no `host_timestamp_ns` column (a damaged / foreign file is not
  * an empty run); empty text gives [].
  */
@@ -105,6 +108,7 @@ export function parseTelemetryCsv(text: string): ReplayRow[] {
     const ts = r[iTs].trim();
     if (!/^\d+$/.test(ts)) continue;
     const ns = BigInt(ts);
+    if (ns < MIN_PLAUSIBLE_NS) continue;
     if (ns0 === null) ns0 = ns;
     const t_s = Number(ns - ns0) / 1e9;
     if (rows.length > 0 && t_s < rows[rows.length - 1].t_s) continue;
