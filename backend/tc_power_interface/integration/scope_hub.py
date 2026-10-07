@@ -39,6 +39,8 @@ EVENT_FLAGS = ("probe_warn", "probe_hard", "flux_stop", "clipped", "attn_mismatc
 #: A reading older than max(STALE_MIN_S, STALE_POLLS x poll interval) is not shown as live.
 STALE_MIN_S = 2.0
 STALE_POLLS = 5
+_RECORDING_KEYS = ("vrms_v", "b_pk_mt", "f0_hz", "h2_pct", "h3_pct", "level_w", "level_state",
+                   "valid", "flags")
 _TELEMETRY_KEYS = ("forward_w", "reverse_w", "tune_cap_percent", "load_cap_percent")
 
 
@@ -205,7 +207,10 @@ class ScopeHub:
         files = run.finalize()
         return files if run.run_dir == run_dir else []
 
-    def snapshot(self) -> dict[str, Any]:
+    def _fresh_latest(self) -> tuple[dict[str, Any] | None, bool, dict[str, Any]]:
+        """(latest reading or None, stale?, link status). The single staleness rule: a reading is
+        live only while the link is connected and it is not older than
+        max(STALE_MIN_S, STALE_POLLS x poll interval)."""
         with self._lock:
             latest = None if self._latest is None else dict(self._latest)
         st = self.link.status()
@@ -216,4 +221,18 @@ class ScopeHub:
             max_age_s = max(STALE_MIN_S, STALE_POLLS * self.settings.poll_interval_s)
             if (time.time_ns() - int(latest["host_timestamp_ns"])) / 1e9 > max_age_s:
                 latest, stale = None, True  # link up but stalled: the last reading is not live
+        return latest, stale, st
+
+    def recording_fields(self) -> dict[str, Any] | None:
+        """Scope values for one telemetry.csv row, or None (blank columns) unless the link is
+        connected and the latest reading is fresh. age_ms is the reading's age at call time."""
+        latest, _stale, _st = self._fresh_latest()
+        if latest is None:
+            return None
+        out = {k: latest.get(k) for k in _RECORDING_KEYS}
+        out["age_ms"] = round((time.time_ns() - int(latest["host_timestamp_ns"])) / 1e6, 1)
+        return out
+
+    def snapshot(self) -> dict[str, Any]:
+        latest, stale, st = self._fresh_latest()
         return {"status": st, "latest": latest, "stale": stale, "settings": asdict(self.settings)}

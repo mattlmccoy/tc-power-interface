@@ -54,7 +54,24 @@ _THERMAL_FIELDS = {
 #: pre-existing columns so readers keyed on the old layout are unaffected. Added 2026-09-24: an
 #: in-run Load retune preceded a transformer-core runaway and the log had no tune/load positions.
 _MATCH_FIELDS = ["tune_cap_percent", "load_cap_percent", "manual_mode", "dc_voltage", "preset_slot"]
-_CSV_FIELDS = [*_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS]
+#: Scope sense-loop columns, APPENDED after the match fields (same precedent). Column -> key in
+#: the snapshot's ``scope`` sub-dict (ScopeHub.recording_fields()); blank (never 0) when the
+#: scope is disconnected or its reading is stale.
+_SCOPE_FIELDS = {
+    "scope_vrms_v": "vrms_v",
+    "scope_b_pk_mt": "b_pk_mt",
+    "scope_f0_hz": "f0_hz",
+    "scope_h2_pct": "h2_pct",
+    "scope_h3_pct": "h3_pct",
+    "scope_level_w": "level_w",
+    "scope_level_state": "level_state",
+    "scope_valid": "valid",
+    "scope_flags": "flags",
+    "scope_age_ms": "age_ms",
+}
+_CSV_FIELDS = [
+    *_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS, *_SCOPE_FIELDS,
+]
 
 
 class RecorderState(enum.Enum):
@@ -168,6 +185,9 @@ class TelemetryRecorder:
             row[col] = thermal.get(key)
         for key in _MATCH_FIELDS:
             row[key] = telemetry.get(key)
+        scope = snapshot.get("scope") or {}
+        for col, key in _SCOPE_FIELDS.items():
+            row[col] = scope.get(key)
         self._queue.put(row)  # unbounded; rows are tiny and a stall lasts only seconds
         self._sample_count += 1
 

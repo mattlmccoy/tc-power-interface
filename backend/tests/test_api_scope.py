@@ -169,3 +169,20 @@ def test_settings_save_failure_is_500_and_changes_nothing(tmp_path, monkeypatch)
         r = c.post("/api/scope/settings", json={"core_label": "core 9"})
         assert r.status_code == 500
         assert c.get("/api/scope").json()["settings"]["core_label"] == "core 2"
+
+
+def test_recording_with_connected_scope_has_scope_columns_in_telemetry_csv(tmp_path, monkeypatch):
+    import csv
+
+    with TestClient(_app(tmp_path, monkeypatch)) as c:
+        c.post("/api/scope/settings", json={"resource": "USB0::fake"})
+        run = c.post("/api/recording/start", json={"name": "sc-csv"}).json()["run"]
+        c.post("/api/scope/connect")
+        assert _wait_latest(c) is not None
+        time.sleep(0.4)  # let several telemetry polls land with a fresh scope reading
+        c.post("/api/recording/stop")
+        c.post("/api/scope/disconnect")
+        text = c.get(f"/api/recordings/{run}/telemetry.csv").text
+    rows = list(csv.DictReader(text.splitlines()))
+    vals = [float(r["scope_vrms_v"]) for r in rows if r["scope_vrms_v"] != ""]
+    assert vals and abs(vals[0] - 50.149) < 0.05

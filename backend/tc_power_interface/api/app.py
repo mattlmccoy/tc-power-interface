@@ -327,9 +327,8 @@ def create_app(
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
-        controller.add_listener(
-            lambda snap: recorder.record({**snap, "thermal": thermal.snapshot()})
-        )
+        controller.add_listener(lambda snap: recorder.record(
+            {**snap, "thermal": thermal.snapshot(), "scope": scope_hub.recording_fields()}))
         controller.add_listener(scope_hub.on_snapshot)
         app.state.thermal = thermal  # (thermal_source was set above from the operator's saved choice)
 

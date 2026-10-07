@@ -1,6 +1,7 @@
 import time
 from dataclasses import replace
 
+import pytest
 from scope_fakes import FakeScope
 
 from tc_power_interface.analysis.sense_loop_fit import fit_sense_loop
@@ -261,3 +262,27 @@ def test_link_error_shows_no_data(tmp_path, monkeypatch):
     snap = hub.snapshot()
     hub.disconnect()
     assert snap["status"]["connected"] is False and snap["latest"] is None
+
+
+def test_recording_fields_none_when_disconnected(tmp_path):
+    hub, _ = _hub(tmp_path)
+    hub.on_reading(_reading())
+    assert hub.recording_fields() is None
+
+
+def test_recording_fields_fresh_and_stale(tmp_path, monkeypatch):
+    import tc_power_interface.integration.scope_hub as hub_mod
+
+    monkeypatch.setattr(hub_mod, "STALE_MIN_S", 0.3, raising=False)
+    hub, _ = _live_hub(tmp_path, monkeypatch, [_StallAfter(1, 3.0)])
+    hub.connect()
+    assert _wait(lambda: hub.snapshot()["latest"] is not None)
+    f = hub.recording_fields()
+    assert f is not None
+    assert f["vrms_v"] == pytest.approx(50.149, rel=1e-3)
+    assert set(f) == {"vrms_v", "b_pk_mt", "f0_hz", "h2_pct", "h3_pct", "level_w",
+                      "level_state", "valid", "flags", "age_ms"}
+    assert 0 <= f["age_ms"] < 300
+    time.sleep(0.5)  # link still "connected" but stalled
+    assert hub.recording_fields() is None
+    hub.disconnect()
