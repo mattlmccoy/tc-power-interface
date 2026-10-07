@@ -198,3 +198,53 @@ class TestMatchCommandBuilders:
             codec.cmd_load_capacity(150)
         with pytest.raises(ValueError):
             codec.cmd_tune_capacity(-1)
+
+
+class TestInvalidStatusWord:
+    """A GS status word with any bit OUTSIDE the documented CXN map is an invalid read, not alarms.
+
+    Incident 2026-10-07 13:25:06: the real AG 0613 returned one checksum-valid GS frame whose status
+    word was 0xFFFF (temperature a sane 23.0 C, forward 0 W); believing every bit latched a false
+    OVER_TEMPERATURE + INTERLOCK_OPEN FAULT. Defined bits: 0,4,5,6,8,9,10,11,14 (tccxn.py:238-261).
+    """
+
+    @staticmethod
+    def _gs(word: int) -> bytes:
+        return struct.pack(">H", word) + struct.pack(">H", 230) + b"\x00\x01\x00\x03"
+
+    def test_all_ones_word_raises_invalid_status_word(self):
+        with pytest.raises(codec.InvalidStatusWord, match="0xFFFF"):
+            codec.parse_status(self._gs(0xFFFF))
+
+    def test_invalid_status_word_is_a_value_error(self):
+        assert issubclass(codec.InvalidStatusWord, ValueError)
+
+    def test_undefined_bit_12_alone_raises(self):
+        with pytest.raises(codec.InvalidStatusWord):
+            codec.parse_status(self._gs(1 << 12))
+
+    @pytest.mark.parametrize("bit", [1, 2, 3, 7, 12, 13, 15])
+    def test_every_undefined_bit_raises(self, bit):
+        with pytest.raises(codec.InvalidStatusWord):
+            codec.parse_status(self._gs(1 << bit))
+
+    @pytest.mark.parametrize("flag", list(codec.Status))
+    def test_every_defined_single_bit_parses(self, flag):
+        assert codec.parse_status(self._gs(int(flag))) == flag
+
+    @pytest.mark.parametrize("word", [0x0000, 0x0001, 0x0021, 0x0C01, 0x4F71])
+    def test_observed_and_defined_combinations_parse(self, word):
+        assert int(codec.parse_status(self._gs(word))) == word
+
+    def test_mask_is_exactly_the_or_of_the_defined_flags(self):
+        expected = 0
+        for flag in codec.Status:
+            expected |= int(flag)
+        assert codec.STATUS_DEFINED_MASK == expected == 0x4F71
+
+    def test_parse_status_exception_carries_the_raw_word(self):
+        with pytest.raises(codec.InvalidStatusWord) as info:
+            codec.parse_status(self._gs(0xFFFF))
+        assert info.value.raw_word == 0xFFFF
+        # parse_status sees only GS bytes; the device layer attaches the power readings.
+        assert info.value.forward_w is None and info.value.reverse_w is None

@@ -15,7 +15,7 @@ from tc_power_interface.control.safety import SafetyLimits
 from tc_power_interface.device.base import Telemetry
 from tc_power_interface.device.cxn import CxnDevice
 from tc_power_interface.device.simulated import SimulatedCxnTransport
-from tc_power_interface.protocol.codec import Status
+from tc_power_interface.protocol.codec import GtBlock, InvalidStatusWord, Status
 
 
 def make_controller(reflected_fraction=0.01, **limit_kw) -> Controller:
@@ -54,6 +54,10 @@ class _ModeDevice:
     def read_telemetry(self) -> Telemetry:
         return replace(_benign_telemetry(), manual_mode=self._manual, tune_cap_percent=35.0, load_cap_percent=66.0)
 
+    def read_match(self) -> GtBlock:
+        return GtBlock(manual_mode=self._manual, load_capacity=66.0, tune_capacity=35.0,
+                       dc_voltage=0, preset_slot=0)
+
     def set_rf(self, on: bool) -> None:
         pass
 
@@ -78,6 +82,52 @@ class TestConnectPreservesCaps:
         c = Controller(dev, poll_interval_s=0.01)
         c.connect()
         assert dev.forced == 1
+
+
+class _GarbledGsModeDevice(_ModeDevice):
+    """_ModeDevice whose GS status word is ALWAYS garbled (read_telemetry raises InvalidStatusWord)
+    while the GT/match block still reads fine — or, with ``gt_error``, the GT read fails too."""
+
+    def __init__(self, manual_mode: bool, gt_error: Exception | None = None):
+        super().__init__(manual_mode)
+        self.gt_error = gt_error
+        self.gt_reads = 0
+
+    def read_telemetry(self) -> Telemetry:
+        raise _invalid_word()
+
+    def read_match(self) -> GtBlock:
+        self.gt_reads += 1
+        if self.gt_error is not None:
+            raise self.gt_error
+        return super().read_match()
+
+
+class TestConnectReadsManualModeFromGt:
+    """connect() takes manual mode from the GT/match block only, so a garbled GS status word can
+    never be mistaken for 'mode unreadable' (which forces manual and RESETS the AIT cap DACs)."""
+
+    def test_garbled_gs_with_gt_manual_does_not_force_manual(self):
+        dev = _GarbledGsModeDevice(manual_mode=True)
+        c = Controller(dev, poll_interval_s=0.01)
+        c.connect()
+        assert c.state is ControllerState.CONNECTED
+        assert dev.forced == 0  # hand-tuned caps kept
+        assert dev.gt_reads == 1
+
+    def test_gt_not_manual_still_forces_manual(self):
+        dev = _GarbledGsModeDevice(manual_mode=False)
+        c = Controller(dev, poll_interval_s=0.01)
+        c.connect()
+        assert dev.forced == 1
+
+    def test_gt_read_failure_keeps_the_force_manual_fallback(self):
+        dev = _GarbledGsModeDevice(manual_mode=True, gt_error=TimeoutError("no reply"))
+        c = Controller(dev, poll_interval_s=0.01)
+        c.connect()
+        assert dev.gt_reads == 1  # one read, no retry loop
+        assert dev.forced == 1  # unchanged fallback: unreadable mode -> force manual
+        assert c.state is ControllerState.CONNECTED
 
 
 class TestGuardedRf:
@@ -626,3 +676,335 @@ class TestCapCommandEvents:
         c.set_tune_capacity(33.0, source="operator")  # must not raise
         c._tick()
         assert c.latest_telemetry.tune_cap_percent == pytest.approx(33.0, abs=1.0)
+
+
+class _ScriptedDevice:
+    """Fake generator that plays a script of reads: each entry is a Telemetry (good read) or an
+    Exception instance (raised). Models the 2026-10-07 incident: one checksum-valid GS frame whose
+    status word was 0xFFFF between good reads."""
+
+    def __init__(self, script: list):
+        self.script = list(script)
+        self.rf_off_calls = 0
+
+    def request_control(self) -> bool:
+        return True
+
+    def force_manual_mode(self) -> None:
+        pass
+
+    def read_telemetry(self) -> Telemetry:
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def set_rf(self, on: bool) -> None:
+        if on is False:
+            self.rf_off_calls += 1
+
+    def set_setpoint(self, w: int) -> None:
+        pass
+
+    def release_control(self) -> bool:
+        return True
+
+    def close(self) -> None:
+        pass
+
+
+def _invalid_word(forward_w: float = 0.0, reverse_w: float = 0.0,
+                  temperature_c: float = 23.0) -> Exception:
+    """The 2026-10-07 frame: status 0xFFFF; same-frame temperature 23.0 C, forward 0 W."""
+    return InvalidStatusWord(
+        "status word 0xFFFF has undefined bits", raw_word=0xFFFF, forward_w=forward_w,
+        reverse_w=reverse_w, temperature_c=temperature_c,
+    )
+
+
+def _connected(script: list, **kw) -> tuple[Controller, _ScriptedDevice]:
+    dev = _ScriptedDevice(script)
+    c = Controller(dev, poll_interval_s=0.01, link_loss_reads=3, **kw)
+    c.state = ControllerState.CONNECTED  # skip connect()'s own read; script is poll reads only
+    return c, dev
+
+
+class TestInvalidStatusWord:
+    """A status word with undefined bits (the real 0xFFFF of 2026-10-07) is a glitch the FIRST time
+    (discarded: no fault, no fake sample, no link-loss count) and a broken link if it PERSISTS
+    (second consecutive one is handled exactly like a read failure)."""
+
+    def test_single_invalid_word_is_discarded_without_fault(self, caplog):
+        good1 = replace(_benign_telemetry(), temperature_c=23.0, host_timestamp_ns=1)
+        good2 = replace(_benign_telemetry(), temperature_c=23.0, host_timestamp_ns=2)
+        c, dev = _connected([good1, _invalid_word(), good2])
+        seen: list[dict] = []
+        c.add_listener(seen.append)
+        c._tick()  # good
+        decision_before = c.latest_decision
+        with caplog.at_level(logging.WARNING, logger="tc_power_interface.control.controller"):
+            c._tick()  # the 0xFFFF glitch
+        assert c.state is ControllerState.CONNECTED
+        assert c.fault_reasons == ()
+        assert c.latest_telemetry is good1  # previous good sample kept, no fake one published
+        assert c.latest_decision is decision_before
+        assert c._read_failures == 0  # not counted toward link loss
+        assert len(seen) == 1  # listeners NOT notified for the discarded read
+        assert dev.rf_off_calls == 0
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("0xFFFF" in r.getMessage() for r in warnings)
+        c._tick()  # good again
+        assert c.latest_telemetry is good2
+        assert len(seen) == 2  # notified only for the two good samples
+        assert c.state is ControllerState.CONNECTED
+
+    def test_good_read_resets_the_invalid_count(self):
+        g = _benign_telemetry()
+        c, _ = _connected([g, _invalid_word(), g, _invalid_word(), g])
+        for _ in range(5):
+            c._tick()
+        assert c.state is ControllerState.CONNECTED
+        assert c._read_failures == 0
+        assert c._invalid_status_reads == 0
+
+    def test_two_consecutive_invalid_words_with_rf_on_fault(self):
+        on = replace(_benign_telemetry(), rf_on=True, status=Status.RF_ENABLED, forward_w=100.0)
+        c, dev = _connected([on, _invalid_word(), _invalid_word()])
+        c._tick()  # good, RF ON
+        c._tick()  # first invalid: discarded
+        assert c.state is ControllerState.CONNECTED
+        c._tick()  # second consecutive: persisting garbage while RF on -> loud FAULT
+        assert c.state is ControllerState.FAULT
+        assert any("link lost while RF was ON" in r for r in c.fault_reasons)
+        assert dev.rf_off_calls >= 1
+        assert c.device is not None
+
+    def test_two_consecutive_invalid_words_with_rf_off_count_toward_link_loss(self):
+        g = _benign_telemetry()
+        c, _ = _connected([g, _invalid_word(), _invalid_word(), _invalid_word()])
+        c._tick()  # good, RF off
+        c._tick()  # first invalid: discarded
+        assert c._read_failures == 0
+        c._tick()  # second consecutive -> treated as read failure #1
+        assert c.state is ControllerState.CONNECTED
+        assert c.fault_reasons == ()
+        assert c._read_failures == 1
+        c._tick()  # third consecutive -> read failure #2
+        assert c._read_failures == 2
+        assert c.state is ControllerState.CONNECTED
+
+    def test_persisting_invalid_words_then_a_timeout_drop_the_link(self):
+        g = _benign_telemetry()
+        c, _ = _connected(
+            [g, _invalid_word(), _invalid_word(), _invalid_word(), TimeoutError("gone")]
+        )
+        for _ in range(4):
+            c._tick()
+        assert c._read_failures == 2 and c.state is ControllerState.CONNECTED
+        c._tick()  # third failure of any kind -> existing link-loss behavior
+        assert c.state is ControllerState.DISCONNECTED
+        assert c.device is None
+
+    def test_invalid_then_timeout_then_invalid_is_not_a_fresh_first_glitch(self):
+        """Only a GOOD read resets the invalid streak: a timeout between two invalid words does not
+        make the second one a discardable 'first' glitch (mixed garbage = a bad link, fail safe)."""
+        g = _benign_telemetry()
+        c, _ = _connected([g, _invalid_word(), TimeoutError("t"), _invalid_word()])
+        for _ in range(4):
+            c._tick()
+        assert c._read_failures == 2  # the timeout + the second invalid word
+
+    def test_invalid_streak_does_not_leak_across_detach(self):
+        """A streak from an old link must not make the first glitch on a re-attached link count as
+        the second (manual detach and the auto link-drop both start the next link clean)."""
+        g = _benign_telemetry()
+        c, _ = _connected([g, _invalid_word()])
+        c._tick()
+        c._tick()  # streak = 1 on the old device
+        c.detach_device()
+        assert c._invalid_status_reads == 0
+
+    def test_invalid_streak_does_not_leak_across_auto_link_drop(self):
+        g = _benign_telemetry()
+        c, _ = _connected(
+            [g, TimeoutError("a"), TimeoutError("b"), _invalid_word(), _invalid_word()]
+        )
+        for _ in range(4):  # 2 timeouts + 1 discarded glitch (streak = 1)
+            c._tick()
+        assert c._invalid_status_reads == 1
+        c._tick()  # 2nd invalid -> read failure #3 -> link dropped
+        assert c.state is ControllerState.DISCONNECTED
+        assert c._invalid_status_reads == 0
+
+    def test_a_real_over_temperature_word_still_trips(self):
+        """Regression: a VALID word (only bit 10, OVER_TEMPERATURE) must fault exactly as before."""
+        g = _benign_telemetry()
+        hot = replace(_benign_telemetry(), status=Status.OVER_TEMPERATURE)
+        c, dev = _connected([g, hot])
+        c._tick()
+        c._tick()
+        assert c.state is ControllerState.FAULT
+        assert "generator reports OVER_TEMPERATURE" in c.fault_reasons
+        assert dev.rf_off_calls >= 1
+
+
+class TestInvalidStatusWordStillEnforcesLimits:
+    """S1: an unreadable status word must not blind protection. The same GP/GS frames still carry
+    forward/reverse power and temperature, so the absolute limits are enforced on every invalid
+    word, and forward power marks RF as live for the link-loss classification."""
+
+    def test_rf_just_enabled_persistent_invalid_words_fault_not_quiet_disconnect(self):
+        """Reviewer's probe: last good sample RF OFF, operator enables RF, every GS now garbled
+        while 50 W flows -> a loud FAULT, never a quiet DISCONNECTED."""
+        g = _benign_telemetry()
+        c, dev = _connected([g] + [_invalid_word(forward_w=50.0, reverse_w=1.0)] * 6)
+        states = []
+        for _ in range(6):
+            if c.device is None:
+                break
+            c._tick()
+            states.append(c.state)
+        assert ControllerState.DISCONNECTED not in states
+        assert c.state is ControllerState.FAULT
+        assert any("RF" in r for r in c.fault_reasons)
+        assert c.device is not None
+        assert dev.rf_off_calls >= 1
+
+    def test_single_invalid_word_with_reflected_over_limit_faults(self):
+        g = _benign_telemetry()
+        c, dev = _connected([g, _invalid_word(forward_w=150.0, reverse_w=40.0)],
+                            limits=SafetyLimits(max_reflected_w=25.0))
+        c._tick()
+        c._tick()
+        assert c.state is ControllerState.FAULT
+        assert any("reflected" in r and "0xFFFF" in r for r in c.fault_reasons)
+        assert dev.rf_off_calls >= 1
+
+    def test_single_invalid_word_with_temperature_over_limit_faults(self):
+        g = _benign_telemetry()
+        c, _ = _connected([g, _invalid_word(temperature_c=80.0)],
+                          limits=SafetyLimits(temperature_c_trip=70.0))
+        c._tick()
+        c._tick()
+        assert c.state is ControllerState.FAULT
+        assert any("temperature" in r and "0xFFFF" in r for r in c.fault_reasons)
+
+    def test_single_invalid_word_with_sane_partial_reading_is_still_discarded(self):
+        g = _benign_telemetry()
+        c, dev = _connected([g, _invalid_word(forward_w=150.0, reverse_w=2.0, temperature_c=30.0)])
+        c._tick()
+        c._tick()
+        assert c.state is ControllerState.CONNECTED
+        assert c.fault_reasons == ()
+        assert c._read_failures == 0
+        assert dev.rf_off_calls == 0
+
+
+class TestInvalidStatusWordWindow:
+    """S2: >= 3 invalid words in the last 20 reads is a read failure even when not consecutive."""
+
+    def test_alternating_good_invalid_rf_off_escalates_on_the_third(self):
+        g = _benign_telemetry()
+        c, _ = _connected([g, _invalid_word(), g, _invalid_word(), g, _invalid_word()])
+        for _ in range(4):
+            c._tick()
+        assert c._read_failures == 0  # 2 isolated glitches: both discarded
+        assert c.snapshot()["invalid_status_reads_recent"] == 2
+        c._tick()  # good
+        c._tick()  # 3rd invalid in the window -> treated as a read failure
+        assert c._read_failures == 1
+        assert c.snapshot()["invalid_status_reads_recent"] == 3
+        assert c.state is ControllerState.CONNECTED
+
+    def test_alternating_good_invalid_rf_on_faults_on_the_third(self):
+        on = replace(_benign_telemetry(), rf_on=True, status=Status.RF_ENABLED, forward_w=100.0)
+        bad = _invalid_word(forward_w=100.0, reverse_w=1.0)
+        c, _ = _connected([on, bad, on, bad, on, bad])
+        for _ in range(4):
+            c._tick()
+        assert c.state is ControllerState.CONNECTED
+        c._tick()
+        c._tick()
+        assert c.state is ControllerState.FAULT
+
+    def test_window_forgets_glitches_older_than_20_reads(self):
+        g = _benign_telemetry()
+        script = [g, _invalid_word()] + [g] * 19 + [_invalid_word(), g, _invalid_word()]
+        c, _ = _connected(script)
+        for _ in range(len(script)):
+            c._tick()
+        assert c.snapshot()["invalid_status_reads_recent"] == 2
+        assert c._read_failures == 0
+        assert c.state is ControllerState.CONNECTED
+
+    def test_snapshot_exposes_zero_when_clean(self):
+        c, _ = _connected([_benign_telemetry()])
+        c._tick()
+        assert c.snapshot()["invalid_status_reads_recent"] == 0
+
+
+class TestDiscardedReadRefreshesStaleness:
+    """I1: the device DID answer on a discarded read, so it refreshes the staleness clock — a
+    glitch plus one slow cycle must not reach the 2-read stale debounce."""
+
+    def test_glitch_then_one_slow_cycle_does_not_trip_stale(self):
+        clock = {"t": 0.0}
+        g = _benign_telemetry()
+        dev = _ScriptedDevice([g, _invalid_word(), g, g])
+        c = Controller(dev, poll_interval_s=0.01, clock=lambda: clock["t"],
+                       limits=SafetyLimits(telemetry_timeout_s=1.5))
+        c.state = ControllerState.CONNECTED
+        c._tick()  # good at t=0
+        clock["t"] = 1.0
+        c._tick()  # discarded glitch at t=1.0 (device answered)
+        clock["t"] = 2.0
+        c._tick()  # good: gap since the glitch 1.0 s (< 1.5)
+        clock["t"] = 3.7
+        c._tick()  # one slow cycle: gap 1.7 s (late, but only once)
+        assert c.state is ControllerState.CONNECTED
+        assert c.fault_reasons == ()
+
+
+class TestInvalidStatusWordEndToEnd:
+    def test_real_codec_path_discards_a_single_0xffff_frame(self):
+        """Through the REAL CxnDevice + codec: one GS frame with status 0xFFFF must not fault."""
+        transport = SimulatedCxnTransport(reflected_fraction=0.01)
+        c = Controller(CxnDevice(transport), poll_interval_s=0.01)
+        c.connect()
+        seen: list[dict] = []
+        c.add_listener(seen.append)
+        c._tick()
+        real_word = transport._status_word
+        transport._status_word = lambda: 0xFFFF  # type: ignore[method-assign]
+        c._tick()
+        transport._status_word = real_word  # type: ignore[method-assign]
+        assert c.state is ControllerState.CONNECTED
+        assert c.fault_reasons == ()
+        assert c.latest_telemetry is not None and c.latest_telemetry.rf_on is False
+        assert len(seen) == 1  # the 0xFFFF read notified nobody
+        assert c._read_failures == 0
+        c._tick()
+        assert c.state is ControllerState.CONNECTED
+        assert len(seen) == 2
+
+    def test_real_codec_path_discards_a_single_0xffff_frame_with_rf_on(self):
+        transport = SimulatedCxnTransport(reflected_fraction=0.01)
+        c = Controller(CxnDevice(transport), poll_interval_s=0.01)
+        c.connect()
+        c.set_setpoint(150)
+        c.enable_rf()
+        seen: list[dict] = []
+        c.add_listener(seen.append)
+        c._tick()
+        assert c.latest_telemetry is not None and c.latest_telemetry.rf_on is True
+        real_word = transport._status_word
+        transport._status_word = lambda: 0xFFFF  # type: ignore[method-assign]
+        c._tick()  # 150 W fwd, 1.5 W refl, sane temperature -> a discardable glitch
+        transport._status_word = real_word  # type: ignore[method-assign]
+        assert c.state is ControllerState.CONNECTED
+        assert c.fault_reasons == ()
+        assert len(seen) == 1
+        assert c._read_failures == 0
+        assert transport.rf_on is True  # protection did not need to drop RF
+        c._tick()
+        assert c.state is ControllerState.CONNECTED
