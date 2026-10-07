@@ -1,6 +1,6 @@
 """Watched ROIs (transformer cores first): each one's mean temperature or a reason, plus the rate of
 rise over a trailing window of VALID samples that spans AT LEAST 60 s (sparse ticks stretch it; None
-until it does). Display and warn only (D3); the RF-off interlock is a separate build (v0.18).
+until it does). Display and warn only (D3); the RF-off interlock is a separate, later build.
 Pure."""
 
 from __future__ import annotations

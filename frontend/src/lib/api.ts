@@ -219,7 +219,7 @@ export const api = {
   // Cockpit: core-watch ROIs, run mode (bookkeeping only), the always-locked engage, and replay.
   setWatch: (names: string[]) => post("/api/thermal/watch", { names }),
   setRunMode: (m: RunMode) => post("/api/run-mode", m),
-  /** Refused with 409 until the core interlock exists (v0.18); the UI shows the reason. */
+  /** Refused with 409 until the core interlock exists; the UI shows the reason. */
   engageLoop: () => post("/api/thermal/engage"),
   recordings: async (): Promise<RecordingRun[]> =>
     ((await (await getOk("/api/recordings")).json()) as { runs: RecordingRun[] }).runs,

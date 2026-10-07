@@ -31,7 +31,7 @@ def test_status_has_cockpit_blocks(tmp_path):
         th = c.get("/api/status").json()["thermal"]
         assert th["watch"] == [] and th["run_mode"]["mode"] == "ladder"
         assert th["shadow"]["valid"] is False and th["shadow"]["why"] == "learning"
-        reason = "core interlock not built yet (v0.18)"
+        reason = "core interlock not built yet"
         assert th["engage"] == {"available": False, "reason": reason}
 
 

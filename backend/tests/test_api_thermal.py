@@ -49,13 +49,15 @@ def _spy_setpoint(c):
 
 
 def test_start_auto_is_refused_and_never_drives(tmp_path):
-    # D12 (Matt, 2026-10-07): no loop drives power until the core interlock exists (v0.18). The
+    # D12 (Matt, 2026-10-07): no loop drives power until the core interlock exists. The
     # legacy auto loop used to drive the simulator's setpoint (25 -> 50 W); the API now refuses it.
     with _client(tmp_path) as c:
         calls = _spy_setpoint(c)
         r = c.post("/api/thermal/start", json={"mode": "auto"})
         assert r.status_code == 409
-        assert "core interlock (v0.18)" in r.json()["detail"]
+        detail = r.json()["detail"]
+        # This release IS v0.18.0 and still has no interlock: the message must not name a version.
+        assert "core interlock is built" in detail and "v0." not in detail
         th = c.get("/api/status").json()["thermal"]
         assert th["mode"] == "advisory" and th["running"] is False
         c.post("/api/rf/enable")  # operator enables RF (sim)

@@ -39,7 +39,7 @@ test("no control ROI reads as a name, not as the literal 'No control ROI live'",
 });
 
 test("the interlock gate shows the backend's reason (thermal.engage.reason) when given", () => {
-  const reason = "core interlock not built yet (v0.18)";
+  const reason = "core interlock not built yet";
   assert.equal(loopGates({ ...ok, interlockReason: reason })[4].text, reason);
   assert.equal(loopGates({ ...ok, interlockReason: reason, interlockArmed: true })[4].text, "Core interlock armed");
   assert.equal(loopGates({ ...ok, interlockReason: "" })[4].text, "Core interlock (not built yet)");

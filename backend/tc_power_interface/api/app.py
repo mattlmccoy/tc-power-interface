@@ -741,7 +741,7 @@ def create_app(
                 **app.state.cockpit.snapshot(),  # "shadow" + "watch"
                 "run_mode": run_mode_payload(app.state.run_mode),
                 # D12: the temperature loop may not drive power until the core interlock exists.
-                "engage": {"available": False, "reason": "core interlock not built yet (v0.18)"},
+                "engage": {"available": False, "reason": "core interlock not built yet"},
             },
             "ramp": _ramp().snapshot(),
             "timer": _timer().snapshot(),
@@ -887,14 +887,16 @@ def create_app(
 
     @app.post("/api/thermal/start")
     def thermal_start(body: ThermalStartBody) -> dict[str, Any]:
-        # D12 (2026-10-07): no loop may drive power until the core interlock exists (v0.18). The
+        # D12 (2026-10-07): no loop may drive power until the core interlock exists. The
         # ThermalController can still run "auto" (unit tests), but the API only ever starts it in
         # advisory mode — this is the ONLY route that sets thermal.mode. Refused before any state
         # changes, so a rejected request leaves the loop exactly as it was.
         if body.mode == "auto":
             raise HTTPException(
                 status_code=409,
-                detail="auto is locked until the core interlock (v0.18); advisory mode still works",
+                detail=(
+                    "auto is locked until the core interlock is built; advisory mode still works"
+                ),
             )
         if body.mode != "advisory":
             raise HTTPException(status_code=422, detail=f"unknown thermal mode: {body.mode!r}")
@@ -985,10 +987,10 @@ def create_app(
 
     @app.post("/api/thermal/engage")
     def thermal_engage() -> dict[str, Any]:
-        # D12: the temperature loop may not drive power until the core interlock exists (v0.18).
+        # D12: the temperature loop may not drive power until the core interlock exists.
         # Refused server-side so a UI bug can never unlock it.
         raise HTTPException(
-            status_code=409, detail="locked: the core interlock is not built yet (v0.18)"
+            status_code=409, detail="locked: the core interlock is not built yet"
         )
 
     # --- power ramp ------------------------------------------------------------------------
