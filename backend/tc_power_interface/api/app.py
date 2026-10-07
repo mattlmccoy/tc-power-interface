@@ -14,8 +14,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import platform
+import time
 from collections.abc import AsyncIterator
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -23,10 +26,12 @@ from typing import Any, cast
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tc_power_interface import __version__
+from tc_power_interface.control.cockpit import CockpitObserver
 from tc_power_interface.control.controller import Controller
+from tc_power_interface.control.core_watch import MAX_WATCH
 from tc_power_interface.control.match_tuner import (
     MATCH_TUNER_BOUNDS,
     MatchTuner,
@@ -35,6 +40,12 @@ from tc_power_interface.control.match_tuner import (
 from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, RampPlan
 from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
 from tc_power_interface.control.pulse import PULSE_BOUNDS, PulseController, PulsePlan
+from tc_power_interface.control.run_mode import (
+    RunMode,
+    load_run_mode,
+    parse_run_mode,
+    save_run_mode,
+)
 from tc_power_interface.control.safety import HARD_BOUNDS, SafetyLimits
 from tc_power_interface.control.safety_store import load_limits, save_limits
 from tc_power_interface.control.temperature import SimulatedThermalSource
@@ -53,6 +64,8 @@ from tc_power_interface.integration.flir_link import FlirLink
 from tc_power_interface.integration.flir_roi_temps import FlirPollingSource
 from tc_power_interface.integration.rf_link_notifier import RfLinkNotifier
 from tc_power_interface.recording.recorder import RecorderState, TelemetryRecorder
+
+logger = logging.getLogger(__name__)
 
 API_VERSION = "0.1"
 _DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2].parent / "frontend" / "dist"
@@ -167,6 +180,17 @@ class ThermalRoiBody(BaseModel):
     name: str
 
 
+class WatchBody(BaseModel):
+    names: list[str] = Field(default_factory=list, max_length=MAX_WATCH)
+
+
+class RunModeBody(BaseModel):
+    mode: str
+    ladder_w: list[float] = Field(default_factory=list)
+    fixed_w: float = 0
+    fixed_min: float = 0
+
+
 class AutoLogBody(BaseModel):
     enabled: bool
 
@@ -214,6 +238,11 @@ def thermal_extra(source: Any) -> dict[str, Any]:
         "control_max_c": getattr(source, "latest_max_c", None),
         "roi_temps": fn() if callable(fn) else [],
     }
+
+
+def run_mode_payload(m: RunMode) -> dict[str, Any]:
+    """A run mode as JSON (the ladder tuple as a list)."""
+    return {**asdict(m), "ladder_w": list(m.ladder_w)}
 
 
 def create_app(
@@ -266,6 +295,12 @@ def create_app(
         # loop silently read nothing and logged 0 C). Real hardware with a FLIR link defaults to FLIR.
         src_cfg = load_source(experiments_root, default_type="flir" if (flir_url and backend != "simulated") else "simulated")
         app.state.control_roi = src_cfg["roi"]
+        app.state.watch_rois = src_cfg["watch"]
+        # Run mode is display/bookkeeping only; a stale file is re-clamped to the real limit.
+        app.state.run_mode = load_run_mode(
+            experiments_root, max_forward_w=active_limits.max_forward_w
+        )
+        app.state.current_run = None  # set before the listeners can fire (the observer reads it)
         app.state.flir_roi_url = f"{(flir_url or '').rstrip('/')}/api/live/roi-temps" if flir_url else None
         initial_source: Any = SimulatedThermalSource()
         app.state.thermal_source = "simulated"
@@ -279,10 +314,34 @@ def create_app(
             plan=load_plan(experiments_root, max_forward_w=active_limits.max_forward_w),
             mode="advisory",
         )
+        # Cockpit observer (estimate + shadow loop + core watch). It is handed NUMBERS only — never
+        # the controller — so it cannot command power, RF or caps.
+        cockpit = CockpitObserver()
+        app.state.cockpit = cockpit
+
+        def _observe(snap: dict[str, Any]) -> None:
+            src = thermal.source  # swappable at runtime by POST /api/thermal/source
+            cockpit.observe(
+                t_s=time.monotonic(),
+                telemetry=snap.get("telemetry") or {},
+                part_roi=app.state.control_roi,
+                part_temp_c=thermal.control_temp_c,
+                temp_status=getattr(src, "status", "simulated"),
+                roi_temps=thermal_extra(src)["roi_temps"],
+                watch=app.state.watch_rois,
+                run_id=app.state.current_run,
+                run_mode=app.state.run_mode,
+                target_c=thermal.plan.target_c,
+                ceiling_w=float(min(thermal.plan.loop_ceiling_w, controller.limits.max_forward_w)),
+            )
         # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
         # POST the control-telemetry row to the FLIR logger (best-effort; never blocks the tick).
         def _thermal_tick(snap: dict[str, Any]) -> None:
             thermal.tick(poll_interval_s)
+            try:
+                _observe(snap)
+            except Exception:  # noqa: BLE001 - a display-only observer must never stop the poll loop
+                logger.exception("cockpit observer failed; skipping this tick")
             poster = app.state.control_telemetry
             if thermal.running and poster.enabled:
                 body = build_control_telemetry(
@@ -323,9 +382,10 @@ def create_app(
             _auto_prev["rf"] = rf
 
         controller.add_listener(_auto_log)
-        controller.add_listener(
-            lambda snap: recorder.record({**snap, "thermal": thermal.snapshot()})
-        )
+        controller.add_listener(lambda snap: recorder.record({
+            **snap, "thermal": thermal.snapshot(), "cockpit": cockpit.record_fields(),
+            "roi_temps": thermal_extra(thermal.source)["roi_temps"],
+        }))
         app.state.thermal = thermal  # (thermal_source was set above from the operator's saved choice)
 
         # Software power ramp (init -> target at W/s); ticks from the poll, drives the setpoint.
@@ -408,7 +468,6 @@ def create_app(
         app.state.device_info = device_info
         app.state.backend = backend
         app.state.connected_port = None
-        app.state.current_run = None
         app.state.flir_link = flir_link
         try:
             yield
@@ -532,6 +591,10 @@ def create_app(
                 "temp_status": getattr(_thermal().source, "status", "simulated"),
                 "available_rois": _available_rois(),
                 **thermal_extra(_thermal().source),
+                **app.state.cockpit.snapshot(),  # "shadow" + "watch"
+                "run_mode": run_mode_payload(app.state.run_mode),
+                # D12: the temperature loop may not drive power until the core interlock exists.
+                "engage": {"available": False, "reason": "core interlock not built yet (v0.18)"},
             },
             "ramp": _ramp().snapshot(),
             "timer": _timer().snapshot(),
@@ -716,12 +779,18 @@ def create_app(
         else:
             th.source = SimulatedThermalSource()
             app.state.thermal_source = "simulated"
-        save_source(experiments_root, {"type": app.state.thermal_source, "roi": app.state.control_roi})
+        _save_source()
         return {"source": app.state.thermal_source}
 
     @app.get("/api/thermal/rois")
     def thermal_rois() -> dict[str, Any]:
         return {"available_rois": _available_rois(), "control_roi": app.state.control_roi}
+
+    def _save_source() -> None:
+        save_source(experiments_root, {
+            "type": app.state.thermal_source, "roi": app.state.control_roi,
+            "watch": app.state.watch_rois,
+        })
 
     @app.post("/api/thermal/roi")
     def thermal_roi(body: ThermalRoiBody) -> dict[str, Any]:
@@ -730,8 +799,38 @@ def create_app(
         setter = getattr(_thermal().source, "set_roi", None)
         if callable(setter):
             setter(app.state.control_roi)
-        save_source(experiments_root, {"type": app.state.thermal_source, "roi": app.state.control_roi})
+        _save_source()
         return {"control_roi": app.state.control_roi, "available_rois": _available_rois()}
+
+    @app.post("/api/thermal/watch")
+    def thermal_watch(body: WatchBody) -> dict[str, Any]:
+        # Core-watch ROIs: display/record only. More than MAX_WATCH names is a 422 (WatchBody).
+        app.state.watch_rois = list(dict.fromkeys(n for n in body.names if n))[:MAX_WATCH]
+        _save_source()
+        return {"watch": app.state.watch_rois}
+
+    @app.get("/api/run-mode")
+    def get_run_mode() -> dict[str, Any]:
+        return run_mode_payload(app.state.run_mode)
+
+    @app.post("/api/run-mode")
+    def set_run_mode(body: RunModeBody) -> dict[str, Any]:
+        # Bookkeeping only: the run mode never sets power.
+        try:
+            m = parse_run_mode(body.model_dump(), max_forward_w=_controller().limits.max_forward_w)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        app.state.run_mode = m
+        save_run_mode(experiments_root, m)
+        return run_mode_payload(m)
+
+    @app.post("/api/thermal/engage")
+    def thermal_engage() -> dict[str, Any]:
+        # D12: the temperature loop may not drive power until the core interlock exists (v0.18).
+        # Refused server-side so a UI bug can never unlock it.
+        raise HTTPException(
+            status_code=409, detail="locked: the core interlock is not built yet (v0.18)"
+        )
 
     # --- power ramp ------------------------------------------------------------------------
     def _ramp_payload() -> dict[str, Any]:
