@@ -148,6 +148,7 @@ class CockpitObserver:
         self._history: deque[tuple[float, float, bool]] = deque()
         self._ambient: Ambient | None = None  # this run's room temperature; None = not decided
         self._preset: Ambient | None = None  # replay: a decision to use instead of judging
+        self._was_heating = False
 
     def preset_ambient(self, a: Ambient | None) -> None:
         """REPLAY ONLY: use ``a`` at the run's first heating tick instead of judging (a recording
@@ -200,9 +201,14 @@ class CockpitObserver:
             self._suggest = None
             self._mode = run_mode.mode
         heating = rf_on and power_known and power >= MIN_POWER_W
-        if heating and self._ambient is None:  # first heating tick of the run: decide T_amb once
+        # Decide T_amb at the run's first heating tick. A KNOWN value then holds for the run (the
+        # part has been heated); an UNKNOWN one is judged again at the next RF-on edge, when the
+        # part may have rested meanwhile (a recording can stay open across RF off).
+        unknown = self._ambient is not None and self._ambient.t_amb_c is None
+        if heating and (self._ambient is None or (unknown and not self._was_heating)):
             self._ambient = self._decide(t_s, part_temp_c, roi_temps, ambient_roi)
             self._est.fix_ambient(self._ambient.t_amb_c)
+        self._was_heating = heating
         self._remember(t_s, part_temp_c, heating)
         before = self._est.grid_samples
         self._estimate = self._est.add(t_s, power, part_temp_c, rf_on=rf_on and power_known)

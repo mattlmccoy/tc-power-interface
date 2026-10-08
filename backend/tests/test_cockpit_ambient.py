@@ -146,3 +146,25 @@ def test_rf_on_at_zero_power_is_not_heating():
         _tick(obs, float(t), 22.83, power=0.0, rf=True)
     _tick(obs, 0.0, 22.83, power=30.0, rf=True, run_id="run2")
     assert obs.snapshot()["shadow"]["ambient"]["source"] == "part_at_rest"
+
+
+def test_an_unknown_room_is_judged_again_at_the_next_rf_on_in_the_same_run():
+    # found on the simulator: a recording kept running across RF off, so the first (unknown)
+    # decision stuck although the part then rested a full minute before RF came back
+    obs = CockpitObserver()
+    _tick(obs, 0.0, 25.0, power=20.0, rf=True)  # operator just started: no history
+    assert obs.snapshot()["shadow"]["ambient"]["reason"] == "no_history"
+    for t in range(1, 80):
+        _tick(obs, float(t), 25.0)  # RF off, at rest, same run
+    _tick(obs, 80.0, 25.0, power=20.0, rf=True)
+    amb = obs.snapshot()["shadow"]["ambient"]
+    assert amb["source"] == "part_at_rest" and amb["t_c"] == pytest.approx(25.0)
+    assert obs.record_fields()["shadow_amb_src"] == "part_at_rest"
+
+
+def test_an_unknown_room_is_not_rejudged_while_rf_stays_on():
+    obs = CockpitObserver()
+    _tick(obs, 0.0, 25.0, power=20.0, rf=True)
+    for t in range(1, 80):  # RF stays on: no new RF-on edge, nothing to re-judge
+        _tick(obs, float(t), 25.0, power=20.0, rf=True)
+    assert obs.snapshot()["shadow"]["ambient"]["reason"] == "no_history"
