@@ -184,3 +184,47 @@ def test_covariance_trace_is_capped_during_a_long_steady_hold():
     for n in range(int(7200 / 0.5)):  # 2 h dead-steady: the b direction is unexcited
         est.add(n * 0.5, 40.0, 24.0, rf_on=True)
     assert est._cov[0][0] + est._cov[1][1] <= 2 * COV_INIT + 1e-9
+
+
+def _warm_start(k, tau, p, *, room=22.8, start=29.1, minutes=6, fix=..., noise=0.05, dt=0.5):
+    """A part that starts warm (cooling toward ``room``) when RF comes on at constant ``p``.
+    ``fix``: ... = the auto-latch, else the value passed to fix_ambient before the first tick."""
+    rng = random.Random(1)
+    est, temp, out = PlantEstimator(), start, None
+    if fix is not ...:
+        est.fix_ambient(fix)
+    for n in range(int(minutes * 60 / dt)):
+        temp += (k / tau * p - (temp - room) / tau) * dt
+        out = est.add(n * dt, p, temp + rng.gauss(0, noise), rf_on=True)
+    return out
+
+
+def test_auto_latch_on_a_warm_part_underestimates_the_gain():
+    # documents the 20261007_171928 failure mode: T_amb latched at 29.1, not the 22.8 room
+    e = _warm_start(0.45, 180.0, 55.0)
+    assert e.t_amb_c == pytest.approx(29.1, abs=0.3)
+    assert e.valid and e.k_c_per_w < 0.85 * 0.45
+
+
+def test_fixed_room_temperature_makes_a_warm_start_learn_what_a_cold_start_learns():
+    e = _warm_start(0.45, 180.0, 55.0, fix=22.8)
+    cold = _warm_start(0.45, 180.0, 55.0, start=22.8)  # at rest at room: the auto-latch is right
+    assert e.t_amb_c == 22.8 and e.valid
+    assert e.k_c_per_w == pytest.approx(0.45, rel=0.10)
+    # tau is ~19 % long after 6 min at one constant power whether the start is warm or cold
+    # (estimator limit at steady power); the fix's claim is warm == cold.
+    assert e.k_c_per_w == pytest.approx(cold.k_c_per_w, rel=0.03)
+    assert e.tau_s == pytest.approx(cold.tau_s, rel=0.03)
+
+
+def test_fixed_unknown_room_temperature_never_learns():
+    e = _warm_start(0.45, 180.0, 55.0, fix=None)
+    assert e.t_amb_c is None and not e.valid and e.updates == 0
+
+
+def test_reset_forgets_a_fixed_room_temperature():
+    est = PlantEstimator()
+    est.fix_ambient(None)
+    est.reset()
+    est.add(0.0, 30.0, 25.0, rf_on=True)
+    assert est.estimate().t_amb_c == 25.0  # back to the auto-latch

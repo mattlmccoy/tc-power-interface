@@ -96,6 +96,10 @@
 .ck-lbl { font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .ck-sub { font-size: 11px; color: var(--muted); line-height: 1.4; }
 .ck-line { min-height: 1.4em; }
+/* The shadow card's sub-line changes at RF on ("learning…" -> "paused: room temperature unknown"):
+   a fixed two lines so a wrap can never move the card. */
+.ck-shadowcard .ck-line { height: 2.8em; min-height: 0; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .ck-big { font: 28px/1.15 var(--font-mono); color: var(--fg-strong); font-variant-numeric: tabular-nums; }
 .ck-big small { font-size: 14px; color: var(--muted); }
 .ck-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-deep); padding: 8px 10px; min-width: 0; }
@@ -103,11 +107,16 @@
 .ck-row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 10px; }
 .ck-shadowcard { margin-top: 10px; }
 .ck-shadowcard .ck-sub { min-height: 0; }
-.ck-shadowcard .ck-conf { min-height: 2.9em; margin: 4px 0; }
+/* Fixed three lines (full text in the title): the sentence changes at RF on and must not shift the
+   card (HARD rule: nothing that changes during a run moves the layout). */
+.ck-shadowcard .ck-conf { height: 4.35em; margin: 4px 0; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .ck-shadowc { color: var(--ck-shadow); }
 .ck-kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; font-size: 12px; margin: 8px 0 0; }
 .ck-kv dt { color: var(--muted); }
 .ck-kv dd { margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg); overflow-wrap: anywhere; }
+/* One line whatever its length (the Room line changes at RF on): never shifts the layout. */
+.ck-kv dd.ck-clamp1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
 .ck-cur { color: var(--accent); font-weight: 700; }
 .ck-bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 6px; }
 .ck-bar i { display: block; height: 100%; background: var(--ck-shadow); }

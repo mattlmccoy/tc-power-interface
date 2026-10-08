@@ -10,7 +10,7 @@ import { f1, mmss } from "../../lib/cockpit/format.ts";
 import { compareStats, parseTelemetry, runEvents, type ReplayEvent, type ReplayRow } from "../../lib/cockpit/replay.ts";
 import { cursorIndex, eventsStatus, mergeEvents, recorderEvents, replaySamples, shadowAt, shadowKey, shadowStale, valuesAt } from "../../lib/cockpit/replayView.ts";
 import type { RecordingEvent } from "../../lib/api.ts";
-import { confidenceSentence, shadowCard } from "../../lib/cockpit/shadowText.ts";
+import { confidenceSentence, roomLine, shadowCard } from "../../lib/cockpit/shadowText.ts";
 import { CockpitTimeline } from "./CockpitTimeline.tsx";
 import { ReplayStrip, type ReplayScales } from "./ReplayStrip.tsx";
 
@@ -165,7 +165,7 @@ export function RunsView({ defaults }: { defaults: RunsDefaults }) {
   const recEvents = ready?.recEvents;
   const events = useMemo(() => mergeEvents(runEvents(rows), recEvents ?? []), [rows, recEvents]);
   const at = valuesAt(rows, pts ?? [], cursorS);
-  const sh = shadowAt(at.shadow);
+  const sh = shadowAt(at.shadow, pts ? shadow!.data.ambient : undefined);
   const evIdx = cursorIndex(events.map((e) => e.t_s), cursorS);
   const shownRoi = pts ? shadow!.data.roi : null;
   const partAt = pts ? at.shadow?.temp_c ?? null : at.row?.part_temp_c ?? null;
@@ -286,12 +286,13 @@ export function RunsView({ defaults }: { defaults: RunsDefaults }) {
             <dl className="ck-kv">
               <dt>Heating gain</dt><dd>{sh?.valid && fin(sh.k_c_per_w) ? `${sh.k_c_per_w.toFixed(3)} °C per W` : "—"}</dd>
               <dt>Time constant</dt><dd>{sh?.valid && fin(sh.tau_s) ? `${(sh.tau_s / 60).toFixed(1)} min` : "—"}</dd>
+              <dt>Room</dt><dd className="ck-clamp1" title={sh ? roomLine(sh) : ""}>{sh ? roomLine(sh) : "—"}</dd>
               <dt>Confidence</dt><dd>{conf == null ? "—" : `${conf} %`}</dd>
               <dt>Suggestion</dt><dd>{sh?.valid && fin(sh.suggest_w) ? `${f1(sh.suggest_w)} W` : "—"}</dd>
               <dt>Levels off at</dt><dd>{sh?.valid && fin(sh.plateau_c) ? `≈ ${f1(sh.plateau_c)} °C` : "—"}</dd>
             </dl>
             <div className="ck-bar"><i style={{ width: `${conf ?? 0}%` }} /></div>
-            <div className="ck-sub ck-conf">{sh ? confidenceSentence(sh) : ""}</div>
+            <div className="ck-sub ck-conf" title={sh ? confidenceSentence(sh) : ""}>{sh ? confidenceSentence(sh) : ""}</div>
           </div>
           <div className="ck-sub" title={shownKey ?? ""}>Re-run by the backend with the same estimator and shadow code as live (one implementation).</div>
         </section>

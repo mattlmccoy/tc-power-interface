@@ -4,7 +4,7 @@
 import type { RecordingEvent, ReplayShadowPoint } from "../api.ts";
 import type { CockpitSample } from "./history.ts";
 import type { ReplayEvent, ReplayRow } from "./replay.ts";
-import { SHOW_CONFIDENCE, type Shadow } from "./shadowText.ts";
+import { type Ambient, SHOW_CONFIDENCE, type Shadow } from "./shadowText.ts";
 
 /** A shadow point farther than this from a row is not "the same moment" (replay.ts MATCH_TOLERANCE_S). */
 const JOIN_S = 2;
@@ -64,14 +64,18 @@ export function replaySamples(rows: ReplayRow[], pts: ReplayShadowPoint[] | null
   });
 }
 
-/** A replay point in the live `Shadow` shape, so the same shadow card renders it. The replay does
- *  not report ambient, settle time or time to target: those stay null. */
-export function shadowAt(p: ReplayShadowPoint | null): Shadow | null {
+/** A replay point in the live `Shadow` shape, so the same shadow card renders it. `ambient` is the
+ *  run's room-temperature decision (replay result, v0.19+); without it t_amb_c stays null. The
+ *  replay does not report settle time or time to target: those stay null. */
+export function shadowAt(p: ReplayShadowPoint | null, ambient?: Ambient | null): Shadow | null {
   if (!p) return null;
   const valid = p.k_c_per_w != null && Number.isFinite(p.k_c_per_w) && p.tau_s != null && Number.isFinite(p.tau_s);
+  const amb = p.ambient !== undefined ? p.ambient : ambient; // the point's own decision wins
+  const roomUnknown = amb != null && amb.t_c == null;
   return {
     valid,
-    why: valid ? null : "no estimate yet at this point",
+    why: valid ? null : roomUnknown ? "room_unknown" : "no estimate yet at this point",
+    ...(amb === undefined ? {} : { ambient: amb }),
     k_c_per_w: p.k_c_per_w,
     tau_s: p.tau_s,
     confidence: p.confidence,
@@ -80,13 +84,13 @@ export function shadowAt(p: ReplayShadowPoint | null): Shadow | null {
     drifting: p.drifting === true,
     needed_w: p.needed_w ?? null,
     ceiling_w: p.ceiling_w ?? null,
-    t_amb_c: null,
+    t_amb_c: amb?.t_c ?? null,
     updates: 0,
     suggest_w: p.suggest_w,
     plateau_c: p.plateau_c,
     settle_s: null,
     ttt_s: null,
-    show: valid && p.confidence >= SHOW_CONFIDENCE,
+    show: valid && p.confidence >= SHOW_CONFIDENCE && amb?.source !== "assumed", // unverified: muted
   };
 }
 

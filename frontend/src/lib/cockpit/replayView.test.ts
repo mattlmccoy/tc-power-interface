@@ -153,3 +153,25 @@ test("shadowStale: shown numbers are stale once the request changed, the target 
   assert.equal(shadowStale(k, k, true), true); // the re-run for this key failed
   assert.equal(shadowStale(null, k, true), false); // nothing shown, nothing stale
 });
+
+test("shadowAt carries the run's room temperature; a run paused for an unknown room says so", () => {
+  const assumed = { t_c: 29.11, source: "assumed", reason: null, slope_c_per_min: null, roi: null };
+  const sh = shadowAt(pt(5), assumed)!;
+  assert.deepEqual(sh.ambient, assumed);
+  assert.equal(sh.t_amb_c, 29.11);
+  const unknown = { t_c: null, source: null, reason: "part_cooling", slope_c_per_min: -2.04, roi: null };
+  const paused = shadowAt(pt(1, { k_c_per_w: null, tau_s: null, confidence: 0 }), unknown)!;
+  assert.equal(paused.valid, false);
+  assert.equal(paused.why, "room_unknown");
+  assert.equal(shadowAt(pt(5))!.ambient, undefined); // an operator older than v0.19 reports none
+});
+
+test("shadowAt: a point's own ambient wins over the run's; an assumed room is never shown as sure", () => {
+  const run = { t_c: 22.0, source: "part_at_rest", reason: null, slope_c_per_min: null, roi: null };
+  const early = { t_c: null, source: null, reason: "part_cooling", slope_c_per_min: -2.0, roi: null };
+  const sh = shadowAt(pt(1, { k_c_per_w: null, tau_s: null, confidence: 0, ambient: early }), run)!;
+  assert.equal(sh.why, "room_unknown");
+  assert.deepEqual(sh.ambient, early);
+  const assumed = { t_c: 29.1, source: "assumed", reason: null, slope_c_per_min: null, roi: null };
+  assert.equal(shadowAt(pt(5), assumed)!.show, false); // valid + 0.8 confidence, but unverified
+});

@@ -11,6 +11,8 @@ import json
 import random
 from pathlib import Path
 
+from rest_prefix import rest_before_rf_on
+
 from tc_power_interface.control.cockpit import (
     DRIFT_FULL,
     DRIFT_WINDOW_S,
@@ -44,6 +46,7 @@ def _feed(obs, t, power, temp, *, rf_on=True, target_c=185.0, ceiling_w=200.0):
 def _replay(fix, *, target_c):
     """Feed a fixture; return the observer and the shadow block after every grid sample."""
     obs, history = CockpitObserver(), []
+    rest_before_rf_on(obs, fix["rois"]["freehand_sample"][0], t_on=fix["t_s"][0])
     rf = fix.get("rf_on") or [p >= 1 for p in fix["forward_w"]]
     for i, t in enumerate(fix["t_s"]):
         _feed(obs, t, fix["forward_w"][i], fix["rois"]["freehand_sample"][i], rf_on=rf[i],
@@ -103,6 +106,7 @@ def test_show_uses_the_honest_confidence():
 
 def _first_order(profile, *, k=0.5, tau=150.0, t0=24.0, noise=0.05, dt=0.5, seed=0):
     rng, obs, temp = random.Random(seed), CockpitObserver(), t0
+    rest_before_rf_on(obs, t0)  # the simulated part starts at rest at room temperature
     for n in range(int(profile[-1][0] / dt)):
         t = n * dt
         p = next(w for t_end, w in profile if t < t_end)
@@ -147,6 +151,7 @@ def test_needed_power_is_none_without_a_target_or_an_estimate():
     _, hist = _replay(STEADY, target_c=185.0)
     assert hist[0][1]["needed_w"] is None and hist[0][1]["ceiling_w"] == 200.0  # no estimate yet
     obs = CockpitObserver()
+    rest_before_rf_on(obs, STEADY["rois"]["freehand_sample"][0], t_on=STEADY["t_s"][0])
     for i, t in enumerate(STEADY["t_s"]):
         obs.observe(
             t_s=t, telemetry={"forward_w": STEADY["forward_w"][i], "rf_on": STEADY["rf_on"][i]},

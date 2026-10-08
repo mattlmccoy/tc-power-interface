@@ -9,6 +9,11 @@ Reads the recorder's file contract (``recording/recorder.py``):
 * ``telemetry.csv`` — ``host_timestamp_ns``, ``forward_w``, ``rf_on`` ("True"/"False", written by
   ``csv.DictWriter`` from a Python bool), among other columns.
 * ``roi_temps.csv`` — long format ``host_timestamp_ns, roi, mean_c``; blank ``mean_c`` = unknown.
+* ``shadow_amb_c`` / ``shadow_amb_src`` (v0.19+): the live room-temperature decision, made from the
+  minute BEFORE RF on, which no recording holds. Replay reuses it, follows a later re-judge (an
+  unknown room is judged again at the next RF-on edge), and takes it only from HEATING rows (a
+  manual recording start can carry the previous run's fields on its first row). Recordings without
+  it replay with source "assumed" (first heating reading, unverified), and the result says so.
 
 Both files are streamed (a 2 h run at the 0.5 s tick with 11 ROIs is ~7 MB of ROI rows), never
 loaded whole. Recordings live in a Dropbox-synced folder and may be read while still being written,
@@ -27,7 +32,9 @@ from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import Any
 
+from tc_power_interface.control.ambient import Ambient
 from tc_power_interface.control.cockpit import CockpitObserver
+from tc_power_interface.control.plant_estimator import MIN_POWER_W
 from tc_power_interface.control.run_mode import RunMode
 
 #: A ROI reading joins a telemetry row only if it is at most this old; older = unknown.
@@ -47,7 +54,7 @@ _ROI_HEADER_BYTES = len(",".join(_ROI_COLUMNS) + "\r\n")
 _MIN_ROI_ROW_BYTES = len("0,x,\r\n")
 _POINT_KEYS = (
     "k_c_per_w", "tau_s", "confidence", "suggest_w", "plateau_c",
-    "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w",
+    "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w", "ambient",
 )  # fmt: skip
 
 
@@ -178,6 +185,7 @@ def replay_shadow(
     if roi_path is None or tel_path is None:
         raise FileNotFoundError(f"{run_dir.name} has no ROI temperature data")
     obs = CockpitObserver()
+    obs.preset_ambient(Ambient(None, "assumed"))  # until the recording shows its own decision
     mode = RunMode(mode="target")
     readings = _roi_readings(roi_path, roi)
     try:
@@ -186,7 +194,23 @@ def replay_shadow(
         readings.close()  # release the ROI file handle even if a row blows up
     if not seen:
         raise FileNotFoundError(f"ROI {roi!r} was not recorded in {run_dir.name}")
-    return {"roi": roi, "target_c": target_c, "points": points}
+    return {
+        "roi": roi,
+        "target_c": target_c,
+        "ambient": obs.snapshot()["shadow"]["ambient"],
+        "points": points,
+    }
+
+
+def _recorded_ambient(row: dict[str, str]) -> Ambient | None:
+    """The live decision written on this row, or None if absent / unreadable (never invented)."""
+    src = (row.get("shadow_amb_src") or "").strip()
+    if src.startswith("unknown:") and len(src) > len("unknown:"):
+        return Ambient(None, None, src[len("unknown:"):])
+    if src in ("part_at_rest", "reference"):
+        c = _finite(row.get("shadow_amb_c"))
+        return Ambient(c, src) if c is not None else None
+    return None
 
 
 def _drive(
@@ -205,7 +229,14 @@ def _drive(
     latest: tuple[int, float | None] | None = None
     first_ns: int | None = None
     points: list[dict[str, Any]] = []
+    applied: Ambient | None = None
     for ns, row in _timed_rows(tel_path):
+        power = _finite(row["forward_w"])
+        heating = row["rf_on"] == "True" and power is not None and power >= MIN_POWER_W
+        amb = _recorded_ambient(row) if heating else None
+        if amb is not None and amb != applied:
+            obs.preset_ambient(amb)  # written on the heating tick it was decided
+            applied = amb
         # roi_temps.csv is assumed time-ordered (the recorder writes it in order): one pass.
         while pending is not None and pending[0] <= ns:  # latest reading at or before ns
             latest, pending = pending, next(readings, None)

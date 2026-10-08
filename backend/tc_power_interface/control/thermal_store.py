@@ -60,7 +60,7 @@ def _watch_list(raw: object) -> list[str]:
 
 def load_source(root: Path, *, default_type: str) -> dict[str, Any]:
     """The operator's temperature-source choice: ``{"type": "flir"|"simulated", "roi": name|None,
-    "watch": [names]}``.
+    "watch": [names], "ambient": name|None}`` (``ambient`` = the room reference ROI, v0.19).
 
     No ROI name is ever invented: FLIR ROIs are redrawn between prints (``circle_medium_small``
     existed on 09-08 and not after), so until the operator picks one the ROI is None and the loop
@@ -69,23 +69,23 @@ def load_source(root: Path, *, default_type: str) -> dict[str, Any]:
     try:
         d = json.loads((Path(root) / SOURCE_NAME).read_text())
     except (FileNotFoundError, ValueError):
-        return {"type": default_type, "roi": None, "watch": []}
+        return {"type": default_type, "roi": None, "watch": [], "ambient": None}
     kind = d.get("type") if d.get("type") in ("flir", "simulated") else default_type
-    roi = d.get("roi")
+    roi, ambient = d.get("roi"), d.get("ambient")
     return {
         "type": kind,
         "roi": roi if isinstance(roi, str) and roi else None,
         "watch": _watch_list(d.get("watch")),
+        "ambient": ambient if isinstance(ambient, str) and ambient else None,
     }
 
 
 def save_source(root: Path, source: dict[str, Any]) -> None:
-    """Persist the source choice. A caller that omits ``"watch"`` keeps the stored watch list; an
-    explicit ``[]`` clears it."""
-    if "watch" in source:
-        watch = _watch_list(source["watch"])
-    else:
-        watch = load_source(root, default_type="simulated")["watch"]
+    """Persist the source choice. A caller that omits ``"watch"`` or ``"ambient"`` keeps the stored
+    value; an explicit ``[]`` / ``None`` clears it."""
+    stored = load_source(root, default_type="simulated")
+    watch = _watch_list(source["watch"]) if "watch" in source else stored["watch"]
+    ambient = source["ambient"] if "ambient" in source else stored["ambient"]
     Path(root).mkdir(parents=True, exist_ok=True)
     (Path(root) / SOURCE_NAME).write_text(
         json.dumps(
@@ -93,6 +93,7 @@ def save_source(root: Path, source: dict[str, Any]) -> None:
                 "type": source.get("type"),
                 "roi": source.get("roi"),
                 "watch": watch,
+                "ambient": ambient if isinstance(ambient, str) and ambient else None,
             }
         )
     )

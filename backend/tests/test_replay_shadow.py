@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from rest_prefix import rest_before_rf_on
 
 from tc_power_interface.api.app import create_app
 from tc_power_interface.control.cockpit import CockpitObserver
@@ -24,23 +25,41 @@ FIX = json.loads(
 BASE_NS = 1_790_000_000 * 10**9
 
 
-def _write_run(root: Path, name: str = "20261002_125227_RF", blank_every: int = 0) -> Path:
+def _write_run(
+    root: Path,
+    name: str = "20261002_125227_RF",
+    blank_every: int = 0,
+    amb=None,
+    off: frozenset = frozenset(),
+) -> Path:
     """A recording laid out exactly as the recorder writes it, filled from the REAL 10-02 data.
-    ``blank_every`` > 0 blanks every n-th ROI mean (the recorder writes unknown as blank)."""
+    ``blank_every`` > 0 blanks every n-th ROI mean (the recorder writes unknown as blank).
+    ``amb`` = (shadow_amb_c, shadow_amb_src) written on every heating row (v0.19 recordings), or a
+    function of the row index returning that pair (written on every row) or None; None = a
+    recording made before those columns existed. ``off`` = row indices forced to RF off, 0 W."""
     d = root / name
     d.mkdir(parents=True)
+    cols = ["host_timestamp_ns", "forward_w", "reverse_w", "rf_on"]
+    if amb is not None:
+        cols += ["shadow_amb_c", "shadow_amb_src"]
     with (d / "telemetry.csv").open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["host_timestamp_ns", "forward_w", "reverse_w", "rf_on"])
+        w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
-        for t, p in zip(FIX["t_s"], FIX["forward_w"], strict=True):
-            w.writerow(
-                {
-                    "host_timestamp_ns": BASE_NS + int(t * 1e9),
-                    "forward_w": p,
-                    "reverse_w": 0.0,
-                    "rf_on": p >= 1,
-                }
-            )
+        for i, (t, p) in enumerate(zip(FIX["t_s"], FIX["forward_w"], strict=True)):
+            p = 0.0 if i in off else p
+            row = {
+                "host_timestamp_ns": BASE_NS + int(t * 1e9),
+                "forward_w": p,
+                "reverse_w": 0.0,
+                "rf_on": p >= 1,
+            }
+            if callable(amb):
+                pair = amb(i)
+                if pair is not None:
+                    row |= {"shadow_amb_c": pair[0], "shadow_amb_src": pair[1]}
+            elif amb is not None and p >= 1:
+                row |= {"shadow_amb_c": amb[0], "shadow_amb_src": amb[1]}
+            w.writerow(row)
     with (d / "roi_temps.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["host_timestamp_ns", "roi", "mean_c"])
         w.writeheader()
@@ -63,6 +82,7 @@ def _write_run(root: Path, name: str = "20261002_125227_RF", blank_every: int = 
 def _live(roi: str) -> dict:
     """What the LIVE cockpit observer reports after the same fixture, in to-temperature mode."""
     obs = CockpitObserver()
+    rest_before_rf_on(obs, FIX["rois"][roi][0], part_roi=roi)  # replay cannot see this minute
     for i, t in enumerate(FIX["t_s"]):
         p = FIX["forward_w"][i]
         obs.observe(
@@ -97,9 +117,11 @@ def test_replay_matches_the_live_observer(tmp_path):
     assert 50 <= last["suggest_w"] <= 75
     for k in ("confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w"):
         assert last[k] == live[k]  # the replay card can say "still drifting" / "at the ceiling"
+    assert out["ambient"]["source"] == "assumed"  # pre-v0.19 recording: no recorded decision
+    assert out["ambient"]["t_c"] == FIX["rois"]["freehand_sample"][0]
     assert set(last) == {
         "t_s", "temp_c", "k_c_per_w", "tau_s", "confidence", "suggest_w", "plateau_c",
-        "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w",
+        "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w", "ambient",
     }
 
 
@@ -396,3 +418,53 @@ def test_symlinked_files_inside_a_run_are_not_followed_out(tmp_path):
         assert c.get(f"/api/recordings/{run.name}/rois").json() == {"rois": []}
         q = {"roi": "SQ_SAMPLE", "target": 55}
         assert c.get(f"/api/recordings/{run.name}/shadow", params=q).status_code == 404
+
+
+def test_replay_uses_the_recorded_room_temperature(tmp_path):
+    run = _write_run(tmp_path, amb=(23.44, "reference"))
+    out = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)
+    assert out["ambient"]["source"] == "reference" and out["ambient"]["t_c"] == 23.44
+    legacy = _write_run(tmp_path, "legacy")
+    assumed = replay_shadow(legacy, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)
+    assert out["points"][-1]["k_c_per_w"] != assumed["points"][-1]["k_c_per_w"]
+
+
+def test_replay_of_a_paused_run_stays_paused(tmp_path):
+    run = _write_run(tmp_path, amb=(None, "unknown:part_cooling"))
+    out = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)
+    assert out["ambient"]["t_c"] is None and out["ambient"]["reason"] == "part_cooling"
+    assert all(p["k_c_per_w"] is None and p["confidence"] == 0.0 for p in out["points"])
+
+
+def test_replay_ignores_an_unreadable_recorded_decision(tmp_path):
+    # a damaged / foreign value is not a decision: fall back to "assumed", never invent one
+    run = _write_run(tmp_path, amb=("x", "reference"))
+    out = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)
+    assert out["ambient"]["source"] == "assumed"
+
+
+
+def test_replay_follows_a_live_rejudge_later_in_the_run(tmp_path):
+    # review finding 3: live started warm (unknown), rested, re-judged at the next RF-on edge and
+    # learned; replay must follow, not stay paused on the first decision
+    off = frozenset(range(40, 56))
+
+    def amb(i):
+        return (None, "unknown:part_cooling") if i < 56 else (22.0, "part_at_rest")
+
+    run = _write_run(tmp_path, amb=amb, off=off)
+    out = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)
+    assert out["ambient"]["source"] == "part_at_rest" and out["ambient"]["t_c"] == 22.0
+    pts = out["points"]
+    assert pts[10]["ambient"]["reason"] == "part_cooling" and pts[10]["k_c_per_w"] is None
+    assert pts[-1]["ambient"]["source"] == "part_at_rest" and pts[-1]["k_c_per_w"] is not None
+
+
+def test_a_decision_on_a_row_before_heating_is_not_taken(tmp_path):
+    # review finding 4: a manual recording start can carry the PREVIOUS run's fields on row 0
+    def amb(i):
+        return (22.8, "part_at_rest") if i == 0 else (None, "unknown:part_cooling")
+
+    run = _write_run(tmp_path, amb=amb, off=frozenset({0}))
+    out = replay_shadow(run, roi="freehand_sample", target_c=55.0, ceiling_w=200.0)
+    assert out["ambient"]["t_c"] is None and out["ambient"]["reason"] == "part_cooling"

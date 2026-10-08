@@ -60,7 +60,9 @@ def test_removing_a_name_drops_its_history():
 
 
 def test_watch_list_persists_with_the_source_and_is_bounded(tmp_path):
-    assert load_source(tmp_path, default_type="flir") == {"type": "flir", "roi": None, "watch": []}
+    assert load_source(tmp_path, default_type="flir") == {
+        "type": "flir", "roi": None, "watch": [], "ambient": None,
+    }
     both = ["toroid_C", "toroid_D"]
     save_source(tmp_path, {"type": "flir", "roi": "freehand_sample", "watch": both})
     assert load_source(tmp_path, default_type="simulated")["watch"] == ["toroid_C", "toroid_D"]
@@ -110,3 +112,14 @@ def test_a_feed_entry_with_a_non_string_name_is_ignored():
 
 def test_watch_list_dedupes_drops_empties_and_caps_at_four():
     assert _watch_list(["a", "a", "", "b", "c", "d", "e"]) == ["a", "b", "c", "d"]
+
+
+def test_room_reference_roi_persists_and_omitting_it_keeps_it(tmp_path):
+    save_source(tmp_path, {"type": "flir", "roi": "r", "ambient": "wall"})
+    assert load_source(tmp_path, default_type="flir")["ambient"] == "wall"
+    save_source(tmp_path, {"type": "flir", "roi": "r2", "watch": []})  # roi/watch saves keep it
+    assert load_source(tmp_path, default_type="flir")["ambient"] == "wall"
+    save_source(tmp_path, {"type": "flir", "roi": "r2", "ambient": None})  # explicit None clears
+    assert load_source(tmp_path, default_type="flir")["ambient"] is None
+    (tmp_path / ".thermal_source.json").write_text('{"type": "flir", "ambient": 7}')
+    assert load_source(tmp_path, default_type="flir")["ambient"] is None  # junk is not a name

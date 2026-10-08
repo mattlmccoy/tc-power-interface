@@ -4,6 +4,8 @@ import inspect
 import json
 from pathlib import Path
 
+from rest_prefix import rest_before_rf_on
+
 from tc_power_interface.control import cockpit
 from tc_power_interface.control.cockpit import CockpitObserver
 from tc_power_interface.control.run_mode import RunMode
@@ -33,6 +35,7 @@ def _feed(obs, t, i, *, run_id="run1", mode="target", part_temp="fixture"):
 
 
 def _replay(obs, run_id="run1", mode="target", part_temp="fixture"):
+    rest_before_rf_on(obs, FIX["rois"]["freehand_sample"][0], t_on=FIX["t_s"][0])
     for i, t in enumerate(FIX["t_s"]):
         _feed(obs, t, i, run_id=run_id, mode=mode, part_temp=part_temp)
 
@@ -81,13 +84,16 @@ def test_a_new_recording_resets_the_estimate():
         ceiling_w=200.0,
     )
     sh = obs.snapshot()["shadow"]
-    assert not sh["valid"] and sh["k_c_per_w"] is None and sh["why"] == "learning"
+    assert not sh["valid"] and sh["k_c_per_w"] is None
+    # run2 starts hot with no rest minute before it: the room temperature is unknown, not "learning"
+    assert sh["why"] == "room_unknown" and sh["ambient"]["reason"] == "no_history"
 
 
 def test_shadow_steps_once_per_grid_sample_not_per_tick():
     coarse = CockpitObserver()
     _replay(coarse)
     fine = CockpitObserver()
+    rest_before_rf_on(fine, FIX["rois"]["freehand_sample"][0], t_on=FIX["t_s"][0])
     for i, t in enumerate(FIX["t_s"]):
         for k in range(10):  # hold each 5 s sample constant over ten 0.5 s ticks
             _feed(fine, t + 0.5 * k, i)
@@ -202,6 +208,7 @@ def test_estimator_keeps_running_in_ladder_mode():
 
 def test_flat_temperature_reports_no_consistent_fit():
     obs = CockpitObserver()
+    rest_before_rf_on(obs, 25.0)
     for k in range(40):
         _tick(obs, 5.0 * k, power=50.0, temp=25.0)
     sh = obs.snapshot()["shadow"]

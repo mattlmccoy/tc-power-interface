@@ -4,6 +4,20 @@ import { ENGAGE_CONFIDENCE } from "./gates.ts";
 /** Below this the backend sets `shadow.show` false (backend control/cockpit.py `SHOW_CONFIDENCE`). */
 export const SHOW_CONFIDENCE = 0.3;
 
+/** The run's room temperature decision (backend control/cockpit.py `_ambient_block`, decided once
+ * at RF on by control/ambient.py). `t_c` null = unknown: the shadow does not learn this run. */
+export interface Ambient {
+  t_c: number | null;
+  /** "part_at_rest" | "reference" | "assumed" (replay of a pre-v0.19 recording) | null (unknown). */
+  source: string | null;
+  /** Why the part itself could not be used: "part_cooling" | "part_warming" | "rf_recent" |
+   * "rf_unknown" (no generator attached to see RF) | "no_history". */
+  reason: string | null;
+  slope_c_per_min: number | null;
+  /** The reference ROI's name when source is "reference". */
+  roi: string | null;
+}
+
 /** `/api/status → thermal.shadow` (backend control/cockpit.py `_shadow_block`). */
 export interface Shadow {
   valid: boolean;
@@ -23,6 +37,8 @@ export interface Shadow {
   /** The power ceiling the shadow loop was clamped to. */
   ceiling_w?: number | null;
   t_amb_c: number | null;
+  /** null before RF on; absent on operators older than v0.19. */
+  ambient?: Ambient | null;
   updates: number;
   suggest_w: number | null;
   plateau_c: number | null;
@@ -40,8 +56,63 @@ function round(x: number): number {
 
 const fin = (x: number | null | undefined): x is number => x != null && Number.isFinite(x);
 
+const signed = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(1)}`;
+const AFTER = "rest a minute with RF off, or pick a room reference.";
+
+/** Why the room temperature is unknown, as a full sentence for the confidence line. */
+function pausedSentence(a: Ambient | null | undefined): string {
+  const slope = a && fin(a.slope_c_per_min) ? ` (${signed(a.slope_c_per_min)} °C/min)` : "";
+  switch (a?.reason) {
+    case "part_cooling":
+      return `Paused this run: the part was still cooling${slope} when RF came on, so the room temperature is unknown and the gain would read low. Next time ${AFTER}`;
+    case "part_warming":
+      return `Paused this run: the part was still warming${slope} when RF came on, so the room temperature is unknown. Next time ${AFTER}`;
+    case "rf_recent":
+      return `Paused this run: RF was on in the minute before, so the part was not at room temperature. Next time ${AFTER}`;
+    case "rf_unknown":
+      return "Paused this run: no generator connected in the minute before RF on, so RF-off and a cold part can't be confirmed. Next time connect a minute before RF, or pick a room reference.";
+    default:
+      return `Paused this run: no part reading in the minute before RF on, so the room temperature is unknown. Next time ${AFTER}`;
+  }
+}
+
+/** Short reason, in brackets after a reference ROI that covered for the part. */
+const REASON: Record<string, string> = {
+  part_cooling: "part was cooling",
+  part_warming: "part was warming",
+  rf_recent: "RF was on just before",
+  rf_unknown: "no generator reading",
+  no_history: "no reading before RF",
+};
+
+/** The reason as the whole Room line when nothing covered for it. */
+const UNKNOWN: Record<string, string> = {
+  part_cooling: "part was cooling at RF on",
+  part_warming: "part was warming at RF on",
+  rf_recent: "RF was on in the minute before",
+  rf_unknown: "no generator reading before RF on",
+  no_history: "no reading before RF on",
+};
+
+/** The "Room" line: the temperature the model heats from, and where it came from. */
+export function roomLine(s: Shadow): string {
+  if (s.ambient === undefined) return fin(s.t_amb_c) ? `${s.t_amb_c.toFixed(1)} °C` : "—"; // pre-v0.19
+  const a = s.ambient;
+  if (a === null) return "decided at RF on";
+  const why = a.reason ? REASON[a.reason] ?? a.reason : null;
+  if (!fin(a.t_c)) return `unknown · ${(a.reason && UNKNOWN[a.reason]) ?? a.reason ?? "no reading before RF on"}`;
+  const t = `${a.t_c.toFixed(1)} °C`;
+  if (a.source === "part_at_rest") return `${t} · part at rest before RF`;
+  if (a.source === "reference") return `${t} · reference ${a.roi ?? "ROI"}${why ? ` (${why})` : ""}`;
+  if (a.source === "assumed") return `${t} · assumed: first reading, not verified`;
+  return t;
+}
+
 export function confidenceSentence(s: Shadow): string {
+  if (s.why === "room_unknown") return pausedSentence(s.ambient);
   if (!s.valid) return "No estimate yet, so no suggestion.";
+  if (s.ambient?.source === "assumed")
+    return "Unverified: this recording predates the room-temperature check, so its first reading was taken as room temperature.";
   if (!fin(s.confidence)) return "Confidence unknown.";
   if (s.drifting) {
     const moved = fin(s.drift_pct) ? `moved ${round(s.drift_pct)} % in the last 2 min` : "still moving";
@@ -73,7 +144,7 @@ const WAIT_STEP = "waiting for the next 5 s step";
  */
 export function shadowCard(mode: RunModeName, s: Shadow, yourW: number, targetC: number): ShadowCardText {
   const muted = !s.show;
-  const why = s.why === "learning" ? "learning…" : s.why ?? "";
+  const why = s.why === "learning" ? "learning…" : s.why === "room_unknown" ? "paused: room temperature unknown" : s.why ?? "";
   if (mode === "target") {
     const label = "Shadow loop suggests";
     if (!s.valid) return { label, value: "—", sub: why, muted };
