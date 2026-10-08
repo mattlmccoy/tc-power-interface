@@ -4,7 +4,10 @@ import test from "node:test";
 import {
   needleAngle,
   approachFromBelow,
+  CAP_HOLD_MS,
+  capHoldRemaining,
   capSettled,
+  capStepBase,
   capVolts,
   capPercentForVolts,
   clampCap,
@@ -145,4 +148,29 @@ test("needleAngle: an unknown reading has no needle (never parked at 0)", () => 
   assert.equal(needleAngle(0, 600, 30), -30);
   assert.equal(needleAngle(300, 600, 30), 0);
   assert.equal(needleAngle(900, 600, 30), 30); // clamped to full scale
+});
+
+test("capHoldRemaining counts down the post-command hold and never goes negative", () => {
+  assert.equal(capHoldRemaining(1000, 1000), CAP_HOLD_MS);
+  assert.equal(capHoldRemaining(1000, 1000 + CAP_HOLD_MS - 200), 200);
+  assert.equal(capHoldRemaining(1000, 1000 + CAP_HOLD_MS), 0);
+  assert.equal(capHoldRemaining(1000, 99999), 0);
+  assert.equal(capHoldRemaining(0, 5000), 0); // never touched -> mirror immediately
+});
+
+test("capStepBase steps from the live readback when nothing is travelling", () => {
+  assert.equal(capStepBase(42, null, 0, 50), 42);
+  // the display was left on a commanded 43 the device never reached: step from the truth (42)
+  assert.equal(capStepBase(42, { target: 43, at: 0 }, 20000, 43), 42);
+  assert.equal(capStepBase(null, null, 0, 50), 50); // no readback yet -> displayed value
+  assert.equal(capStepBase(41.6, null, 0, 50), 42); // whole percent
+});
+
+test("capStepBase keeps stepping from the target while the slow motor is still travelling", () => {
+  // commanded 45 at t=0, readback still at 41 mid-travel: +1 should go to 46, not back to 42
+  assert.equal(capStepBase(41, { target: 45, at: 0 }, 500, 41), 45);
+  // arrived -> readback
+  assert.equal(capStepBase(45, { target: 45, at: 0 }, 500, 45), 45);
+  // travel window expired without arriving (stalled / ignored): trust the readback
+  assert.equal(capStepBase(41, { target: 45, at: 0 }, 13000, 45), 41);
 });

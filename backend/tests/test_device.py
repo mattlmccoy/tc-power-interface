@@ -184,3 +184,31 @@ class TestProbeInvalidStatusWord:
         d = _telemetry_dict(device)
         assert d["invalid_status_word"] == "0xFFFF"
         assert "forward_w" in d and "temperature_c" in d
+
+
+class TestResyncAfterStaleBytes:
+    """A read that times out on the slow USB-serial link leaves the rest of that response queued.
+    Every exchange must discard it first, or the framing stays shifted and every later cap command
+    fails / readback stops updating until the port is reopened (the 'frozen caps' report)."""
+
+    def _stale_tail(self, device: CxnDevice) -> None:
+        # Queue a complete GT response the host never consumed, as a timed-out read leaves behind.
+        sim = device.transport
+        sim.write(codec.encode_command(codec.cmd_gt(), device.address))
+
+    def test_cap_command_succeeds_after_stale_bytes(self, device: CxnDevice):
+        device.set_tune_capacity(20)
+        self._stale_tail(device)
+        device.set_tune_capacity(40)  # would read a stale ACK+header as its ACK without resync
+        self._stale_tail(device)
+        device.set_load_capacity(55)
+        tel = device.read_telemetry()
+        assert tel.tune_cap_percent == 40
+        assert tel.load_cap_percent == 55
+
+    def test_readback_tracks_every_step_after_stale_bytes(self, device: CxnDevice):
+        for pct in (30, 31, 32, 33):
+            self._stale_tail(device)
+            device.set_tune_capacity(pct)
+            self._stale_tail(device)
+            assert device.read_telemetry().tune_cap_percent == pct
