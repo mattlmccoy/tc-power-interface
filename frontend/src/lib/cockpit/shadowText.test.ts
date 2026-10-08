@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { ENGAGE_CONFIDENCE } from "./gates.ts";
-import { confidenceSentence, SHOW_CONFIDENCE, shadowCard, type Shadow } from "./shadowText.ts";
+import { confidenceSentence, roomLine, SHOW_CONFIDENCE, shadowCard, type Shadow } from "./shadowText.ts";
 
 const base: Shadow = { valid: true, why: null, k_c_per_w: 0.53, tau_s: 208, confidence: 0.76, t_amb_c: 23.8,
   updates: 150, suggest_w: 61.3, plateau_c: 60.9, settle_s: 300, ttt_s: 422, show: true };
@@ -135,4 +135,37 @@ test("not ceiling-limited: the usual difference text", () => {
 test("at the ceiling with the target unknown: names the target as unknown, never NaN", () => {
   const s = { ...base, suggest_w: 200, ceiling_w: 200, needed_w: 306 };
   assert.equal(shadowCard("target", s, 30, Number.NaN).sub, "At the 200 W ceiling — holding the target needs ≈ 306 W");
+});
+
+// Room temperature (backend control/cockpit.py `_ambient_block`, control/ambient.py reasons).
+const paused = (reason: string, slope: number | null = null): Shadow => ({
+  ...base, valid: false, why: "room_unknown", k_c_per_w: null, tau_s: null, confidence: 0, show: false,
+  suggest_w: null, plateau_c: null, t_amb_c: null,
+  ambient: { t_c: null, source: null, reason, slope_c_per_min: slope, roi: null },
+});
+
+test("a paused shadow says why the room temperature is unknown and what to do", () => {
+  const cooling = confidenceSentence(paused("part_cooling", -2.04));
+  assert.match(cooling, /^Paused this run: the part was still cooling \(−2\.0 °C\/min\) when RF came on/);
+  assert.match(cooling, /rest a minute with RF off, or pick a room reference/);
+  assert.match(confidenceSentence(paused("part_warming", 1.0)), /still warming \(\+1\.0 °C\/min\)/);
+  assert.match(confidenceSentence(paused("rf_recent")), /RF was on in the minute before/);
+  assert.match(confidenceSentence(paused("no_history")), /no part reading in the minute before RF on/);
+  const card = shadowCard("target", paused("part_cooling", -2.04), 55, 185);
+  assert.deepEqual(card, { label: "Shadow loop suggests", value: "—", sub: "paused: room temperature unknown", muted: true });
+});
+
+test("the room line names the source, and unknown is never a number", () => {
+  const amb = (a: Partial<NonNullable<Shadow["ambient"]>>): Shadow =>
+    ({ ...base, ambient: { t_c: null, source: null, reason: null, slope_c_per_min: null, roi: null, ...a } });
+  assert.equal(roomLine(amb({ t_c: 22.83, source: "part_at_rest" })), "22.8 °C · part at rest before RF");
+  assert.equal(roomLine(amb({ t_c: 23.44, source: "reference", roi: "toroid_D", reason: "part_cooling" })),
+    "23.4 °C · reference toroid_D (part was cooling)");
+  assert.equal(roomLine(amb({ t_c: 29.11, source: "assumed" })), "29.1 °C · assumed: first reading, not verified");
+  assert.equal(roomLine(amb({ reason: "part_cooling" })), "unknown · part was cooling at RF on");
+  assert.equal(roomLine(amb({ reason: "rf_recent" })), "unknown · RF was on in the minute before");
+  assert.equal(roomLine(amb({ reason: "no_history" })), "unknown · no reading before RF on");
+  assert.equal(roomLine({ ...base, ambient: null }), "decided at RF on");
+  const { ambient: _drop, ...older } = { ...base, ambient: null }; // operator older than v0.19
+  assert.equal(roomLine(older), "23.8 °C");
 });

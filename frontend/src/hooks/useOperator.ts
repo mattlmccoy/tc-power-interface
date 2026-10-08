@@ -782,6 +782,11 @@ export function useOperator() {
     if (!res.ok) flash("control ROI failed: " + (await detail(res)));
   }
 
+  async function applyAmbientRoi(name: string) {
+    const res = await api.setAmbientRoi(name);
+    if (!res.ok) flash("room reference failed: " + (await detail(res)));
+  }
+
   const textInputStyle = {
     width: "100%",
     background: "var(--bg-deep)",
@@ -805,7 +810,7 @@ export function useOperator() {
     setLimForm, saveLimits, thermalPlanStatus, thermalForm, setThermalForm, saveThermalPlan,
     flirUrlInput, setFlirUrlInput, flirEnabled, flirLast, applyFlirUrl, toggleFlirEnabled,
     thermalMode, setThermalMode, thermalFlirUrl, setThermalFlirUrl, startThermal, stopThermal,
-    armThermal, disarmThermal, applyThermalSource, applyControlRoi, pulseForm, setPulseForm,
+    armThermal, disarmThermal, applyThermalSource, applyControlRoi, applyAmbientRoi, pulseForm, setPulseForm,
     startPulse, stopPulse, plot, ctrl, t, limits, device, recording, thermal, ramp, timer, scope, presets,
     pulse, mt, presetEntries, connected, armed, controllable, faulted, pillState, handshake,
     maxRefl, reflW, zone, reflFillPct, powerCeil, fwdCaution, fwdDanger, requested, textInputStyle,

@@ -4,6 +4,7 @@
 // can surface the server's error detail (e.g. a 409 when RF-enable is refused while faulted).
 
 import type { FlirLinkResult } from "./format.ts";
+import type { Ambient } from "./cockpit/shadowText.ts";
 import { apiUrl, loadOperatorBase, saveOperatorBase } from "./operator.ts";
 import type {
   MatchTunerConfig,
@@ -113,6 +114,8 @@ export interface ReplayShadowPoint {
 export interface ReplayShadow {
   roi: string;
   target_c: number;
+  /** The run's room-temperature decision (recorded live, or "assumed" for older runs); v0.19+. */
+  ambient?: Ambient | null;
   points: ReplayShadowPoint[];
 }
 
@@ -197,6 +200,8 @@ export const api = {
   thermalDisarm: () => post("/api/thermal/disarm"),
   thermalSource: (type: string, url?: string) => post("/api/thermal/source", { type, url }),
   setThermalRoi: (name: string) => post("/api/thermal/roi", { name }),
+  /** "" clears the room reference ROI. */
+  setAmbientRoi: (name: string) => post("/api/thermal/ambient", { name }),
   ramp: async (): Promise<RampConfig> => (await fetch(apiUrl(BASE, "/api/ramp"))).json(),
   saveRamp: (v: RampForm) => put("/api/ramp", v),
   rampStart: () => post("/api/ramp/start"),

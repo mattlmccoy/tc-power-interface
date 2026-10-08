@@ -84,6 +84,8 @@ export interface ThermalStatus {
   /** The selected control ROI name, and the live FLIR roster to pick from (empty unless FLIR). */
   control_roi?: string | null;
   available_rois?: string[];
+  /** The room reference ROI, read at RF on when the part was not seen at rest (v0.19+). */
+  ambient_roi?: string | null;
   /** Hottest pixel of the control ROI (FLIR source only; null at saturation/sim). Absent on older operators. */
   control_max_c?: number | null;
   /** Compact per-ROI roster for the optional hero overlay. Absent on older operators. */

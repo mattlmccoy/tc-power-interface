@@ -1,12 +1,13 @@
-// Thermal column (spec §4): control-ROI picker, part temperature and rate, target and time to
-// target, the shadow card with K, τ and confidence, and the temperature-status sentence. The ROI
-// pick is an operator action through op.applyControlRoi; everything else is display.
+// Thermal column (spec §4): control-ROI and room-reference pickers, part temperature and rate,
+// target and time to target, the shadow card with K, τ, room temperature and confidence, and the
+// temperature-status sentence. The two ROI picks are operator actions (op.applyControlRoi,
+// op.applyAmbientRoi); everything else is display.
 
 import type { Operator } from "../../hooks/useOperator.ts";
 import { f1 } from "../../lib/cockpit/format.ts";
 import type { CockpitSample } from "../../lib/cockpit/history.ts";
 import { partRate, tttText } from "../../lib/cockpit/live.ts";
-import { confidenceSentence, shadowCard, type RunModeName } from "../../lib/cockpit/shadowText.ts";
+import { confidenceSentence, roomLine, shadowCard, type RunModeName } from "../../lib/cockpit/shadowText.ts";
 import { tempStatusText } from "../../lib/thermalView.ts";
 
 const fin = (x: number | null | undefined): x is number => x != null && Number.isFinite(x);
@@ -24,6 +25,8 @@ export function ThermalColumn({ op, buf }: { op: Operator; buf: CockpitSample[] 
   const card = sh ? shadowCard(mode, sh, op.t?.forward_w ?? Number.NaN, target) : null;
   const conf = sh && fin(sh.confidence) ? Math.round(sh.confidence * 100) : null;
   const options = ctl && !rois.includes(ctl) ? [ctl, ...rois] : rois;
+  const amb = th?.ambient_roi ?? null;
+  const ambOptions = amb && !rois.includes(amb) ? [amb, ...rois] : rois;
   return (
     <section className="panel" aria-label="Thermal">
       <h2>
@@ -45,6 +48,22 @@ export function ThermalColumn({ op, buf }: { op: Operator; buf: CockpitSample[] 
           ))}
         </select>
         <span className="ck-sub">{rois.length} ROIs from the FLIR live feed</span>
+      </div>
+      <label className="ck-lbl" htmlFor="ck-amb-roi">Room reference (used only if the part was not at rest before RF)</label>
+      <div className="ck-roirow">
+        <select
+          id="ck-amb-roi"
+          className="ck-select"
+          value={amb ?? ""}
+          disabled={!ambOptions.length && !amb}
+          onChange={(e) => void op.applyAmbientRoi(e.target.value)}
+        >
+          <option value="">none: wait for the part to rest</option>
+          {ambOptions.map((r) => (
+            <option key={r} value={r}>{r === amb && !rois.includes(r) ? `${r} (not in feed)` : r}</option>
+          ))}
+        </select>
+        <span className="ck-sub">pick a ROI on something RF does not heat</span>
       </div>
       <div className="ck-row2">
         <div className="ck-card">
@@ -71,10 +90,11 @@ export function ThermalColumn({ op, buf }: { op: Operator; buf: CockpitSample[] 
         <dl className="ck-kv">
           <dt>Heating gain</dt><dd>{sh && sh.valid && fin(sh.k_c_per_w) ? `${sh.k_c_per_w.toFixed(2)} °C per W` : "—"}</dd>
           <dt>Time constant</dt><dd>{sh && sh.valid && fin(sh.tau_s) ? `${(sh.tau_s / 60).toFixed(1)} min` : "—"}</dd>
+          <dt>Room</dt><dd className="ck-clamp1" title={sh ? roomLine(sh) : ""}>{sh ? roomLine(sh) : "—"}</dd>
           <dt>Confidence</dt><dd>{conf == null ? "—" : `${conf} %`}</dd>
         </dl>
         <div className="ck-bar"><i style={{ width: `${conf ?? 0}%` }} /></div>
-        <div className="ck-sub ck-conf">{sh ? confidenceSentence(sh) : ""}</div>
+        <div className="ck-sub ck-conf" title={sh ? confidenceSentence(sh) : ""}>{sh ? confidenceSentence(sh) : ""}</div>
         <div className="ck-sub">
           Shadow loop: learns how <b>{ctl ?? "the control ROI"}</b> heats from your power changes. Recorded every
           sample; it never sends a command.
