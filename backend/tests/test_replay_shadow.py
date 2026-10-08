@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from rest_prefix import rest_before_rf_on
 
 from tc_power_interface.api.app import create_app
 from tc_power_interface.control.cockpit import CockpitObserver
 from tc_power_interface.control.run_mode import RunMode
 from tc_power_interface.recording.recorder import TelemetryRecorder
-from rest_prefix import rest_before_rf_on
 from tc_power_interface.recording.replay_shadow import (
     has_roi_data,
     recorded_rois,

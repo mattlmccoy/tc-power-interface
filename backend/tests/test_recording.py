@@ -292,10 +292,28 @@ def test_cockpit_columns_are_appended_and_unknown_is_blank(tmp_path):
     })
     rec.stop()
     header = (run / "telemetry.csv").read_text().splitlines()[0].split(",")
-    assert header[-12:] == _COCKPIT_TAIL
-    assert header[:-12] == _PRE_COCKPIT_HEADER  # old layout first, byte-identical, in order
+    assert header[-14:-2] == _COCKPIT_TAIL
+    assert header[:-14] == _PRE_COCKPIT_HEADER  # old layout first, byte-identical, in order
     row = next(csv.DictReader((run / "telemetry.csv").open()))
     assert row["setpoint_w"] == "40" and row["part_temp_c"] == "41.2" and row["shadow_k"] == ""
+
+
+def test_room_temperature_decision_columns_come_last(tmp_path):
+    # v0.19: the shadow's room temperature and where it came from (replay reuses them)
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(1), "state": "connected",
+                "cockpit": {"shadow_amb_c": None, "shadow_amb_src": "unknown:part_cooling"}})
+    rec.record({"telemetry": _tel(2), "state": "connected",
+                "cockpit": {"shadow_amb_c": 22.83, "shadow_amb_src": "part_at_rest"}})
+    rec.stop()
+    header = (run / "telemetry.csv").read_text().splitlines()[0].split(",")
+    assert header[-2:] == ["shadow_amb_c", "shadow_amb_src"]
+    rows = list(csv.DictReader((run / "telemetry.csv").open()))
+    assert [(r["shadow_amb_c"], r["shadow_amb_src"]) for r in rows] == [
+        ("", "unknown:part_cooling"), ("22.83", "part_at_rest")]
 
 
 def test_every_roi_goes_to_a_long_format_sidecar(tmp_path):

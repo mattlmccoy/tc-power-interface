@@ -37,8 +37,8 @@ REST_SLOPE_C_PER_MIN = 0.3
 
 @dataclass(frozen=True)
 class Ambient:
-    """``source``: "part_at_rest" | "reference" | "assumed" | None (unknown). ``reason`` says why the
-    part could not be used ("part_cooling" | "part_warming" | "rf_recent" | "no_history"); it is
+    """``source``: "part_at_rest" | "reference" | "assumed" | None (unknown). ``reason`` says why
+    the part could not be used ("part_cooling" | "part_warming" | "rf_recent" | "no_history"); it is
     kept when a reference covers for it."""
 
     t_amb_c: float | None

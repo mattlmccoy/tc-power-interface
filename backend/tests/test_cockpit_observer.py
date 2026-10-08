@@ -4,11 +4,11 @@ import inspect
 import json
 from pathlib import Path
 
+from rest_prefix import rest_before_rf_on
+
 from tc_power_interface.control import cockpit
 from tc_power_interface.control.cockpit import CockpitObserver
 from tc_power_interface.control.run_mode import RunMode
-
-from rest_prefix import rest_before_rf_on
 
 FIX = json.loads(
     (Path(__file__).parent / "fixtures/flir_20261002_125228_estimator.json").read_text()

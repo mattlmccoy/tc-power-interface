@@ -325,6 +325,7 @@ def create_app(
         )
         app.state.control_roi = src_cfg["roi"]
         app.state.watch_rois = src_cfg["watch"]
+        app.state.ambient_roi = src_cfg["ambient"]  # room reference ROI (warm starts), or None
         # Run mode is display/bookkeeping only; a stale file is re-clamped to the real limit.
         app.state.run_mode = load_run_mode(
             experiments_root, max_forward_w=active_limits.max_forward_w
@@ -426,6 +427,7 @@ def create_app(
                 target_c=thermal.plan.target_c,
                 ceiling_w=float(min(thermal.plan.loop_ceiling_w, controller.limits.max_forward_w)),
                 power_known=power_known,
+                ambient_roi=app.state.ambient_roi,
             )
 
         # Tick the thermal loop first, so the recorder logs the freshly-computed loop curve, then
@@ -775,6 +777,7 @@ def create_app(
                 **_thermal().snapshot(),
                 "source": app.state.thermal_source,
                 "control_roi": app.state.control_roi,
+                "ambient_roi": app.state.ambient_roi,
                 # why there is / isn't a control temperature (ok, no_roi_selected, roi_not_in_feed,
                 # ...)
                 "temp_status": getattr(_thermal().source, "status", "simulated"),
@@ -991,12 +994,16 @@ def create_app(
 
     @app.get("/api/thermal/rois")
     def thermal_rois() -> dict[str, Any]:
-        return {"available_rois": _available_rois(), "control_roi": app.state.control_roi}
+        return {
+            "available_rois": _available_rois(),
+            "control_roi": app.state.control_roi,
+            "ambient_roi": app.state.ambient_roi,
+        }
 
     def _save_source() -> None:
         save_source(experiments_root, {
             "type": app.state.thermal_source, "roi": app.state.control_roi,
-            "watch": app.state.watch_rois,
+            "watch": app.state.watch_rois, "ambient": app.state.ambient_roi,
         })
 
     @app.post("/api/thermal/roi")
@@ -1008,6 +1015,14 @@ def create_app(
             setter(app.state.control_roi)
         _save_source()
         return {"control_roi": app.state.control_roi, "available_rois": _available_rois()}
+
+    @app.post("/api/thermal/ambient")
+    def thermal_ambient(body: ThermalRoiBody) -> dict[str, Any]:
+        # The room reference ROI: read at RF on when the part was NOT seen at rest in the minute
+        # before (a warm start). Display/estimate only; it never commands anything. "" = none.
+        app.state.ambient_roi = body.name or None
+        _save_source()
+        return {"ambient_roi": app.state.ambient_roi, "available_rois": _available_rois()}
 
     @app.post("/api/thermal/watch")
     def thermal_watch(body: WatchBody) -> dict[str, Any]:

@@ -188,7 +188,7 @@ def test_covariance_trace_is_capped_during_a_long_steady_hold():
 
 def _warm_start(k, tau, p, *, room=22.8, start=29.1, minutes=6, fix=..., noise=0.05, dt=0.5):
     """A part that starts warm (cooling toward ``room``) when RF comes on at constant ``p``.
-    ``fix``: ... = today's auto-latch, else the value passed to fix_ambient before the first tick."""
+    ``fix``: ... = the auto-latch, else the value passed to fix_ambient before the first tick."""
     rng = random.Random(1)
     est, temp, out = PlantEstimator(), start, None
     if fix is not ...:

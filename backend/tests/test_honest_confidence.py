@@ -11,6 +11,8 @@ import json
 import random
 from pathlib import Path
 
+from rest_prefix import rest_before_rf_on
+
 from tc_power_interface.control.cockpit import (
     DRIFT_FULL,
     DRIFT_WINDOW_S,
@@ -19,8 +21,6 @@ from tc_power_interface.control.cockpit import (
     CockpitObserver,
 )
 from tc_power_interface.control.run_mode import RunMode
-
-from rest_prefix import rest_before_rf_on
 
 FIXTURES = Path(__file__).parent / "fixtures"
 STEADY = json.loads((FIXTURES / "run_20261007_165850_steady30w.json").read_text())

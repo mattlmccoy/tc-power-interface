@@ -115,9 +115,11 @@ def test_flir_source_says_why_there_is_no_reading():
 
 
 def test_source_and_roi_choice_persist_with_no_invented_default(tmp_path):
-    assert load_source(tmp_path, default_type="flir") == {"type": "flir", "roi": None, "watch": []}
+    assert load_source(tmp_path, default_type="flir") == {
+        "type": "flir", "roi": None, "watch": [], "ambient": None,
+    }
     save_source(tmp_path, {"type": "flir", "roi": "freehand_sample"})
-    expected = {"type": "flir", "roi": "freehand_sample", "watch": []}
+    expected = {"type": "flir", "roi": "freehand_sample", "watch": [], "ambient": None}
     assert load_source(tmp_path, default_type="simulated") == expected
 
 

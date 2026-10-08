@@ -76,6 +76,9 @@ _SCOPE_FIELDS = {
 _COCKPIT_FIELDS = [
     "part_roi", "part_temp_c", "temp_status", "shadow_k", "shadow_tau_s", "shadow_conf",
     "shadow_suggest_w", "shadow_plateau_c", "shadow_ttt_s", "run_mode", "target_c",
+    # v0.19 (appended): the shadow's room temperature and its source ("part_at_rest" | "reference"
+    # | "unknown:<reason>"); replay reuses it (recording/replay_shadow.py).
+    "shadow_amb_c", "shadow_amb_src",
 ]
 _CSV_FIELDS = [
     *_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS, *_SCOPE_FIELDS,

@@ -181,8 +181,8 @@ class CockpitObserver:
         """Feed one telemetry tick. Only a NEW non-None run id resets; stopping a recording keeps
         the estimate. ``power_known=False`` (no generator attached: the idle observer) means the
         power is UNKNOWN, not 0 W: the estimator sees RF off, and no plateau / settle /
-        time-to-target / suggestion is derived from it. ``ambient_roi`` = the operator's room reference
-        ROI (in ``roi_temps``), used only if the part was not at rest before RF on."""
+        time-to-target / suggestion is derived from it. ``ambient_roi`` = the operator's room
+        reference ROI (in ``roi_temps``), used only if the part was not at rest before RF on."""
         if run_id is not None and run_id != self._run_id:
             self._est.reset()
             self._shadow.reset()

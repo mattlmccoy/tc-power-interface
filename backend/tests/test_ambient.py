@@ -1,8 +1,9 @@
-"""Room temperature for the shadow loop: a part at rest, else the operator's reference ROI, else unknown.
+"""Room temperature for the shadow loop: a part at rest, else the operator's reference ROI, else
+unknown.
 
 The histories here are synthetic on purpose: no recording holds an at-rest stretch before RF (see
 docs/superpowers/plans/2026-10-08-shadow-room-temperature.md). The real warm start is exercised
-in test_cockpit_observer.py.
+in test_cockpit_ambient.py.
 """
 
 import math
