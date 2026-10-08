@@ -144,11 +144,14 @@ class CockpitObserver:
         self._watch_out: list[dict[str, Any]] = []
         self._suggest: float | None = None
         self._estimate: PlantEstimate = self._est.estimate()
-        #: Part readings (t, °C, heating) of the last REST_WINDOW_S; NOT reset with the run.
-        self._history: deque[tuple[float, float, bool]] = deque()
+        #: Part readings (t, °C, heating) of the last REST_WINDOW_S; NOT reset with the run. heating
+        #: is None when the power was unknown (no generator attached): RF could have been on.
+        self._history: deque[tuple[float, float, bool | None]] = deque()
         self._ambient: Ambient | None = None  # this run's room temperature; None = not decided
         self._preset: Ambient | None = None  # replay: a decision to use instead of judging
         self._was_heating = False
+        self._heat_since: float | None = None  # start of the current heating streak (any run id)
+        self._history_roi: str | None = None  # the ROI the history was read from
 
     def preset_ambient(self, a: Ambient | None) -> None:
         """REPLAY ONLY: use ``a`` at the run's first heating tick instead of judging (a recording
@@ -204,12 +207,26 @@ class CockpitObserver:
         # Decide T_amb at the run's first heating tick. A KNOWN value then holds for the run (the
         # part has been heated); an UNKNOWN one is judged again at the next RF-on edge, when the
         # part may have rested meanwhile (a recording can stay open across RF off).
+        # The window is the minute before the RF-on EDGE, which may be a tick or two before the run
+        # id changes (auto-log can start the run late), and only holds readings of this ROI.
+        if part_roi != self._history_roi:
+            self._history.clear()
+            self._history_roi = part_roi
+        if not heating:
+            self._heat_since = None
+        elif not self._was_heating:
+            self._heat_since = t_s
         unknown = self._ambient is not None and self._ambient.t_amb_c is None
         if heating and (self._ambient is None or (unknown and not self._was_heating)):
-            self._ambient = self._decide(t_s, part_temp_c, roi_temps, ambient_roi)
-            self._est.fix_ambient(self._ambient.t_amb_c)
+            # The part is never its own room reference (it would bring back the warm-start bug).
+            ref = ambient_roi if ambient_roi != part_roi else None
+            t_on = self._heat_since if self._heat_since is not None else t_s
+            decided = self._decide(t_on, part_temp_c, roi_temps, ref)
+            if decided is not None:
+                self._ambient = decided
+                self._est.fix_ambient(decided.t_amb_c)
         self._was_heating = heating
-        self._remember(t_s, part_temp_c, heating)
+        self._remember(t_s, part_temp_c, heating if power_known else None)
         before = self._est.grid_samples
         self._estimate = self._est.add(t_s, power, part_temp_c, rf_on=rf_on and power_known)
         if part_temp_c is None or not math.isfinite(part_temp_c) or not power_known:
@@ -245,7 +262,9 @@ class CockpitObserver:
         part_temp_c: float | None,
         roi_temps: list[dict[str, Any]],
         ambient_roi: str | None,
-    ) -> Ambient:
+    ) -> Ambient | None:
+        """The room temperature at RF on ``t_s``; None = not decidable yet (an assumed room with no
+        reading so far: wait for one)."""
         p = self._preset
         if p is None:
             return judge_ambient(
@@ -257,10 +276,10 @@ class CockpitObserver:
         if p.source == "assumed" and p.t_amb_c is None:
             if part_temp_c is not None and math.isfinite(part_temp_c):
                 return Ambient(float(part_temp_c), "assumed")
-            return Ambient(None, None, "no_history")
+            return None
         return p
 
-    def _remember(self, t_s: float, temp: float | None, heating: bool) -> None:
+    def _remember(self, t_s: float, temp: float | None, heating: bool | None) -> None:
         if temp is not None and math.isfinite(temp):
             self._history.append((t_s, float(temp), heating))
         elif heating:  # an unknown reading while heating still marks RF as recent

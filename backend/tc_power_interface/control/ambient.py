@@ -38,8 +38,8 @@ REST_SLOPE_C_PER_MIN = 0.3
 @dataclass(frozen=True)
 class Ambient:
     """``source``: "part_at_rest" | "reference" | "assumed" | None (unknown). ``reason`` says why
-    the part could not be used ("part_cooling" | "part_warming" | "rf_recent" | "no_history"); it is
-    kept when a reference covers for it."""
+    the part could not be used ("part_cooling" | "part_warming" | "rf_recent" | "rf_unknown" (no
+    generator attached to see RF) | "no_history"); it is kept when a reference covers for it."""
 
     t_amb_c: float | None
     source: str | None
@@ -60,11 +60,14 @@ def _slope_per_min(pts: list[tuple[float, float]]) -> float:
     return 60.0 * sum((t - mt) * (c - mc) for t, c in pts) / stt if stt > 0 else 0.0
 
 
-def _rest(history: Sequence[tuple[float, float, bool]], t_on: float) -> Ambient:
-    """The part's own verdict: at rest (with its mean temperature) or why not."""
+def _rest(history: Sequence[tuple[float, float, bool | None]], t_on: float) -> Ambient:
+    """The part's own verdict: at rest (with its mean temperature) or why not. A reading's RF flag
+    is None when no generator was attached to tell (RF could have been on from the front panel)."""
     window = [(t, c, rf) for t, c, rf in history if t_on - REST_WINDOW_S <= t < t_on]
     if any(rf for _, _, rf in window):
         return Ambient(None, None, "rf_recent")
+    if any(rf is None for _, _, rf in window):
+        return Ambient(None, None, "rf_unknown")
     pts = [(t, c) for t, c, _ in window if _fin(c)]
     if len(pts) < 2:
         return Ambient(None, None, "no_history")
@@ -85,7 +88,7 @@ def _rest(history: Sequence[tuple[float, float, bool]], t_on: float) -> Ambient:
 
 
 def judge_ambient(
-    history: Sequence[tuple[float, float, bool]],
+    history: Sequence[tuple[float, float, bool | None]],
     *,
     t_on: float,
     ref_roi: str | None,

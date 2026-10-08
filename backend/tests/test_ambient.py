@@ -95,3 +95,10 @@ def test_history_after_rf_on_is_ignored():
     h = _hist(0.0) + [(100.0 + i, 40.0 + i, True) for i in range(10)]
     a = judge_ambient(h, t_on=100.0, ref_roi=None, ref_temp_c=None)
     assert a.source == "part_at_rest" and a.t_amb_c == pytest.approx(22.8)
+
+
+def test_unknown_rf_state_inside_the_window_is_not_rest():
+    h = _hist(0.0)
+    h[-30] = (h[-30][0], h[-30][1], None)  # a reading taken with no generator attached
+    a = judge_ambient(h, t_on=100.0, ref_roi=None, ref_temp_c=None)
+    assert a.t_amb_c is None and a.reason == "rf_unknown"

@@ -23,7 +23,8 @@ COLD = json.loads((FIXTURES / "run_20261007_165850_steady30w.json").read_text())
 ROOM_C, COOL_TAU_S = 22.8, 214.0
 
 
-def _tick(obs, t, temp, *, power=0.0, rf=False, run_id="run", rois=(), ambient_roi=None):
+def _tick(obs, t, temp, *, power=0.0, rf=False, run_id="run", rois=(), ambient_roi=None,
+          power_known=True):
     obs.observe(
         t_s=t,
         telemetry={"forward_w": power, "rf_on": rf},
@@ -37,6 +38,7 @@ def _tick(obs, t, temp, *, power=0.0, rf=False, run_id="run", rois=(), ambient_r
         target_c=185.0,
         ceiling_w=200.0,
         ambient_roi=ambient_roi,
+        power_known=power_known,
     )
 
 
@@ -168,3 +170,68 @@ def test_an_unknown_room_is_not_rejudged_while_rf_stays_on():
     for t in range(1, 80):  # RF stays on: no new RF-on edge, nothing to re-judge
         _tick(obs, float(t), 25.0, power=20.0, rf=True)
     assert obs.snapshot()["shadow"]["ambient"]["reason"] == "no_history"
+
+
+# --- review 2026-10-08 -------------------------------------------------------------------------
+
+
+def test_the_part_itself_is_never_its_own_room_reference():
+    # review finding 1: picking the control ROI as the reference brought back the 0.30 C/W answer
+    obs = CockpitObserver()
+    _prefix(obs, WARM["rois"]["freehand_sample"][0], cooling=True)
+    _replay(obs, WARM, ambient_roi="freehand_sample")
+    sh = obs.snapshot()["shadow"]
+    assert not sh["valid"] and sh["why"] == "room_unknown"
+    assert sh["ambient"]["source"] is None and sh["ambient"]["reason"] == "part_cooling"
+
+
+def test_readings_with_no_generator_attached_are_not_evidence_of_rest():
+    # review finding 2: the idle observer (power unknown) cannot see RF; a part held at a hot
+    # plateau by front-panel RF looked "at rest" when the generator attached mid-run
+    obs = CockpitObserver()
+    for t in range(-70, 0):
+        _tick(obs, float(t), 120.0, power_known=False, run_id="idle")
+    _tick(obs, 0.0, 120.0, power=30.0, rf=True, run_id="attached")
+    amb = obs.snapshot()["shadow"]["ambient"]
+    assert amb["t_c"] is None and amb["reason"] == "rf_unknown"
+
+
+def test_a_run_that_starts_a_tick_after_rf_on_still_judges_the_minute_before_rf_on():
+    # review: auto-log can start the run late (recorder still draining); the heating ticks of the
+    # old run id must not count as "RF was on in the minute before"
+    obs = CockpitObserver()
+    _prefix(obs, 22.83, cooling=False, run_id="previous")
+    _tick(obs, 0.0, 22.83, power=30.0, rf=True, run_id="previous")
+    _tick(obs, 0.5, 22.9, power=30.0, rf=True, run_id="previous")
+    _tick(obs, 1.0, 23.0, power=30.0, rf=True, run_id="late")
+    amb = obs.snapshot()["shadow"]["ambient"]
+    assert amb["source"] == "part_at_rest" and amb["t_c"] == pytest.approx(22.83)
+
+
+def test_switching_the_control_roi_restarts_the_rest_window():
+    # review: readings of two ROIs must not be averaged into one "room temperature"
+    obs = CockpitObserver()
+    for t in range(-70, -3):
+        _tick(obs, float(t), 22.0)
+    for t in range(-3, 0):
+        obs.observe(t_s=float(t), telemetry={"forward_w": 0.0, "rf_on": False}, part_roi="other",
+                    part_temp_c=23.0, temp_status="ok", roi_temps=[], watch=[], run_id="run",
+                    run_mode=RunMode(mode="target"), target_c=185.0, ceiling_w=200.0)  # fmt: skip
+    obs.observe(t_s=0.0, telemetry={"forward_w": 30.0, "rf_on": True}, part_roi="other",
+                part_temp_c=23.0, temp_status="ok", roi_temps=[], watch=[], run_id="run",
+                run_mode=RunMode(mode="target"), target_c=185.0, ceiling_w=200.0)  # fmt: skip
+    assert obs.snapshot()["shadow"]["ambient"]["reason"] == "no_history"
+
+
+def test_an_assumed_room_waits_for_the_first_reading():
+    # replay of a pre-v0.19 recording whose first heating row has no part reading
+    from tc_power_interface.control.ambient import Ambient
+
+    obs = CockpitObserver()
+    obs.preset_ambient(Ambient(None, "assumed"))
+    _tick(obs, 0.0, None, power=30.0, rf=True)
+    assert obs.snapshot()["shadow"]["ambient"] is None
+    _tick(obs, 0.5, 24.0, power=30.0, rf=True)
+    assert obs.snapshot()["shadow"]["ambient"] == {
+        "t_c": 24.0, "source": "assumed", "reason": None, "slope_c_per_min": None, "roi": None,
+    }

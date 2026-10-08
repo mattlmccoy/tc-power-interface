@@ -1020,6 +1020,8 @@ def create_app(
     def thermal_ambient(body: ThermalRoiBody) -> dict[str, Any]:
         # The room reference ROI: read at RF on when the part was NOT seen at rest in the minute
         # before (a warm start). Display/estimate only; it never commands anything. "" = none.
+        if body.name and body.name == app.state.control_roi:
+            raise HTTPException(422, "the room reference must not be the control ROI (the part)")
         app.state.ambient_roi = body.name or None
         _save_source()
         return {"ambient_roi": app.state.ambient_roi, "available_rois": _available_rois()}

@@ -35,3 +35,10 @@ def test_rf_on_with_no_rest_minute_takes_the_reference_reading(tmp_path):
     assert amb, "the cockpit never decided a room temperature with RF on"
     assert amb["source"] == "reference" and amb["roi"] == "toroid_D"
     assert amb["t_c"] == _MEAN["toroid_D"] and amb["reason"] == "no_history"
+
+
+def test_the_control_roi_cannot_be_the_room_reference(tmp_path):
+    with _client(tmp_path, "simulated") as c:
+        c.post("/api/thermal/roi", json={"name": "freehand_sample"})
+        r = c.post("/api/thermal/ambient", json={"name": "freehand_sample"})
+        assert r.status_code == 422 and _thermal(c)["ambient_roi"] is None

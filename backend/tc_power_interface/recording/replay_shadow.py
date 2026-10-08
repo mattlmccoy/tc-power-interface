@@ -10,8 +10,10 @@ Reads the recorder's file contract (``recording/recorder.py``):
   ``csv.DictWriter`` from a Python bool), among other columns.
 * ``roi_temps.csv`` — long format ``host_timestamp_ns, roi, mean_c``; blank ``mean_c`` = unknown.
 * ``shadow_amb_c`` / ``shadow_amb_src`` (v0.19+): the live room-temperature decision, made from the
-  minute BEFORE RF on, which no recording holds. Replay reuses it. Recordings without it replay
-  with source "assumed" (first heating reading, unverified), and the result says so.
+  minute BEFORE RF on, which no recording holds. Replay reuses it, follows a later re-judge (an
+  unknown room is judged again at the next RF-on edge), and takes it only from HEATING rows (a
+  manual recording start can carry the previous run's fields on its first row). Recordings without
+  it replay with source "assumed" (first heating reading, unverified), and the result says so.
 
 Both files are streamed (a 2 h run at the 0.5 s tick with 11 ROIs is ~7 MB of ROI rows), never
 loaded whole. Recordings live in a Dropbox-synced folder and may be read while still being written,
@@ -32,6 +34,7 @@ from typing import Any
 
 from tc_power_interface.control.ambient import Ambient
 from tc_power_interface.control.cockpit import CockpitObserver
+from tc_power_interface.control.plant_estimator import MIN_POWER_W
 from tc_power_interface.control.run_mode import RunMode
 
 #: A ROI reading joins a telemetry row only if it is at most this old; older = unknown.
@@ -51,7 +54,7 @@ _ROI_HEADER_BYTES = len(",".join(_ROI_COLUMNS) + "\r\n")
 _MIN_ROI_ROW_BYTES = len("0,x,\r\n")
 _POINT_KEYS = (
     "k_c_per_w", "tau_s", "confidence", "suggest_w", "plateau_c",
-    "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w",
+    "confidence_fit", "drift_pct", "drifting", "needed_w", "ceiling_w", "ambient",
 )  # fmt: skip
 
 
@@ -226,11 +229,14 @@ def _drive(
     latest: tuple[int, float | None] | None = None
     first_ns: int | None = None
     points: list[dict[str, Any]] = []
-    recorded = False
+    applied: Ambient | None = None
     for ns, row in _timed_rows(tel_path):
-        if not recorded and (amb := _recorded_ambient(row)) is not None:
-            obs.preset_ambient(amb)  # written on the first heating row, the tick it was decided
-            recorded = True
+        power = _finite(row["forward_w"])
+        heating = row["rf_on"] == "True" and power is not None and power >= MIN_POWER_W
+        amb = _recorded_ambient(row) if heating else None
+        if amb is not None and amb != applied:
+            obs.preset_ambient(amb)  # written on the heating tick it was decided
+            applied = amb
         # roi_temps.csv is assumed time-ordered (the recorder writes it in order): one pass.
         while pending is not None and pending[0] <= ns:  # latest reading at or before ns
             latest, pending = pending, next(readings, None)
