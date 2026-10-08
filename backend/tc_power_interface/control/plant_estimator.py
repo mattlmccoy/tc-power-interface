@@ -2,8 +2,11 @@
 
 K = a/b (°C per W) and τ = 1/b (s), by recursive least squares on a fixed 5 s grid (the first
 tick at or after each grid time is taken). Derivative = central difference of a centred 30 s
-moving average, so each update lags the newest sample by 20 s. T_amb = the temperature at the
-first RF-on grid sample. Pure: no I/O and no actuators. Spec §3.2 of the cockpit design.
+moving average, so each update lags the newest sample by 20 s. T_amb: the value passed to
+:meth:`PlantEstimator.fix_ambient` (the cockpit decides it from the part's state before RF on, see
+``ambient.py``). Without a fix it is the temperature at the first RF-on grid sample, which is
+only right if the part started at room temperature. Pure: no I/O and no actuators. Spec §3.2 of
+the cockpit design.
 
 Confidence is a heuristic score in [0, 1] (it ignores the a-b covariance and the autocorrelation
 of the residuals), not a probability.
@@ -60,7 +63,14 @@ class PlantEstimator:
         self._r2 = 0.0
         self._n = 0
         self._t_amb: float | None = None
+        self._amb_fixed = False
         self._grid_samples = 0
+
+    def fix_ambient(self, t_c: float | None) -> None:
+        """Set this run's room temperature instead of latching the first RF-on reading. ``None``
+        means unknown: the estimator does not learn until :meth:`reset`."""
+        self._t_amb = t_c if t_c is not None and math.isfinite(t_c) else None
+        self._amb_fixed = True
 
     @property
     def grid_samples(self) -> int:
@@ -93,7 +103,7 @@ class PlantEstimator:
         self._p.append(p)
         self._t.append(temp)
         self._grid_samples += 1
-        if self._t_amb is None and p >= MIN_POWER_W and temp is not None:
+        if not self._amb_fixed and self._t_amb is None and p >= MIN_POWER_W and temp is not None:
             self._t_amb = temp
         self._update(len(self._t) - 1)
         return self.estimate()
