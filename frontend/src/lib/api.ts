@@ -108,6 +108,8 @@ export interface ReplayShadowPoint {
   drifting?: boolean;
   needed_w?: number | null;
   ceiling_w?: number | null;
+  /** The room-temperature decision in force at this point (v0.19+). */
+  ambient?: Ambient | null;
 }
 
 /** GET /api/recordings/{run}/shadow. */

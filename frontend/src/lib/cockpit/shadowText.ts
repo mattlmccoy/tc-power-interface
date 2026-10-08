@@ -10,7 +10,8 @@ export interface Ambient {
   t_c: number | null;
   /** "part_at_rest" | "reference" | "assumed" (replay of a pre-v0.19 recording) | null (unknown). */
   source: string | null;
-  /** Why the part itself could not be used: "part_cooling" | "part_warming" | "rf_recent" | "no_history". */
+  /** Why the part itself could not be used: "part_cooling" | "part_warming" | "rf_recent" |
+   * "rf_unknown" (no generator attached to see RF) | "no_history". */
   reason: string | null;
   slope_c_per_min: number | null;
   /** The reference ROI's name when source is "reference". */
@@ -68,6 +69,8 @@ function pausedSentence(a: Ambient | null | undefined): string {
       return `Paused this run: the part was still warming${slope} when RF came on, so the room temperature is unknown. Next time ${AFTER}`;
     case "rf_recent":
       return `Paused this run: RF was on in the minute before, so the part was not at room temperature. Next time ${AFTER}`;
+    case "rf_unknown":
+      return "Paused this run: no generator connected in the minute before RF on, so RF-off and a cold part can't be confirmed. Next time connect a minute before RF, or pick a room reference.";
     default:
       return `Paused this run: no part reading in the minute before RF on, so the room temperature is unknown. Next time ${AFTER}`;
   }
@@ -78,6 +81,7 @@ const REASON: Record<string, string> = {
   part_cooling: "part was cooling",
   part_warming: "part was warming",
   rf_recent: "RF was on just before",
+  rf_unknown: "no generator reading",
   no_history: "no reading before RF",
 };
 
@@ -86,6 +90,7 @@ const UNKNOWN: Record<string, string> = {
   part_cooling: "part was cooling at RF on",
   part_warming: "part was warming at RF on",
   rf_recent: "RF was on in the minute before",
+  rf_unknown: "no generator reading before RF on",
   no_history: "no reading before RF on",
 };
 
@@ -106,6 +111,8 @@ export function roomLine(s: Shadow): string {
 export function confidenceSentence(s: Shadow): string {
   if (s.why === "room_unknown") return pausedSentence(s.ambient);
   if (!s.valid) return "No estimate yet, so no suggestion.";
+  if (s.ambient?.source === "assumed")
+    return "Unverified: this recording predates the room-temperature check, so its first reading was taken as room temperature.";
   if (!fin(s.confidence)) return "Confidence unknown.";
   if (s.drifting) {
     const moved = fin(s.drift_pct) ? `moved ${round(s.drift_pct)} % in the last 2 min` : "still moving";

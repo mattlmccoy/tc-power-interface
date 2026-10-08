@@ -70,11 +70,12 @@ export function replaySamples(rows: ReplayRow[], pts: ReplayShadowPoint[] | null
 export function shadowAt(p: ReplayShadowPoint | null, ambient?: Ambient | null): Shadow | null {
   if (!p) return null;
   const valid = p.k_c_per_w != null && Number.isFinite(p.k_c_per_w) && p.tau_s != null && Number.isFinite(p.tau_s);
-  const roomUnknown = ambient != null && ambient.t_c == null;
+  const amb = p.ambient !== undefined ? p.ambient : ambient; // the point's own decision wins
+  const roomUnknown = amb != null && amb.t_c == null;
   return {
     valid,
     why: valid ? null : roomUnknown ? "room_unknown" : "no estimate yet at this point",
-    ...(ambient === undefined ? {} : { ambient }),
+    ...(amb === undefined ? {} : { ambient: amb }),
     k_c_per_w: p.k_c_per_w,
     tau_s: p.tau_s,
     confidence: p.confidence,
@@ -83,13 +84,13 @@ export function shadowAt(p: ReplayShadowPoint | null, ambient?: Ambient | null):
     drifting: p.drifting === true,
     needed_w: p.needed_w ?? null,
     ceiling_w: p.ceiling_w ?? null,
-    t_amb_c: ambient?.t_c ?? null,
+    t_amb_c: amb?.t_c ?? null,
     updates: 0,
     suggest_w: p.suggest_w,
     plateau_c: p.plateau_c,
     settle_s: null,
     ttt_s: null,
-    show: valid && p.confidence >= SHOW_CONFIDENCE,
+    show: valid && p.confidence >= SHOW_CONFIDENCE && amb?.source !== "assumed", // unverified: muted
   };
 }
 

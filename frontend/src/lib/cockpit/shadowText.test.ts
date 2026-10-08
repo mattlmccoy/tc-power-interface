@@ -169,3 +169,11 @@ test("the room line names the source, and unknown is never a number", () => {
   const { ambient: _drop, ...older } = { ...base, ambient: null }; // operator older than v0.19
   assert.equal(roomLine(older), "23.8 °C");
 });
+
+test("review: no generator before RF on, and an assumed room, are named, never shown as sure", () => {
+  assert.match(confidenceSentence(paused("rf_unknown")), /no generator connected in the minute before RF on/);
+  const amb = { t_c: null, source: null, reason: "rf_unknown", slope_c_per_min: null, roi: null };
+  assert.equal(roomLine({ ...base, ambient: amb }), "unknown · no generator reading before RF on");
+  const assumed: Shadow = { ...base, ambient: { t_c: 29.1, source: "assumed", reason: null, slope_c_per_min: null, roi: null } };
+  assert.match(confidenceSentence(assumed), /^Unverified: this recording predates the room-temperature check/);
+});

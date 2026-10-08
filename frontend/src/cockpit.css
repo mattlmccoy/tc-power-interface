@@ -96,6 +96,10 @@
 .ck-lbl { font: 10px var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .ck-sub { font-size: 11px; color: var(--muted); line-height: 1.4; }
 .ck-line { min-height: 1.4em; }
+/* The shadow card's sub-line changes at RF on ("learning…" -> "paused: room temperature unknown"):
+   a fixed two lines so a wrap can never move the card. */
+.ck-shadowcard .ck-line { height: 2.8em; min-height: 0; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .ck-big { font: 28px/1.15 var(--font-mono); color: var(--fg-strong); font-variant-numeric: tabular-nums; }
 .ck-big small { font-size: 14px; color: var(--muted); }
 .ck-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-deep); padding: 8px 10px; min-width: 0; }

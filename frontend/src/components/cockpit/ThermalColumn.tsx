@@ -26,7 +26,9 @@ export function ThermalColumn({ op, buf }: { op: Operator; buf: CockpitSample[] 
   const conf = sh && fin(sh.confidence) ? Math.round(sh.confidence * 100) : null;
   const options = ctl && !rois.includes(ctl) ? [ctl, ...rois] : rois;
   const amb = th?.ambient_roi ?? null;
-  const ambOptions = amb && !rois.includes(amb) ? [amb, ...rois] : rois;
+  // Never the part itself: the backend refuses it (422), so it is not offered.
+  const others = rois.filter((r) => r !== ctl);
+  const ambOptions = amb && !others.includes(amb) ? [amb, ...others] : others;
   return (
     <section className="panel" aria-label="Thermal">
       <h2>
@@ -82,7 +84,7 @@ export function ThermalColumn({ op, buf }: { op: Operator; buf: CockpitSample[] 
           <>
             <div className="ck-lbl">{card.label}</div>
             <div className={`ck-big ${card.muted ? "ck-muted" : "ck-shadowc"}`}>{card.value}</div>
-            <div className="ck-sub ck-line">{card.sub}</div>
+            <div className="ck-sub ck-line" title={card.sub}>{card.sub}</div>
           </>
         ) : (
           <div className="ck-sub">This operator does not report the shadow loop.</div>
