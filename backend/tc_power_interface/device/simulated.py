@@ -106,6 +106,9 @@ class SimulatedCxnTransport(Transport):
         del self._out[:n]
         return chunk
 
+    def discard_input(self) -> None:
+        self._out.clear()
+
     def close(self) -> None:
         self._out.clear()
 

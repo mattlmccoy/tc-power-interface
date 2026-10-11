@@ -46,5 +46,8 @@ class SerialCxnTransport(Transport):
             )
         return bytes(buf)
 
+    def discard_input(self) -> None:
+        self._ser.reset_input_buffer()
+
     def close(self) -> None:
         self._ser.close()

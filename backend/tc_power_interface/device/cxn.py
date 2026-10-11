@@ -31,14 +31,23 @@ class CxnDevice:
             raise ValueError("device NACKed command ('?')")
         raise ValueError(f"unexpected acknowledgement byte {ack!r}")
 
+    def _send(self, command: bytes) -> None:
+        # Resync first: bytes already queued are stale (the late tail of a timed-out response).
+        # Without this one slow read on the USB-serial link shifts the framing of EVERY later
+        # exchange — cap commands NACK/"unexpected ack" and readback stops updating until the
+        # port is reopened (power cycle). The protocol is request/response, so nothing valid can be
+        # waiting before we ask.
+        self.transport.discard_input()
+        self.transport.write(codec.encode_command(command, self.address))
+
     def _command(self, command: bytes) -> None:
         """Send a command that returns only an acknowledgement (no data response)."""
-        self.transport.write(codec.encode_command(command, self.address))
+        self._send(command)
         self._read_ack()
 
     def _query(self, command: bytes) -> bytes:
         """Send a command and return the data field of its response."""
-        self.transport.write(codec.encode_command(command, self.address))
+        self._send(command)
         self._read_ack()
         header = self.transport.read(4)
         datalength = int.from_bytes(header[2:4], "big")
