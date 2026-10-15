@@ -26,6 +26,15 @@ if [[ -z "$UV_BIN" ]]; then
   exit 1
 fi
 UV_DIR="$(dirname "$UV_BIN")"
+# The service's Python environment lives OUTSIDE the (Dropbox-synced) checkout. On 2026-10-15 Dropbox
+# deleted backend/.venv under the running operator: everything already imported kept working, but
+# the first on-disk read after that (httpx's CA bundle, on every FLIR RF-link post) failed with
+# "[Errno 2] No such file or directory". A synced .venv is also shared with any other machine using
+# this folder (e.g. the Windows install, whose `uv sync` rebuilds it). Override with TCP_VENV=...
+VENV_DIR="${TCP_VENV:-$HOME/.local/share/tcpower/venv}"
+mkdir -p "$(dirname "$VENV_DIR")"
+echo "Syncing the operator's Python environment into $VENV_DIR ..."
+(cd "$BACKEND_DIR" && UV_PROJECT_ENVIRONMENT="$VENV_DIR" "$UV_BIN" sync --quiet)
 
 AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST="$AGENTS_DIR/$LABEL.plist"
@@ -54,6 +63,7 @@ cat > "$PLIST" <<PLIST
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key> <string>$UV_DIR:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>UV_PROJECT_ENVIRONMENT</key> <string>$VENV_DIR</string>
     </dict>
     <key>RunAtLoad</key>        <true/>
     <key>KeepAlive</key>        <true/>
@@ -84,5 +94,6 @@ done
 echo "Installed + started $LABEL"
 echo "  plist:  $PLIST"
 echo "  log:    $LOG"
+echo "  venv:   $VENV_DIR  (outside Dropbox)"
 echo "  serves: http://127.0.0.1:$PORT  (boots idle — connect a generator from the UI's connect popover)"
 echo "Stop/remove it any time with: $SCRIPT_DIR/uninstall-operator-service.sh"
