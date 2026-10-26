@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { CockpitSample } from "./history.ts";
-import { matchStatus, partRate, retuneNs, runStats, toggleWatch, tttText } from "./live.ts";
+import { matchStatus, partRate, retuneNs, runStats, toggleWatch, tttText, watchPickRows } from "./live.ts";
 import type { Shadow } from "./shadowText.ts";
 
 const S = 1e9; // ns per second
@@ -85,4 +85,38 @@ test("tttText: time to target only in to-temperature mode; unreachable and unkno
   assert.equal(tttText("target", sh({ ttt_s: null, plateau_c: null }), 55), "Waiting for part temperature.");
   assert.equal(tttText("target", sh({ ttt_s: null, plateau_c: 70 }), 55), "Time to target unknown.");
   assert.equal(tttText("target", sh({ ttt_s: null, plateau_c: 48 }), Number.NaN), "Time to target unknown.");
+});
+
+// 2026-10-26: FLIR ROIs were redrawn; the saved watch list ["freehand_sample","toroid_C","toroid_D","trans2"]
+// kept 3 names the feed no longer had. Only feed ROIs got checkboxes, so those 3 filled the 4 slots
+// and could not be unticked: trans1 stayed disabled.
+const FEED = ["powder", "trans2", "trans1", "full_network", "powder_smart", "no_heat_ref"];
+
+test("watchPickRows: watched names no longer in the feed get a row and can be unticked", () => {
+  const rows = watchPickRows(FEED, ["freehand_sample", "toroid_C", "toroid_D", "trans2"], "powder_smart");
+  const stale = rows.filter((r) => r.why !== null);
+  assert.deepEqual(stale.map((r) => [r.name, r.why, r.on, r.disabled]), [
+    ["freehand_sample", "not in feed", true, false],
+    ["toroid_C", "not in feed", true, false],
+    ["toroid_D", "not in feed", true, false],
+  ]);
+  // the list is full, so an unwatched live ROI is disabled until a slot frees up
+  assert.equal(rows.find((r) => r.name === "trans1")?.disabled, true);
+  assert.equal(rows.find((r) => r.name === "trans2")?.on, true);
+});
+
+test("watchPickRows: live ROIs keep feed order, never the control ROI, stale rows first", () => {
+  const rows = watchPickRows(FEED, ["gone"], "powder_smart");
+  assert.deepEqual(rows.map((r) => r.name), ["gone", "powder", "trans2", "trans1", "full_network", "no_heat_ref"]);
+  assert.ok(rows.filter((r) => r.why === null).every((r) => !r.disabled)); // 1 of 4 used: all pickable
+});
+
+test("watchPickRows: a watched ROI that became the control ROI can still be removed", () => {
+  const rows = watchPickRows(FEED, ["trans2", "powder"], "powder");
+  assert.deepEqual(rows.find((r) => r.name === "powder"), { name: "powder", on: true, disabled: false, why: "control ROI" });
+});
+
+test("watchPickRows: with no feed every watched name is shown as not in feed, nothing else", () => {
+  assert.deepEqual(watchPickRows([], ["trans1"], null), [{ name: "trans1", on: true, disabled: false, why: "not in feed" }]);
+  assert.deepEqual(watchPickRows([], [], null), []);
 });

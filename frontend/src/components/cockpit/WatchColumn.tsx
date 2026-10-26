@@ -6,7 +6,7 @@ import type { MatchAid } from "../../hooks/useMatchAid.ts";
 import { api, detail } from "../../lib/api.ts";
 import { f1 } from "../../lib/cockpit/format.ts";
 import { coreLevel } from "../../lib/cockpit/ladder.ts";
-import { MAX_WATCH, toggleWatch } from "../../lib/cockpit/live.ts";
+import { MAX_WATCH, toggleWatch, watchPickRows } from "../../lib/cockpit/live.ts";
 import { useCockpitThresholds } from "../../hooks/useCockpitThresholds.ts";
 import { DriftBlock } from "../MatchAidPanel.tsx";
 import { WATCH_COLORS } from "./drawTimeline.ts";
@@ -19,7 +19,8 @@ export function WatchColumn({ op, aid }: { op: Operator; aid: MatchAid }) {
   const watch = th?.watch ?? [];
   const names = watch.map((w) => w.name);
   const ctl = th?.control_roi ?? null;
-  const pickable = (th?.available_rois ?? []).filter((r) => r !== ctl);
+  // Watched names the feed no longer has keep a row (ticked) so they can be removed.
+  const rows = watchPickRows(th?.available_rois ?? [], names, ctl);
   async function change(name: string, on: boolean) {
     const next = toggleWatch(names, name, on, ctl);
     if (next === names) return;
@@ -59,16 +60,13 @@ export function WatchColumn({ op, aid }: { op: Operator; aid: MatchAid }) {
         )}
       </div>
       <div className="ck-watchpick" aria-label="Choose ROIs to watch">
-        {pickable.length ? (
-          pickable.map((r) => {
-            const on = names.includes(r);
-            return (
-              <label key={r} className={on ? "on" : ""}>
-                <input type="checkbox" checked={on} disabled={!on && names.length >= MAX_WATCH} onChange={(e) => void change(r, e.target.checked)} />
-                {r}
-              </label>
-            );
-          })
+        {rows.length ? (
+          rows.map((r) => (
+            <label key={r.name} className={r.on ? "on" : ""} title={r.why ? `${r.name}: ${r.why} — untick to remove` : r.name}>
+              <input type="checkbox" checked={r.on} disabled={r.disabled} onChange={(e) => void change(r.name, e.target.checked)} />
+              {r.why ? `${r.name} (${r.why})` : r.name}
+            </label>
+          ))
         ) : (
           <span className="ck-sub">No live FLIR ROIs to pick from.</span>
         )}

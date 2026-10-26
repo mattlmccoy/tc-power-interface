@@ -126,6 +126,33 @@ export function toggleWatch(current: string[], name: string, on: boolean, contro
   return [...current, name];
 }
 
+export interface WatchPickRow {
+  name: string;
+  on: boolean;
+  disabled: boolean;
+  /** Why a watched name has no live checkbox of its own ("not in feed" | "control ROI"); null = live. */
+  why: string | null;
+}
+
+/**
+ * The checkboxes under Watched ROIs. Live feed ROIs (never the control ROI) as before, at most
+ * MAX_WATCH ticked. Watched names that cannot be picked from the feed (ROIs redrawn, or now the
+ * control ROI) come FIRST, ticked and always enabled, so they can be removed: they count toward the
+ * limit, and without a row of their own they used to fill it with no way to untick them.
+ */
+export function watchPickRows(available: string[], watched: string[], controlRoi: string | null): WatchPickRow[] {
+  const pickable = available.filter((r) => r !== controlRoi);
+  const stale = watched
+    .filter((n) => !pickable.includes(n))
+    .map((n) => ({ name: n, on: true, disabled: false, why: n === controlRoi ? "control ROI" : "not in feed" }));
+  const full = watched.length >= MAX_WATCH;
+  const live = pickable.map((r) => {
+    const on = watched.includes(r);
+    return { name: r, on, disabled: !on && full, why: null };
+  });
+  return [...stale, ...live];
+}
+
 /**
  * The Target card's time-to-target line. Only to-temperature mode has one. The backend sends `ttt_s`
  * null when the part temperature is unknown (then `plateau_c` is null too) or the target is out of
