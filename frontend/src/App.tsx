@@ -38,7 +38,7 @@ export function App() {
   const vna = useVna(op);
   const alerts = useAudioAlerts(op);
   const runClock = op.status?.run_clock;
-  const clockSound = useRunClockSound(runClock);
+  const clockSound = useRunClockSound(runClock, op.msSinceMsg != null && op.msSinceMsg < 3000);
   const aid = useMatchAid(op.t, op.status?.recording?.run ?? null); // App level: survives tab switches; drift is per run
   const mapCapture = useMapCapture(op, vna);
   const cockpitHistory = useCockpitHistory(op.status); // App level: the timeline survives tab switches
@@ -64,7 +64,7 @@ export function App() {
   return (
     <div className={`app ${showHelp ? "" : "help-off"}`}>
       <UpdateBanner />
-      <TimeUpPopup rc={runClock} flash={op.flash} />
+      <TimeUpPopup rc={runClock} flash={op.flash} onDismiss={clockSound.silence} />
       <header className="topbar">
         <span className="brand" title="T&C Power Interface">
           <span className="brand-name">

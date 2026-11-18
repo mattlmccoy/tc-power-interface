@@ -10,9 +10,14 @@ import { AlertAudio, CLOCK_TONES } from "../lib/audio.ts";
 import { soundFor, type RunClockBlock, type RunClockPhase } from "../lib/runClock.ts";
 
 const MUTE_KEY = "tcp.runclock.mute";
-const REPEAT_MS = 2500;
+/** The time's-up bells repeat this slowly (gentle reminder, not an alarm). */
+const REPEAT_MS = 8000;
 
-export function useRunClockSound(rc: RunClockBlock | undefined) {
+/** ``live``: the page is hearing from the operator. A stale page goes silent (it could never be
+ * dismissed). ``silence()`` stops this screen's time's-up bells at once, before the operator
+ * confirms the dismiss. */
+export function useRunClockSound(rc: RunClockBlock | undefined, live: boolean) {
+  const [silenced, setSilenced] = useState(false);
   const [muted, setMutedState] = useState<boolean>(() => {
     try {
       return localStorage.getItem(MUTE_KEY) === "1";
@@ -44,9 +49,13 @@ export function useRunClockSound(rc: RunClockBlock | undefined) {
   }, []);
 
   const phase = rc?.phase ?? "off";
-  const dismissed = rc?.dismissed ?? false;
+  const dismissed = (rc?.dismissed ?? false) || silenced;
+  // A local silence lasts until this time's-up is over (cancelled, +time, or a new clock).
   useEffect(() => {
-    const { chime, repeat } = soundFor(prevPhase.current, phase, dismissed);
+    if (phase !== "over" && silenced) setSilenced(false);
+  }, [phase, silenced]);
+  useEffect(() => {
+    const { chime, repeat } = soundFor(prevPhase.current, phase, dismissed, live);
     prevPhase.current = phase;
     if (chime && !muted) audioRef.current?.play(phase === "final" ? CLOCK_TONES.final : CLOCK_TONES.warn);
     if (repeat && !muted) {
@@ -58,7 +67,7 @@ export function useRunClockSound(rc: RunClockBlock | undefined) {
       clearInterval(loop.current);
       loop.current = null;
     }
-  }, [phase, dismissed, muted]);
+  }, [phase, dismissed, muted, live]);
 
   useEffect(
     () => () => {
@@ -68,5 +77,5 @@ export function useRunClockSound(rc: RunClockBlock | undefined) {
     [],
   );
 
-  return { muted, setMuted, unlock };
+  return { muted, setMuted, unlock, silence: () => setSilenced(true) };
 }

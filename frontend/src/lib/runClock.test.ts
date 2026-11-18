@@ -52,19 +52,19 @@ test("chipView: no clock set is an inviting, muted chip (easy to find)", () => {
 });
 
 test("soundFor: one chime on entering 2 min and 30 s, never on page load", () => {
-  assert.deepEqual(soundFor("running", "warn", false), { chime: true, repeat: false });
-  assert.deepEqual(soundFor("paused", "warn", false), { chime: true, repeat: false });
-  assert.deepEqual(soundFor("warn", "final", false), { chime: true, repeat: false });
-  assert.deepEqual(soundFor("warn", "warn", false), { chime: false, repeat: false });
-  assert.deepEqual(soundFor(null, "warn", false), { chime: false, repeat: false }); // just opened the page
-  assert.deepEqual(soundFor("final", "running", false), { chime: false, repeat: false }); // +time moved it back
+  assert.deepEqual(soundFor("running", "warn", false, true), { chime: true, repeat: false });
+  assert.deepEqual(soundFor("paused", "warn", false, true), { chime: true, repeat: false });
+  assert.deepEqual(soundFor("warn", "final", false, true), { chime: true, repeat: false });
+  assert.deepEqual(soundFor("warn", "warn", false, true), { chime: false, repeat: false });
+  assert.deepEqual(soundFor(null, "warn", false, true), { chime: false, repeat: false }); // just opened the page
+  assert.deepEqual(soundFor("final", "running", false, true), { chime: false, repeat: false }); // +time moved it back
 });
 
 test("soundFor: time's up repeats until dismissed, even on page load", () => {
-  assert.deepEqual(soundFor("final", "over", false), { chime: false, repeat: true });
-  assert.deepEqual(soundFor(null, "over", false), { chime: false, repeat: true });
-  assert.deepEqual(soundFor("over", "over", true), { chime: false, repeat: false });
-  assert.deepEqual(soundFor("over", "off", false), { chime: false, repeat: false }); // cancelled
+  assert.deepEqual(soundFor("final", "over", false, true), { chime: false, repeat: true });
+  assert.deepEqual(soundFor(null, "over", false, true), { chime: false, repeat: true });
+  assert.deepEqual(soundFor("over", "over", true, true), { chime: false, repeat: false });
+  assert.deepEqual(soundFor("over", "off", false, true), { chime: false, repeat: false }); // cancelled
 });
 
 test("overBanner: only when over and not dismissed", () => {
@@ -73,4 +73,12 @@ test("overBanner: only when over and not dismissed", () => {
   assert.equal(overBanner({ ...base, remaining_s: -23.6, on_s: 743.6, phase: "over", dismissed: true }), null);
   assert.equal(overBanner(base), null);
   assert.equal(overBanner(undefined), null);
+});
+
+
+// 2026-11-18: a test tab whose operator had stopped stayed "over" and chimed forever; no Dismiss
+// could reach the operator. A page that has lost the operator must go quiet.
+test("soundFor: silent when the page is not hearing from the operator", () => {
+  assert.deepEqual(soundFor(null, "over", false, false), { chime: false, repeat: false });
+  assert.deepEqual(soundFor("running", "warn", false, false), { chime: false, repeat: false });
 });

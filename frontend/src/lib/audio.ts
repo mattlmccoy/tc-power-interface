@@ -5,13 +5,15 @@
 
 type OscType = "sine" | "square" | "triangle" | "sawtooth";
 
-/** One shaped note: frequency (Hz), start offset (s), duration (s), peak gain, waveform. */
+/** One shaped note: frequency (Hz), start offset (s), duration (s), peak gain, waveform. With
+ * ``attack`` (s) it is a soft bell: a fade-in over ``attack``, then a slow exponential fade-out. */
 export interface Tone {
   freq: number;
   start: number;
   dur: number;
   gain: number;
   type: OscType;
+  attack?: number;
 }
 
 /** The WARNING sounds (faults, reflected power). Nothing else may sound like these. */
@@ -28,21 +30,23 @@ export const ALERT_TONES: { chime: Tone[]; alarm: Tone[] } = {
   ],
 };
 
-/** The run clock's REMINDER sounds: soft bell-like triangle tones on a C-major chord (G4/C5/G5),
- * quieter than and at no pitch or waveform the warnings use (2026-11-18: the clock reusing the
- * reflected-power chime scared Matt). Enforced by audio.test.ts. */
+/** The run clock's REMINDER sounds: quiet pure-sine bells (soft fade-in, slow fade-out) on low warm
+ * pitches (G4 / C5), at no pitch the warnings use. 2026-11-18: the clock first reused the
+ * reflected-power chime, then a brighter triangle version; both sounded like emergencies to Matt
+ * ("it needs to be a MUCH gentler tone"). Enforced by audio.test.ts. */
+const BELL = { type: "sine" as const, gain: 0.045, attack: 0.05 };
 export const CLOCK_TONES: { warn: Tone[]; final: Tone[]; over: Tone[] } = {
-  // 2 min left: one gentle "ding"
-  warn: [{ freq: 784, start: 0, dur: 0.45, gain: 0.1, type: "triangle" }],
-  // 30 s left: "ding-ding", rising
+  // 2 min left: one soft bell
+  warn: [{ ...BELL, freq: 523.25, start: 0, dur: 1.4 }],
+  // 30 s left: two soft bells, rising
   final: [
-    { freq: 523.25, start: 0, dur: 0.35, gain: 0.1, type: "triangle" },
-    { freq: 784, start: 0.3, dur: 0.45, gain: 0.1, type: "triangle" },
+    { ...BELL, freq: 392, start: 0, dur: 1.2 },
+    { ...BELL, freq: 523.25, start: 0.45, dur: 1.4 },
   ],
-  // time's up (repeats until dismissed): a doorbell "ding-dong", falling
+  // time's up (repeats slowly until dismissed): two soft bells, falling
   over: [
-    { freq: 784, start: 0, dur: 0.4, gain: 0.11, type: "triangle" },
-    { freq: 392, start: 0.42, dur: 0.6, gain: 0.11, type: "triangle" },
+    { ...BELL, freq: 523.25, start: 0, dur: 1.4 },
+    { ...BELL, freq: 392, start: 0.6, dur: 1.6 },
   ],
 };
 
@@ -63,8 +67,9 @@ export class AlertAudio {
     if (this.ctx.state === "suspended") void this.ctx.resume();
   }
 
-  /** One shaped beep: attack/release ramps so it never clicks. */
-  private beep(freq: number, start: number, dur: number, gain: number, type: OscType): void {
+  /** One shaped beep: attack/release ramps so it never clicks. With ``attack`` it is a soft bell
+   * (fade in over ``attack``, then an exponential fade-out to silence over the rest of ``dur``). */
+  private beep(freq: number, start: number, dur: number, gain: number, type: OscType, attack?: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const osc = ctx.createOscillator();
@@ -73,9 +78,14 @@ export class AlertAudio {
     osc.frequency.value = freq;
     const t0 = ctx.currentTime + start;
     g.gain.setValueAtTime(0, t0);
-    g.gain.linearRampToValueAtTime(gain, t0 + 0.012);
-    g.gain.setValueAtTime(gain, t0 + Math.max(0.02, dur - 0.03));
-    g.gain.linearRampToValueAtTime(0, t0 + dur);
+    if (attack != null) {
+      g.gain.linearRampToValueAtTime(gain, t0 + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    } else {
+      g.gain.linearRampToValueAtTime(gain, t0 + 0.012);
+      g.gain.setValueAtTime(gain, t0 + Math.max(0.02, dur - 0.03));
+      g.gain.linearRampToValueAtTime(0, t0 + dur);
+    }
     osc.connect(g).connect(ctx.destination);
     osc.start(t0);
     osc.stop(t0 + dur + 0.02);
@@ -84,7 +94,7 @@ export class AlertAudio {
   /** Play a list of tones once. */
   play(tones: Tone[]): void {
     if (!this.ctx) return;
-    for (const t of tones) this.beep(t.freq, t.start, t.dur, t.gain, t.type);
+    for (const t of tones) this.beep(t.freq, t.start, t.dur, t.gain, t.type, t.attack);
   }
 
   /** A gentle two-note rising "attention" chime (the reflected-power WARNING), played once. */

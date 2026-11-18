@@ -18,14 +18,16 @@ test("clock tones share no pitch (within a semitone) with any alert sound", () =
   }
 });
 
-test("clock tones use a waveform no alert sound uses", () => {
-  const alertTypes = new Set(alertTones.map((t) => t.type));
-  for (const c of clockTones) assert.ok(!alertTypes.has(c.type), `clock uses alert waveform ${c.type}`);
-});
-
-test("clock tones are softer than the alert chime", () => {
+// "it needs to be a MUCH gentler tone" (Matt, 2026-11-18): pure sine bells, quiet, a soft fade-in
+// and a long fade-out; nothing buzzy (no square / sawtooth / triangle edges).
+test("clock tones are gentle: pure sine, quiet, soft onset, long fade", () => {
   const chimeGain = Math.max(...ALERT_TONES.chime.map((t) => t.gain));
-  for (const c of clockTones) assert.ok(c.gain < chimeGain, `clock gain ${c.gain} >= alert ${chimeGain}`);
+  for (const c of clockTones) {
+    assert.equal(c.type, "sine", `clock waveform ${c.type}`);
+    assert.ok(c.gain <= 0.35 * chimeGain, `clock gain ${c.gain} is not much softer than ${chimeGain}`);
+    assert.ok((c.attack ?? 0) >= 0.04, `clock attack ${c.attack} is too abrupt`);
+    assert.ok(c.dur >= 0.8, `clock note ${c.dur} s fades too fast`);
+  }
 });
 
 test("the three clock cues sound different from each other", () => {
