@@ -46,6 +46,7 @@ from tc_power_interface.control.power_ramp import RAMP_BOUNDS, RampController, R
 from tc_power_interface.control.presets import NUM_SLOTS, PresetStore
 from tc_power_interface.control.pulse import PULSE_BOUNDS, PulseController, PulsePlan
 from tc_power_interface.control.rf_clock import RfClock
+from tc_power_interface.control.run_clock import RunClock
 from tc_power_interface.control.run_mode import (
     RunMode,
     load_run_mode,
@@ -231,6 +232,14 @@ class RampBody(BaseModel):
 
 class TimerBody(BaseModel):
     minutes: float
+
+
+class RunClockBody(BaseModel):
+    target_s: float
+
+
+class RunClockAddBody(BaseModel):
+    seconds: float
 
 
 class PresetBody(BaseModel):
@@ -512,11 +521,24 @@ def create_app(
         # same tick; getattr because polling starts before app.state.current_run is first set.
         rf_clock = RfClock()
         app.state.rf_clock = rf_clock
+        app.state.run_clock = RunClock()
         controller.add_listener(lambda snap: rf_clock.update(
             time.monotonic(),
             (snap.get("telemetry") or {}).get("rf_on"),
             getattr(app.state, "current_run", None),
         ))
+
+        # Run clock (a per-run RF-on-time REMINDER; holds numbers, never commands the generator).
+        # Before the recorder listener so this tick's row carries this tick's clock.
+        run_clock = app.state.run_clock
+
+        def _run_clock_tick(snap: dict[str, Any]) -> None:
+            for label, data in run_clock.update(
+                time.monotonic(), (snap.get("telemetry") or {}).get("rf_on")
+            ):
+                _record_event(label, data)
+
+        controller.add_listener(_run_clock_tick)
 
         def _cockpit_fields() -> dict[str, Any]:
             """The cockpit's CSV columns, or {} (blank cells) if the observer fails: a cockpit bug
@@ -528,7 +550,8 @@ def create_app(
                 return {}
 
         controller.add_listener(lambda snap: recorder.record({
-            **snap, "thermal": thermal.snapshot(), "cockpit": _cockpit_fields(),
+            **snap, "thermal": thermal.snapshot(),
+            "cockpit": {**_cockpit_fields(), **run_clock.record_fields(time.monotonic())},
             "roi_temps": tick_cache["roi_temps"], "scope": scope_hub.recording_fields(),
         }))
         controller.add_listener(scope_hub.on_snapshot)
@@ -703,6 +726,7 @@ def create_app(
         instead of the pill going grey while the top bar still names the (now absent) generator."""
         _stop_all_features()
         app.state.rf_clock.reset_link()  # the next generator starts with an unknown RF state
+        app.state.run_clock.reset_link()
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
@@ -798,6 +822,7 @@ def create_app(
             # frontend banner/panel read `status.vna_session`; the same block stays in `controller`.
             "vna_session": ctrl_snap["vna_session"],
             "rf_clock": rf_clock_snap,
+            "run_clock": app.state.run_clock.snapshot(time.monotonic()),
         }
 
     @app.get("/api/status")
@@ -839,6 +864,7 @@ def create_app(
             else:
                 raise HTTPException(400, f"unknown backend {req.backend!r}")
             app.state.rf_clock.reset_link()  # a new link starts with an unknown RF state
+            app.state.run_clock.reset_link()
             _controller().attach_device(device, backend=req.backend)
         except HTTPException:
             raise
@@ -857,6 +883,7 @@ def create_app(
         _stop_auto_run("recording_stopped_disconnected", background=False)
         _controller().detach_device()
         app.state.rf_clock.reset_link()
+        app.state.run_clock.reset_link()
         app.state.backend = "none"
         app.state.connected_port = None
         app.state.device_info = {}
@@ -1110,6 +1137,40 @@ def create_app(
     def timer_start() -> dict[str, Any]:
         _timer().start()
         return _timer().snapshot()
+
+    # --- run clock: a per-run RF-on-time reminder (never commands RF) -----------------------
+    def _run_clock_reply(events: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+        for label, data in events:
+            _record_event(label, data)
+        return cast(dict[str, Any], app.state.run_clock.snapshot(time.monotonic()))
+
+    @app.get("/api/run-clock")
+    def get_run_clock() -> dict[str, Any]:
+        return cast(dict[str, Any], app.state.run_clock.snapshot(time.monotonic()))
+
+    @app.post("/api/run-clock")
+    def set_run_clock(body: RunClockBody) -> dict[str, Any]:
+        try:
+            events = app.state.run_clock.set(body.target_s, time.monotonic())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return _run_clock_reply(events)
+
+    @app.post("/api/run-clock/add")
+    def add_run_clock(body: RunClockAddBody) -> dict[str, Any]:
+        try:
+            events = app.state.run_clock.add(body.seconds)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return _run_clock_reply(events)
+
+    @app.post("/api/run-clock/cancel")
+    def cancel_run_clock() -> dict[str, Any]:
+        return _run_clock_reply(app.state.run_clock.cancel(time.monotonic()))
+
+    @app.post("/api/run-clock/dismiss")
+    def dismiss_run_clock() -> dict[str, Any]:
+        return _run_clock_reply(app.state.run_clock.dismiss(time.monotonic()))
 
     @app.post("/api/timer/stop")
     def timer_stop() -> dict[str, Any]:

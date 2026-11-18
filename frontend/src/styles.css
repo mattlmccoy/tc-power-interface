@@ -647,7 +647,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 /* Phone width (not the lab screen): below the v0.17.5 shrink breakpoints the top bar also wraps
    (it cannot fit on one line at ~390 px), and page content can never push the grid column wider
    than the viewport. Kept after the overflow guard so its padding/spacer rules win. */
-@media (max-width: 700px) {
+@media (max-width: 880px) {
   .app { grid-template-rows: auto auto 1fr; grid-template-columns: minmax(0, 1fr); }
   .topbar { flex-wrap: wrap; row-gap: 6px; padding-block: 6px; }
   .topbar .spacer { display: none; }
@@ -658,3 +658,52 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .connect-wrap { position: static; }
   .connect-pop { left: 8px; right: 8px; width: auto; max-height: calc(100vh - 140px); overflow-y: auto; }
 }
+
+
+/* ==========================================================================================
+   Run clock (v0.20): top-bar chip + pop-up + fixed time's-up pop-up. The chip has a FIXED width so
+   its text changing during a run never moves the bar (HARD UI rule); the time's-up pop-up is
+   position: fixed for the same reason. Never touches RF.
+   ========================================================================================== */
+.runclock-wrap { position: relative; display: inline-flex; min-width: 0; }
+/* Shrinks with the bar (never wider than 21.5em, never narrower than the time): its width follows
+   the window, not the clock's text, so a changing clock never moves anything. */
+.topbar > .runclock-wrap { flex: 0 1 21.5em; min-width: 6.5em; }
+.runclock { display: inline-flex; align-items: center; gap: 6px; width: 100%; padding: 3px 9px;
+  border-radius: 999px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--fg);
+  font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer;
+  overflow: hidden; }
+.runclock-main { font-size: 14px; font-weight: 700; color: var(--fg-strong); min-width: 4.2em; flex: 0 0 auto; }
+.runclock-sub { color: var(--muted); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.runclock-bar { flex: 0 0 38px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.runclock-bar i { display: block; height: 100%; background: var(--live); }
+.runclock-idle { opacity: 0.75; } .runclock-idle .runclock-main { font-size: 12px; font-weight: 600; color: var(--fg); }
+.runclock-paused .runclock-main { color: var(--fg); }
+.runclock-warn { border-color: var(--warn); } .runclock-warn .runclock-main { color: var(--warn); }
+.runclock-warn .runclock-bar i { background: var(--warn); }
+.runclock-final, .runclock-over { border-color: var(--err); } .runclock-final .runclock-main,
+.runclock-over .runclock-main { color: var(--err); } .runclock-final .runclock-bar i, .runclock-over .runclock-bar i { background: var(--err); }
+.runclock-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 50; width: 300px; white-space: normal;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow);
+  padding: 12px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; text-transform: none; letter-spacing: normal; }
+.runclock-help { color: var(--muted); font-size: 12px; }
+.runclock-entry { display: flex; align-items: center; gap: 6px; }
+.runclock-entry input { width: 4em; font-family: var(--font-mono); font-size: 16px; text-align: center; }
+.runclock-unit { color: var(--muted); font-size: 12px; }
+.runclock-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.runclock-mute { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.timeup-pop { position: fixed; top: calc(var(--topbar-h) + 10px); left: 50%; transform: translateX(-50%); z-index: 60;
+  display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--err);
+  background: var(--panel); box-shadow: var(--shadow); color: var(--fg-strong); font-weight: 600; max-width: calc(100vw - 24px); }
+@media (max-width: 1140px) { .runclock-sub, .runclock-bar { display: none; } }
+/* Room for the run clock (v0.20): the existing shed order starts a step earlier, and the bar wraps
+   from 880 px (was 700). Measured: without these it overflowed by 23 px at 1200, 20 px at 1100,
+   19 px at 1141, 61 px at 1000 and 81 px at 800. */
+@media (max-width: 1240px) { .topbar .brand-rest { display: none; } }
+@media (max-width: 1180px) {
+  .topbar .brand-name { display: none; }
+  .topbar .brand-abbr { display: inline; }
+  .topbar .btn-lbl { display: none; }
+  .viewtabs button { padding: 5px 7px; }
+}
+@media (max-width: 880px) { .runclock-wrap { position: static; } .runclock-pop { left: 8px; right: 8px; width: auto; } }

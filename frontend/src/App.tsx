@@ -9,6 +9,8 @@ import { StartupModal } from "./components/StartupModal.tsx";
 import { SafetyRail } from "./components/SafetyRail.tsx";
 import { Toast } from "./components/Toast.tsx";
 import { UpdateBanner } from "./components/UpdateBanner.tsx";
+import { RunClockChip, TimeUpPopup } from "./components/RunClockChip.tsx";
+import { useRunClockSound } from "./hooks/useRunClockSound.ts";
 import { useOperator } from "./hooks/useOperator.ts";
 import { appHealth } from "./lib/heartbeat.ts";
 import { SITE_MODE } from "./lib/api.ts";
@@ -35,6 +37,8 @@ export function App() {
   } = op;
   const vna = useVna(op);
   const alerts = useAudioAlerts(op);
+  const runClock = op.status?.run_clock;
+  const clockSound = useRunClockSound(runClock);
   const aid = useMatchAid(op.t, op.status?.recording?.run ?? null); // App level: survives tab switches; drift is per run
   const mapCapture = useMapCapture(op, vna);
   const cockpitHistory = useCockpitHistory(op.status); // App level: the timeline survives tab switches
@@ -60,6 +64,7 @@ export function App() {
   return (
     <div className={`app ${showHelp ? "" : "help-off"}`}>
       <UpdateBanner />
+      <TimeUpPopup rc={runClock} flash={op.flash} />
       <header className="topbar">
         <span className="brand" title="T&C Power Interface">
           <span className="brand-name">
@@ -75,6 +80,7 @@ export function App() {
         </span>
         <span className="spacer" />
         <RfClock clock={op.status?.rf_clock} appAlive={appHealth(op.msSinceMsg).tone === "ok"} />
+        <RunClockChip rc={runClock} flash={op.flash} muted={clockSound.muted} setMuted={clockSound.setMuted} unlock={clockSound.unlock} />
         <LinkHeartbeat
           link={op.status?.controller.link}
           connected={connected}

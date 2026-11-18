@@ -217,6 +217,11 @@ export const api = {
   saveTimer: (minutes: number) => put("/api/timer", { minutes }),
   timerStart: () => post("/api/timer/start"),
   timerStop: () => post("/api/timer/stop"),
+  /** Run clock (a reminder; never commands RF). */
+  runClockSet: (targetS: number) => post("/api/run-clock", { target_s: targetS }),
+  runClockAdd: (seconds: number) => post("/api/run-clock/add", { seconds }),
+  runClockCancel: () => post("/api/run-clock/cancel"),
+  runClockDismiss: () => post("/api/run-clock/dismiss"),
   presetSave: (slot: number, tune: number, load: number) =>
     put(`/api/presets/${slot}`, { tune, load }),
   presetRecall: (slot: number) => post(`/api/presets/${slot}/recall`),

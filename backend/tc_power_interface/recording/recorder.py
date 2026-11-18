@@ -79,6 +79,8 @@ _COCKPIT_FIELDS = [
     # v0.19 (appended): the shadow's room temperature and its source ("part_at_rest" | "reference"
     # | "unknown:<reason>"); replay reuses it (recording/replay_shadow.py).
     "shadow_amb_c", "shadow_amb_src",
+    # v0.20 (appended): the run clock's RF-on target and RF-on time so far (blank = no clock set).
+    "clock_target_s", "clock_on_s",
 ]
 _CSV_FIELDS = [
     *_TELEMETRY_FIELDS, "controller_state", *_THERMAL_FIELDS, *_MATCH_FIELDS, *_SCOPE_FIELDS,

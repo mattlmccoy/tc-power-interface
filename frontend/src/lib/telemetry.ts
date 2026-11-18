@@ -1,5 +1,6 @@
 // Telemetry types (mirror of the backend snapshot JSON) + a small ring buffer for plots.
 
+import type { RunClockBlock } from "./runClock.ts";
 import type { RunModeName, Shadow } from "./cockpit/shadowText.ts";
 import type { LinkBlock, RfClockBlock } from "./heartbeat.ts";
 import type { ScopeStatus } from "./scope.ts";
@@ -231,6 +232,8 @@ export interface Status {
   vna_session?: { active: boolean; stale: boolean; age_s: number | null };
   /** RF on-time clock: current burn, last burn, RF-on total in the run (absent on older backends). */
   rf_clock?: RfClockBlock;
+  /** Per-run RF-on-time reminder (v0.20+). */
+  run_clock?: RunClockBlock;
 }
 
 export interface Point {
