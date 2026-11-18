@@ -292,8 +292,8 @@ def test_cockpit_columns_are_appended_and_unknown_is_blank(tmp_path):
     })
     rec.stop()
     header = (run / "telemetry.csv").read_text().splitlines()[0].split(",")
-    assert header[-14:-2] == _COCKPIT_TAIL
-    assert header[:-14] == _PRE_COCKPIT_HEADER  # old layout first, byte-identical, in order
+    assert header[-16:-4] == _COCKPIT_TAIL
+    assert header[:-16] == _PRE_COCKPIT_HEADER  # old layout first, byte-identical, in order
     row = next(csv.DictReader((run / "telemetry.csv").open()))
     assert row["setpoint_w"] == "40" and row["part_temp_c"] == "41.2" and row["shadow_k"] == ""
 
@@ -310,7 +310,7 @@ def test_room_temperature_decision_columns_come_last(tmp_path):
                 "cockpit": {"shadow_amb_c": 22.83, "shadow_amb_src": "part_at_rest"}})
     rec.stop()
     header = (run / "telemetry.csv").read_text().splitlines()[0].split(",")
-    assert header[-2:] == ["shadow_amb_c", "shadow_amb_src"]
+    assert header[-4:-2] == ["shadow_amb_c", "shadow_amb_src"]  # v0.20 clock columns follow
     rows = list(csv.DictReader((run / "telemetry.csv").open()))
     assert [(r["shadow_amb_c"], r["shadow_amb_src"]) for r in rows] == [
         ("", "unknown:part_cooling"), ("22.83", "part_at_rest")]
@@ -440,3 +440,20 @@ def test_failed_start_leaks_no_handles_and_stays_idle(tmp_path):
     assert rec._csv_writer is None and rec._roi_writer is None
     rec.start("again", {})  # recorder is still usable
     rec.stop()
+
+
+def test_run_clock_columns_come_last(tmp_path):
+    # v0.20: the run clock's RF-on target and RF-on time so far; blank when no clock is set
+    import csv
+
+    rec = TelemetryRecorder(tmp_path)
+    run = rec.start("t", {})
+    rec.record({"telemetry": _tel(1), "state": "connected",
+                "cockpit": {"clock_target_s": None, "clock_on_s": None}})
+    rec.record({"telemetry": _tel(2), "state": "connected",
+                "cockpit": {"clock_target_s": 720.0, "clock_on_s": 12.5}})
+    rec.stop()
+    header = (run / "telemetry.csv").read_text().splitlines()[0].split(",")
+    assert header[-2:] == ["clock_target_s", "clock_on_s"]
+    rows = list(csv.DictReader((run / "telemetry.csv").open()))
+    assert [(r["clock_target_s"], r["clock_on_s"]) for r in rows] == [("", ""), ("720.0", "12.5")]
