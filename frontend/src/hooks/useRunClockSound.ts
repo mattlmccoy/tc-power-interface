@@ -1,11 +1,12 @@
-// Run-clock sounds: one chime on entering the 2-min and the 30-s warnings, and a chime repeating
-// every few seconds once the time is up, until dismissed or cancelled. WHEN to play is the pure
+// Run-clock sounds: a soft "ding" at 2 min left, "ding-ding" at 30 s, and a "ding-dong" repeating
+// every few seconds once the time is up, until dismissed or cancelled. Its OWN tones (CLOCK_TONES):
+// never the fault / reflected-power warning sounds. WHEN to play is the pure
 // soundFor() in lib/runClock.ts; this is the React/Web-Audio glue. Plays whether or not the general
 // alerts bell is on (the chimes are the point), with a per-browser mute.
 
 import { useEffect, useRef, useState } from "react";
 
-import { AlertAudio } from "../lib/audio.ts";
+import { AlertAudio, CLOCK_TONES } from "../lib/audio.ts";
 import { soundFor, type RunClockBlock, type RunClockPhase } from "../lib/runClock.ts";
 
 const MUTE_KEY = "tcp.runclock.mute";
@@ -47,11 +48,11 @@ export function useRunClockSound(rc: RunClockBlock | undefined) {
   useEffect(() => {
     const { chime, repeat } = soundFor(prevPhase.current, phase, dismissed);
     prevPhase.current = phase;
-    if (chime && !muted) audioRef.current?.chime();
+    if (chime && !muted) audioRef.current?.play(phase === "final" ? CLOCK_TONES.final : CLOCK_TONES.warn);
     if (repeat && !muted) {
       if (loop.current == null) {
-        audioRef.current?.chime();
-        loop.current = setInterval(() => audioRef.current?.chime(), REPEAT_MS);
+        audioRef.current?.play(CLOCK_TONES.over);
+        loop.current = setInterval(() => audioRef.current?.play(CLOCK_TONES.over), REPEAT_MS);
       }
     } else if (loop.current != null) {
       clearInterval(loop.current);

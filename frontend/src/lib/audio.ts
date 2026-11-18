@@ -5,6 +5,47 @@
 
 type OscType = "sine" | "square" | "triangle" | "sawtooth";
 
+/** One shaped note: frequency (Hz), start offset (s), duration (s), peak gain, waveform. */
+export interface Tone {
+  freq: number;
+  start: number;
+  dur: number;
+  gain: number;
+  type: OscType;
+}
+
+/** The WARNING sounds (faults, reflected power). Nothing else may sound like these. */
+export const ALERT_TONES: { chime: Tone[]; alarm: Tone[] } = {
+  // a two-note rising "attention" chime
+  chime: [
+    { freq: 660, start: 0, dur: 0.12, gain: 0.16, type: "sine" },
+    { freq: 880, start: 0.13, dur: 0.16, gain: 0.16, type: "sine" },
+  ],
+  // one cycle of the harsh hi-lo fault alarm (repeated every 720 ms)
+  alarm: [
+    { freq: 880, start: 0, dur: 0.17, gain: 0.3, type: "square" },
+    { freq: 620, start: 0.2, dur: 0.17, gain: 0.3, type: "square" },
+  ],
+};
+
+/** The run clock's REMINDER sounds: soft bell-like triangle tones on a C-major chord (G4/C5/G5),
+ * quieter than and at no pitch or waveform the warnings use (2026-11-18: the clock reusing the
+ * reflected-power chime scared Matt). Enforced by audio.test.ts. */
+export const CLOCK_TONES: { warn: Tone[]; final: Tone[]; over: Tone[] } = {
+  // 2 min left: one gentle "ding"
+  warn: [{ freq: 784, start: 0, dur: 0.45, gain: 0.1, type: "triangle" }],
+  // 30 s left: "ding-ding", rising
+  final: [
+    { freq: 523.25, start: 0, dur: 0.35, gain: 0.1, type: "triangle" },
+    { freq: 784, start: 0.3, dur: 0.45, gain: 0.1, type: "triangle" },
+  ],
+  // time's up (repeats until dismissed): a doorbell "ding-dong", falling
+  over: [
+    { freq: 784, start: 0, dur: 0.4, gain: 0.11, type: "triangle" },
+    { freq: 392, start: 0.42, dur: 0.6, gain: 0.11, type: "triangle" },
+  ],
+};
+
 export class AlertAudio {
   private ctx: AudioContext | null = null;
   private alarmTimer: ReturnType<typeof setInterval> | null = null;
@@ -40,20 +81,21 @@ export class AlertAudio {
     osc.stop(t0 + dur + 0.02);
   }
 
-  /** A gentle two-note rising "attention" chime, played once. */
-  chime(): void {
+  /** Play a list of tones once. */
+  play(tones: Tone[]): void {
     if (!this.ctx) return;
-    this.beep(660, 0, 0.12, 0.16, "sine");
-    this.beep(880, 0.13, 0.16, 0.16, "sine");
+    for (const t of tones) this.beep(t.freq, t.start, t.dur, t.gain, t.type);
+  }
+
+  /** A gentle two-note rising "attention" chime (the reflected-power WARNING), played once. */
+  chime(): void {
+    this.play(ALERT_TONES.chime);
   }
 
   /** Start the looping alarm: a harsh hi-lo two-tone repeating until stopAlarm(). Idempotent. */
   startAlarm(): void {
     if (!this.ctx || this.alarmTimer != null) return;
-    const cycle = () => {
-      this.beep(880, 0, 0.17, 0.3, "square");
-      this.beep(620, 0.2, 0.17, 0.3, "square");
-    };
+    const cycle = () => this.play(ALERT_TONES.alarm);
     cycle();
     this.alarmTimer = setInterval(cycle, 720);
   }
