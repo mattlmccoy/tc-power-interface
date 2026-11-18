@@ -97,13 +97,17 @@ export function RunClockChip({ rc, flash, muted, setMuted, unlock }: Props) {
 }
 
 /** The fixed time's-up pop-up: position fixed so it never moves the page (HARD UI rule). */
-export function TimeUpPopup({ rc, flash }: { rc: RunClockBlock | undefined; flash: Props["flash"] }) {
+export function TimeUpPopup({ rc, flash, onDismiss }: { rc: RunClockBlock | undefined; flash: Props["flash"]; onDismiss: () => void }) {
   const text = overBanner(rc);
   if (!text) return null;
+  const dismiss = () => {
+    onDismiss(); // silence this screen now, before the operator confirms
+    void send(api.runClockDismiss(), flash, "dismiss");
+  };
   return (
     <div className="timeup-pop" role="alert">
       <span>⏱ {text}</span>
-      <button className="btn" onClick={() => void send(api.runClockDismiss(), flash, "dismiss")}>Dismiss</button>
+      <button className="btn" onClick={dismiss}>Dismiss</button>
     </div>
   );
 }

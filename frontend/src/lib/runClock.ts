@@ -79,8 +79,15 @@ const RANK: Record<RunClockPhase, number> = { off: 0, running: 1, paused: 1, war
 
 /** Sound for a phase change. One chime on ENTERING the 2-min and the 30-s warnings (never on page
  * load, never when +time moves it back). The time's-up sound repeats while over and not dismissed,
- * including right after the page opens: an unacknowledged overrun must still be heard. */
-export function soundFor(prev: RunClockPhase | null, next: RunClockPhase, dismissed: boolean): { chime: boolean; repeat: boolean } {
+ * including right after the page opens: an unacknowledged overrun must still be heard. Silent when
+ * the page is not hearing from the operator (``live`` false): a stale page cannot be dismissed. */
+export function soundFor(
+  prev: RunClockPhase | null,
+  next: RunClockPhase,
+  dismissed: boolean,
+  live: boolean,
+): { chime: boolean; repeat: boolean } {
+  if (!live) return { chime: false, repeat: false };
   const chime = prev !== null && (next === "warn" || next === "final") && RANK[next] > RANK[prev];
   return { chime, repeat: next === "over" && !dismissed };
 }
